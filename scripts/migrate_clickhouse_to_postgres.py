@@ -220,6 +220,12 @@ def migrate_master_data(ch_client, pg_conn):
     print("   -> Master Data sequences updated.")
 
 
+def clean_str(val):
+    if val is None:
+        return ""
+    return str(val).replace('\x00', '')
+
+
 def transform_result(result_val):
     if not result_val:
         return "PASS"
@@ -337,6 +343,7 @@ def migrate_production_data(ch_client, pg_conn):
                     spec_max, 
                     toString(result) 
                 FROM test_steps
+                WHERE pcb_result_id IN (SELECT id FROM pcb_results)
             """
             step_insert = """
                 INSERT INTO test_steps (pcb_result_id, step_type, step_number, step_name, value, spec_min, spec_max, result, created_at)
@@ -348,7 +355,12 @@ def migrate_production_data(ch_client, pg_conn):
             for row in ch_client.execute_iter(step_sql, settings={'max_block_size': BATCH_SIZE}):
                 pcb_res_id, st_type, st_num, st_name, val, s_min, s_max, res = row
                 res_clean = transform_result(res)
-                clean_steps.append((pcb_res_id, st_type, st_num or 0, st_name or "", val, s_min, s_max, res_clean))
+                st_type_clean = clean_str(st_type)
+                st_name_clean = clean_str(st_name)
+                val_clean = clean_str(val)
+                s_min_clean = clean_str(s_min)
+                s_max_clean = clean_str(s_max)
+                clean_steps.append((pcb_res_id, st_type_clean, st_num or 0, st_name_clean, val_clean, s_min_clean, s_max_clean, res_clean))
                 if len(clean_steps) >= BATCH_SIZE:
                     execute_batch(cursor, step_insert, clean_steps, page_size=BATCH_SIZE)
                     pg_conn.commit()

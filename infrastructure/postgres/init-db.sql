@@ -58,12 +58,12 @@ CREATE TABLE IF NOT EXISTS pcb_results (
 CREATE TABLE IF NOT EXISTS test_steps (
     id BIGSERIAL PRIMARY KEY,
     pcb_result_id UUID NOT NULL,
-    step_type VARCHAR(50),
+    step_type VARCHAR(255),
     step_number INT DEFAULT 0,
-    step_name VARCHAR(100) NOT NULL,
-    value VARCHAR(100),
-    spec_min VARCHAR(100),
-    spec_max VARCHAR(100),
+    step_name VARCHAR(255) NOT NULL,
+    value TEXT,
+    spec_min TEXT,
+    spec_max TEXT,
     result VARCHAR(10) NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -85,3 +85,4 @@ CREATE INDEX IF NOT EXISTS idx_pcb_results_channel_time ON pcb_results (channel_
 CREATE INDEX IF NOT EXISTS idx_pcb_results_station_time ON pcb_results (station_id, inspect_time DESC);
 CREATE INDEX IF NOT EXISTS idx_pcb_results_line_time ON pcb_results (line_id, inspect_time DESC);
 CREATE INDEX IF NOT EXISTS idx_pcb_results_pid ON pcb_results (pid);
+CREATE INDEX IF NOT EXISTS idx_test_steps_pcb_id ON test_steps (pcb_result_id);
