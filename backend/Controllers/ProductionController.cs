@@ -35,11 +35,13 @@ namespace PMSystem2.Api.Controllers
 
         [HttpGet("latest")]
         public async Task<ActionResult<List<PcbResultDto>>> GetLatest(
-            [FromQuery] int limit = 50,
+            [FromQuery] int limit = 100,
             [FromQuery] int? lineId = null,
-            [FromQuery] int? stationId = null)
+            [FromQuery] int? stationId = null,
+            [FromQuery] string? searchPid = null,
+            [FromQuery] string? resultFilter = null)
         {
-            return Ok(await _pcbService.GetLatestResultsAsync(limit, lineId, stationId));
+            return Ok(await _pcbService.GetLatestResultsAsync(limit, lineId, stationId, searchPid, resultFilter));
         }
 
         [HttpGet("stats/hourly")]
@@ -51,6 +53,26 @@ namespace PMSystem2.Api.Controllers
             return Ok(await _pcbService.GetHourlyStatsAsync(hours, lineId, stationId));
         }
 
+        [HttpGet("stats/line-yield")]
+        public async Task<ActionResult<List<LineYieldStatDto>>> GetLineYieldStats([FromQuery] int? lineId = null)
+        {
+            return Ok(await _pcbService.GetLineYieldStatsAsync(lineId));
+        }
+
+        [HttpGet("stats/station-yield")]
+        public async Task<ActionResult<List<StationYieldStatDto>>> GetStationYieldStats([FromQuery] int? lineId = null)
+        {
+            return Ok(await _pcbService.GetStationYieldStatsAsync(lineId));
+        }
+
+        [HttpGet("stats/defect-pareto")]
+        public async Task<ActionResult<List<DefectParetoStatDto>>> GetDefectPareto(
+            [FromQuery] int? lineId = null,
+            [FromQuery] int? stationId = null)
+        {
+            return Ok(await _pcbService.GetDefectParetoAsync(lineId, stationId));
+        }
+
         [HttpGet("summary")]
         public async Task<ActionResult<ProductionSummaryDto>> GetSummary()
         {
@@ -58,3 +80,4 @@ namespace PMSystem2.Api.Controllers
         }
     }
 }
+

@@ -65,6 +65,7 @@ using (var scope = app.Services.CreateScope())
         logger.LogInformation("PostgreSQL Database initialized successfully.");
 
         var masterDataService = app.Services.GetRequiredService<IMasterDataService>();
+        await masterDataService.SeedDefaultDataIfEmptyAsync();
         await masterDataService.RefreshCacheAsync();
     }
     catch (Exception ex)

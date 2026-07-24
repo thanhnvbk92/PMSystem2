@@ -1,27 +1,24 @@
 import React from 'react';
-import { 
-  Activity, 
-  Cpu, 
-  Database, 
-  Zap, 
-  AlertCircle, 
-  Radio, 
-  ChevronLeft, 
+import {
+  Activity,
+  Cpu,
+  Database,
+  AlertCircle,
+  ChevronLeft,
   ChevronRight,
-  TrendingUp,
-  Layers,
-  ShieldCheck,
-  BarChart3
+  BarChart3,
+  Search,
+  Layers
 } from 'lucide-react';
 import * as signalR from '@microsoft/signalr';
 
-export default function Sidebar({ 
-  activeTab, 
-  setActiveTab, 
-  signalRState, 
-  summaryData, 
-  isCollapsed, 
-  setIsCollapsed 
+export default function Sidebar({
+  activeTab,
+  setActiveTab,
+  signalRState,
+  summaryData,
+  isCollapsed,
+  setIsCollapsed
 }) {
   const getStatusBadge = () => {
     switch (signalRState) {
@@ -53,35 +50,42 @@ export default function Sidebar({
   const navItems = [
     {
       id: 'dashboard',
-      label: 'Realtime Analytics',
+      label: 'Tổng Quan (Dashboard)',
       category: 'MONITORING',
       icon: Activity,
       color: 'text-blue-400',
       activeBg: 'from-blue-600 to-indigo-600',
     },
     {
-      id: 'master',
-      label: 'Master Data Config',
-      category: 'MANAGEMENT',
-      icon: Database,
+      id: 'analytics',
+      label: 'Phân Tích Dữ Liệu',
+      category: 'ANALYTICS',
+      icon: BarChart3,
+      color: 'text-purple-400',
+      activeBg: 'from-purple-600 to-indigo-600',
+    },
+    {
+      id: 'pcb-search',
+      label: 'Tra Cứu PCB',
+      category: 'SEARCH & INSPECT',
+      icon: Search,
       color: 'text-emerald-400',
       activeBg: 'from-emerald-600 to-teal-600',
     },
     {
-      id: 'simulator',
-      label: 'PCB Telemetry Simulator',
-      category: 'TESTING & TOOLS',
-      icon: Zap,
-      color: 'text-amber-400',
-      activeBg: 'from-amber-600 to-orange-600',
+      id: 'master',
+      label: 'Master Data',
+      category: 'MANAGEMENT',
+      icon: Database,
+      color: 'text-cyan-400',
+      activeBg: 'from-cyan-600 to-blue-600',
     },
   ];
 
   return (
     <aside
-      className={`fixed top-0 left-0 z-40 h-screen transition-all duration-300 ease-in-out flex flex-col glass-panel border-r border-white/10 ${
-        isCollapsed ? 'w-20' : 'w-64'
-      }`}
+      className={`fixed top-0 left-0 z-40 h-screen transition-all duration-300 ease-in-out flex flex-col glass-panel border-r border-white/10 ${isCollapsed ? 'w-20' : 'w-64'
+        }`}
     >
       {/* Sidebar Header / Brand Logo */}
       <div className="p-4 border-b border-white/10 flex items-center justify-between relative">
@@ -122,7 +126,7 @@ export default function Sidebar({
         <div>
           {!isCollapsed && (
             <div className="px-3 mb-2 text-[10px] font-bold text-slate-500 tracking-wider uppercase font-mono">
-              Main Operations
+              Chức Năng Chính
             </div>
           )}
           <nav className="space-y-1.5">
@@ -134,19 +138,17 @@ export default function Sidebar({
                   key={item.id}
                   onClick={() => setActiveTab(item.id)}
                   title={isCollapsed ? item.label : undefined}
-                  className={`w-full flex items-center gap-3 px-3 py-3 rounded-xl text-xs font-semibold tracking-wide transition-all group relative ${
-                    isActive
+                  className={`w-full flex items-center gap-3 px-3 py-3 rounded-xl text-xs font-semibold tracking-wide transition-all group relative ${isActive
                       ? `bg-gradient-to-r ${item.activeBg} text-white shadow-lg border border-white/20`
                       : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
-                  }`}
+                    }`}
                 >
                   <Icon
-                    className={`w-5 h-5 flex-shrink-0 transition-transform group-hover:scale-110 ${
-                      isActive ? 'text-white' : item.color
-                    }`}
+                    className={`w-5 h-5 flex-shrink-0 transition-transform group-hover:scale-110 ${isActive ? 'text-white' : item.color
+                      }`}
                   />
                   {!isCollapsed && <span className="truncate">{item.label}</span>}
-                  
+
                   {isActive && (
                     <span className="absolute right-2 w-1.5 h-1.5 rounded-full bg-white animate-ping"></span>
                   )}
@@ -173,12 +175,12 @@ export default function Sidebar({
                   <strong className="text-white">{summaryData.totalInspected?.toLocaleString()}</strong>
                 </div>
                 <div className="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden flex">
-                  <div 
-                    className="bg-emerald-500 h-full" 
+                  <div
+                    className="bg-emerald-500 h-full"
                     style={{ width: `${summaryData.overallYieldRate || 0}%` }}
                   ></div>
-                  <div 
-                    className="bg-rose-500 h-full" 
+                  <div
+                    className="bg-rose-500 h-full"
                     style={{ width: `${100 - (summaryData.overallYieldRate || 0)}%` }}
                   ></div>
                 </div>

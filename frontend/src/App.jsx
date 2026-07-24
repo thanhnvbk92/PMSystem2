@@ -2,8 +2,9 @@ import React, { useState, useEffect, useCallback } from 'react';
 import Sidebar from './components/Sidebar';
 import Header from './components/Header';
 import Dashboard from './components/Dashboard';
+import Analytics from './components/Analytics';
+import PcbSearch from './components/PcbSearch';
 import MasterData from './components/MasterData';
-import Simulator from './components/Simulator';
 import { MasterDataApi, ProductionApi } from './services/api';
 import { initSignalR } from './services/signalr';
 import * as signalR from '@microsoft/signalr';
@@ -41,8 +42,11 @@ export default function App() {
         MasterDataApi.getStations(),
         MasterDataApi.getChannels(),
       ]);
+      const sortedLines = [...(l || [])].sort((a, b) => 
+        (a.name || '').localeCompare(b.name || '', undefined, { numeric: true, sensitivity: 'base' })
+      );
       setBuyers(b || []);
-      setLines(l || []);
+      setLines(sortedLines);
       setStations(s || []);
       setChannels(c || []);
       setDbError(null);
@@ -79,9 +83,11 @@ export default function App() {
     // Dynamic metrics update
     setSummary((prev) => {
       if (!prev) return prev;
+      const isOk = newResult.result === 'OK' || newResult.result === 'PASS';
+      const isNg = newResult.result === 'NG' || newResult.result === 'FAIL';
       const total = prev.totalInspected + 1;
-      const ok = prev.totalOk + (newResult.result === 'OK' ? 1 : 0);
-      const ng = prev.totalNg + (newResult.result === 'NG' ? 1 : 0);
+      const ok = prev.totalOk + (isOk ? 1 : 0);
+      const ng = prev.totalNg + (isNg ? 1 : 0);
       return {
         ...prev,
         totalInspected: total,
@@ -197,6 +203,26 @@ export default function App() {
             />
           )}
 
+          {activeTab === 'analytics' && (
+            <Analytics
+              summary={summary}
+              latestLogs={latestLogs}
+              hourlyStats={hourlyStats}
+              lines={lines}
+              stations={stations}
+              onFilterChange={handleFilterChange}
+            />
+          )}
+
+          {activeTab === 'pcb-search' && (
+            <PcbSearch
+              latestLogs={latestLogs}
+              lines={lines}
+              stations={stations}
+              onFilterChange={handleFilterChange}
+            />
+          )}
+
           {activeTab === 'master' && (
             <MasterData
               buyers={buyers}
@@ -204,13 +230,6 @@ export default function App() {
               stations={stations}
               channels={channels}
               onRefresh={loadMasterData}
-            />
-          )}
-
-          {activeTab === 'simulator' && (
-            <Simulator
-              channels={channels}
-              onPcbSubmitted={loadProductionData}
             />
           )}
         </main>

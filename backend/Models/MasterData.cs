@@ -107,7 +107,14 @@ namespace PMSystem2.Api.Models
     public record ChannelDto(int Id, int StationId, string StationName, int LineId, string LineName, string Name, string? IpAddress, string Status);
 
     public record CreateBuyerRequest(string Name, string? Remark);
+    public record UpdateBuyerRequest(string Name, string? Remark);
+
     public record CreateLineRequest(string Name, string? Remark);
+    public record UpdateLineRequest(string Name, string? Remark);
+
     public record CreateStationRequest(int LineId, string Name, string? Remark);
+    public record UpdateStationRequest(int LineId, string Name, string? Remark);
+
     public record CreateChannelRequest(int StationId, string Name, string? IpAddress);
+    public record UpdateChannelRequest(int StationId, string Name, string? IpAddress, string? Status);
 }

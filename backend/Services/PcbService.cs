@@ -9,9 +9,12 @@ namespace PMSystem2.Api.Services
     public interface IPcbService
     {
         Task<PcbResultDto> SubmitResultAsync(SubmitPcbRequest req);
-        Task<List<PcbResultDto>> GetLatestResultsAsync(int limit = 50, int? lineId = null, int? stationId = null);
+        Task<List<PcbResultDto>> GetLatestResultsAsync(int limit = 50, int? lineId = null, int? stationId = null, string? searchPid = null, string? resultFilter = null);
         Task<List<HourlyStatDto>> GetHourlyStatsAsync(int hours = 24, int? lineId = null, int? stationId = null);
         Task<ProductionSummaryDto> GetSummaryAsync();
+        Task<List<LineYieldStatDto>> GetLineYieldStatsAsync(int? lineId = null);
+        Task<List<StationYieldStatDto>> GetStationYieldStatsAsync(int? lineId = null);
+        Task<List<DefectParetoStatDto>> GetDefectParetoAsync(int? lineId = null, int? stationId = null);
     }
 
     public class PcbService : IPcbService
@@ -98,7 +101,12 @@ namespace PMSystem2.Api.Services
             return dto;
         }
 
-        public async Task<List<PcbResultDto>> GetLatestResultsAsync(int limit = 50, int? lineId = null, int? stationId = null)
+        public async Task<List<PcbResultDto>> GetLatestResultsAsync(
+            int limit = 50, 
+            int? lineId = null, 
+            int? stationId = null,
+            string? searchPid = null,
+            string? resultFilter = null)
         {
             var query = _db.PcbResults.AsNoTracking().AsQueryable();
 
@@ -109,6 +117,22 @@ namespace PMSystem2.Api.Services
             if (stationId.HasValue)
             {
                 query = query.Where(p => p.StationId == stationId.Value);
+            }
+            if (!string.IsNullOrWhiteSpace(searchPid))
+            {
+                var term = searchPid.Trim().ToLower();
+                query = query.Where(p => p.Pid.ToLower().Contains(term));
+            }
+            if (!string.IsNullOrWhiteSpace(resultFilter) && resultFilter != "ALL")
+            {
+                if (resultFilter == "OK")
+                {
+                    query = query.Where(p => p.Result == "OK" || p.Result == "PASS");
+                }
+                else if (resultFilter == "NG")
+                {
+                    query = query.Where(p => p.Result == "NG" || p.Result == "FAIL");
+                }
             }
 
             var list = await query
@@ -150,9 +174,7 @@ namespace PMSystem2.Api.Services
 
         public async Task<List<HourlyStatDto>> GetHourlyStatsAsync(int hours = 24, int? lineId = null, int? stationId = null)
         {
-            var startTime = DateTime.UtcNow.AddHours(-hours);
-            var query = _db.PcbResults.AsNoTracking()
-                .Where(p => p.InspectTime >= startTime);
+            var query = _db.PcbResults.AsNoTracking();
 
             if (lineId.HasValue)
             {
@@ -163,40 +185,43 @@ namespace PMSystem2.Api.Services
                 query = query.Where(p => p.StationId == stationId.Value);
             }
 
-            var grouped = await query
-                .GroupBy(p => new {
-                    Date = p.InspectTime.Date,
-                    Hour = p.InspectTime.Hour,
-                    p.LineId,
-                    p.StationId
-                })
-                .Select(g => new {
-                    g.Key.Date,
-                    g.Key.Hour,
-                    g.Key.LineId,
-                    g.Key.StationId,
-                    Total = g.Count(),
-                    Ok = g.Count(x => x.Result == "OK"),
-                    Ng = g.Count(x => x.Result == "NG")
-                })
+            var cutoff = DateTime.UtcNow.AddHours(-hours);
+            query = query.Where(p => p.InspectTime >= cutoff);
+
+            var list = await query
+                .OrderByDescending(p => p.InspectTime)
                 .ToListAsync();
 
-            return grouped.Select(g => new HourlyStatDto(
-                DateTime.SpecifyKind(g.Date.AddHours(g.Hour), DateTimeKind.Utc),
-                g.LineId,
-                g.StationId,
-                g.Total,
-                g.Ok,
-                g.Ng,
-                g.Total > 0 ? Math.Round((double)g.Ok / g.Total * 100.0, 2) : 0.0
-            )).OrderBy(g => g.Bucket).ToList();
+            var grouped = list
+                .GroupBy(p => new {
+                    Date = p.InspectTime.Date,
+                    Hour = p.InspectTime.Hour
+                })
+                .Select(g => {
+                    var total = g.Count();
+                    var ok = g.Count(x => x.Result == "OK" || x.Result == "PASS");
+                    var ng = g.Count(x => x.Result == "NG" || x.Result == "FAIL");
+                    return new HourlyStatDto(
+                        DateTime.SpecifyKind(g.Key.Date.AddHours(g.Key.Hour), DateTimeKind.Utc),
+                        lineId ?? 0,
+                        stationId ?? 0,
+                        total,
+                        ok,
+                        ng,
+                        total > 0 ? Math.Round((double)ok / total * 100.0, 2) : 0.0
+                    );
+                })
+                .OrderBy(g => g.Bucket)
+                .ToList();
+
+            return grouped;
         }
 
         public async Task<ProductionSummaryDto> GetSummaryAsync()
         {
             var totalInspected = await _db.PcbResults.CountAsync();
-            var totalOk = await _db.PcbResults.CountAsync(p => p.Result == "OK");
-            var totalNg = await _db.PcbResults.CountAsync(p => p.Result == "NG");
+            var totalOk = await _db.PcbResults.CountAsync(p => p.Result == "OK" || p.Result == "PASS");
+            var totalNg = await _db.PcbResults.CountAsync(p => p.Result == "NG" || p.Result == "FAIL");
 
             var yieldRate = totalInspected > 0 ? Math.Round((double)totalOk / totalInspected * 100.0, 2) : 0.0;
             var activeChannels = (await _masterDataService.GetChannelsAsync()).Count(c => c.Status == "online");
@@ -211,5 +236,104 @@ namespace PMSystem2.Api.Services
                 recentHourly
             );
         }
+
+        public async Task<List<LineYieldStatDto>> GetLineYieldStatsAsync(int? lineId = null)
+        {
+            var lines = await _masterDataService.GetLinesAsync();
+            var query = _db.PcbResults.AsNoTracking().AsQueryable();
+            if (lineId.HasValue)
+            {
+                query = query.Where(p => p.LineId == lineId.Value);
+            }
+
+            var grouped = await query
+                .GroupBy(p => p.LineId)
+                .Select(g => new {
+                    LineId = g.Key,
+                    Total = g.Count(),
+                    Ok = g.Count(x => x.Result == "OK" || x.Result == "PASS"),
+                    Ng = g.Count(x => x.Result == "NG" || x.Result == "FAIL")
+                })
+                .ToListAsync();
+
+            var result = new List<LineYieldStatDto>();
+            foreach (var g in grouped)
+            {
+                var lineName = lines.FirstOrDefault(l => l.Id == g.LineId)?.Name ?? $"Line {g.LineId}";
+                var yieldRate = g.Total > 0 ? Math.Round((double)g.Ok / g.Total * 100.0, 2) : 0.0;
+                result.Add(new LineYieldStatDto(g.LineId, lineName, g.Total, g.Ok, g.Ng, yieldRate));
+            }
+
+            return result.OrderByDescending(r => r.Total).ToList();
+        }
+
+        public async Task<List<StationYieldStatDto>> GetStationYieldStatsAsync(int? lineId = null)
+        {
+            var stations = await _masterDataService.GetStationsAsync();
+            var lines = await _masterDataService.GetLinesAsync();
+            var query = _db.PcbResults.AsNoTracking().AsQueryable();
+            if (lineId.HasValue)
+            {
+                query = query.Where(p => p.LineId == lineId.Value);
+            }
+
+            var grouped = await query
+                .GroupBy(p => p.StationId)
+                .Select(g => new {
+                    StationId = g.Key,
+                    Total = g.Count(),
+                    Ok = g.Count(x => x.Result == "OK" || x.Result == "PASS"),
+                    Ng = g.Count(x => x.Result == "NG" || x.Result == "FAIL")
+                })
+                .ToListAsync();
+
+            var result = new List<StationYieldStatDto>();
+            foreach (var g in grouped)
+            {
+                var st = stations.FirstOrDefault(s => s.Id == g.StationId);
+                var stName = st?.Name ?? $"Station {g.StationId}";
+                var lineIdVal = st?.LineId ?? 0;
+                var lineName = lines.FirstOrDefault(l => l.Id == lineIdVal)?.Name ?? $"Line {lineIdVal}";
+                var yieldRate = g.Total > 0 ? Math.Round((double)g.Ok / g.Total * 100.0, 2) : 0.0;
+                result.Add(new StationYieldStatDto(g.StationId, stName, lineIdVal, lineName, g.Total, g.Ok, g.Ng, yieldRate));
+            }
+
+            return result.OrderBy(r => r.YieldRate).ToList();
+        }
+
+        public async Task<List<DefectParetoStatDto>> GetDefectParetoAsync(int? lineId = null, int? stationId = null)
+        {
+            var query = _db.PcbResults.AsNoTracking()
+                .Where(p => p.Result == "NG" || p.Result == "FAIL");
+
+            if (lineId.HasValue)
+            {
+                query = query.Where(p => p.LineId == lineId.Value);
+            }
+            if (stationId.HasValue)
+            {
+                query = query.Where(p => p.StationId == stationId.Value);
+            }
+
+            var totalNg = await query.CountAsync();
+            if (totalNg == 0) return new List<DefectParetoStatDto>();
+
+            var grouped = await query
+                .GroupBy(p => p.ErrorCode ?? "UNKNOWN_DEFECT")
+                .Select(g => new {
+                    Code = g.Key,
+                    Count = g.Count()
+                })
+                .OrderByDescending(g => g.Count)
+                .Take(20)
+                .ToListAsync();
+
+            return grouped.Select(g => new DefectParetoStatDto(
+                g.Code,
+                g.Count,
+                Math.Round((double)g.Count / totalNg * 100.0, 2)
+            )).ToList();
+        }
     }
 }
+

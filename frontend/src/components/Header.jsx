@@ -1,29 +1,35 @@
 import React from 'react';
-import { Activity, Database, Zap, RefreshCw, Radio, Layers, Server } from 'lucide-react';
-import * as signalR from '@microsoft/signalr';
+import { Activity, Database, BarChart3, Search, RefreshCw, Radio } from 'lucide-react';
 
-export default function Header({ activeTab, onRefresh, signalRState, summaryData }) {
+export default function Header({ activeTab, onRefresh, summaryData }) {
   const getTabDetails = () => {
     switch (activeTab) {
-      case 'master':
+      case 'analytics':
         return {
-          title: 'Master Data Configuration',
-          subtitle: 'Manage Buyers, SMT Assembly Lines, Inspection Stations & Hardware Channels',
-          icon: Database,
+          title: 'Trung Tâm Phân Tích Dữ Liệu (Analytics)',
+          subtitle: 'Phân tích xu hướng sản lượng, ma trận tỷ lệ Yield theo dây chuyền & biểu đồ Pareto mã lỗi',
+          icon: BarChart3,
+          color: 'text-purple-400',
+        };
+      case 'pcb-search':
+        return {
+          title: 'Tra Cứu & Tìm Kiếm Bản Ghi PCB',
+          subtitle: 'Tìm kiếm theo mã vạch PID Barcode, lọc trạng thái OK/NG và tra cứu chi tiết từng bước kiểm tra',
+          icon: Search,
           color: 'text-emerald-400',
         };
-      case 'simulator':
+      case 'master':
         return {
-          title: 'PCB Telemetry Simulator',
-          subtitle: 'High-throughput camera hardware simulator & automated data generator',
-          icon: Zap,
-          color: 'text-amber-400',
+          title: 'Master Data',
+          subtitle: 'Quản lý Dây chuyền sản xuất SMT, Trạm kiểm tra & Các Channels',
+          icon: Database,
+          color: 'text-cyan-400',
         };
       case 'dashboard':
       default:
         return {
-          title: 'Realtime Analytics & Yield Dashboard',
-          subtitle: 'Industrial SMT line inspection telemetry, Pareto defect analysis & station health',
+          title: 'Dashboard Overview',
+          subtitle: 'Thống kê sản lượng tổng thể, tỷ lệ Yield toàn nhà máy & Luồng dữ liệu kiểm tra real-time',
           icon: Activity,
           color: 'text-blue-400',
         };

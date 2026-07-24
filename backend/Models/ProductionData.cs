@@ -140,4 +140,32 @@ namespace PMSystem2.Api.Models
         int ActiveChannels,
         List<HourlyStatDto> RecentHourlyStats
     );
+
+    public record LineYieldStatDto(
+        int LineId,
+        string LineName,
+        long Total,
+        long Ok,
+        long Ng,
+        double YieldRate
+    );
+
+    public record DefectParetoStatDto(
+        string Code,
+        long Count,
+        double Pct
+    );
+
+    public record StationYieldStatDto(
+        int StationId,
+        string StationName,
+        int LineId,
+        string LineName,
+        long Total,
+        long Ok,
+        long Ng,
+        double YieldRate
+    );
 }
+
+

@@ -123,3 +123,4 @@ D:\1. Project\PMSystem2\backend\obj\Debug\net10.0\refint\PMSystem2.Api.dll
 D:\1. Project\PMSystem2\backend\obj\Debug\net10.0\PMSystem2.Api.pdb
 D:\1. Project\PMSystem2\backend\obj\Debug\net10.0\PMSystem2.Api.genruntimeconfig.cache
 D:\1. Project\PMSystem2\backend\obj\Debug\net10.0\ref\PMSystem2.Api.dll
+D:\1. Project\PMSystem2\backend\obj\Debug\net10.0\PMSystem2.Api.sourcelink.json
