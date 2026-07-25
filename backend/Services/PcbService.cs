@@ -71,15 +71,58 @@ namespace PMSystem2.Api.Services
                 throw new ArgumentException($"Unable to resolve channel hierarchy for Channel ID {req.ChannelId}.");
             }
 
+            var normalizedResult = req.Result.ToUpperInvariant();
+            var rawInspectTime = req.InspectTime ?? req.StartTime ?? DateTime.UtcNow;
+            var inspectTime = DateTime.SpecifyKind(rawInspectTime, DateTimeKind.Utc);
+
+            // 1. Check if an identical PCB test result already exists (Deduplication)
+            var existingRecord = await _db.PcbResults
+                .AsNoTracking()
+                .Include(p => p.TestSteps)
+                .FirstOrDefaultAsync(p => p.StationId == hierarchy.StationId
+                                       && p.Pid == req.Pid
+                                       && p.InspectTime == inspectTime
+                                       && p.Result == normalizedResult);
+
+            if (existingRecord != null)
+            {
+                _logger.LogWarning("[DEDUPLICATION] Duplicate PCB result ignored for PID: {Pid}, StationId: {StationId}, InspectTime: {InspectTime}",
+                    req.Pid, hierarchy.StationId, inspectTime);
+
+                return new PcbResultDto(
+                    existingRecord.Id,
+                    existingRecord.ChannelId,
+                    hierarchy.ChannelName,
+                    existingRecord.StationId,
+                    hierarchy.StationName,
+                    hierarchy.LineId,
+                    hierarchy.LineName,
+                    existingRecord.Pid,
+                    existingRecord.Result,
+                    existingRecord.ErrorCode,
+                    existingRecord.InspectTime,
+                    existingRecord.TestSteps.OrderBy(t => t.StepNumber).Select(t => new TestStepInputDto
+                    {
+                        StepType = t.StepType,
+                        StepNumber = t.StepNumber,
+                        StepName = t.StepName,
+                        Result = t.Result,
+                        Value = t.Value,
+                        SpecMin = t.SpecMin,
+                        SpecMax = t.SpecMax
+                    }).ToList()
+                );
+            }
+
             var entity = new PcbResult
             {
                 ChannelId = channelId,
                 StationId = hierarchy.StationId,
                 LineId = hierarchy.LineId,
                 Pid = req.Pid,
-                Result = req.Result.ToUpperInvariant(),
+                Result = normalizedResult,
                 ErrorCode = req.ErrorCode,
-                InspectTime = DateTime.UtcNow
+                InspectTime = inspectTime
             };
 
             if (req.Steps != null && req.Steps.Count > 0)
@@ -99,8 +142,36 @@ namespace PMSystem2.Api.Services
                 }
             }
 
-            _db.PcbResults.Add(entity);
-            await _db.SaveChangesAsync();
+            try
+            {
+                _db.PcbResults.Add(entity);
+                await _db.SaveChangesAsync();
+            }
+            catch (DbUpdateException ex)
+            {
+                _logger.LogWarning(ex, "[DEDUPLICATION] DB Unique constraint prevented inserting duplicate PCB result for PID: {Pid}", req.Pid);
+                _db.Entry(entity).State = EntityState.Detached;
+
+                // Fallback: Fetch existing record
+                var duplicate = await _db.PcbResults
+                    .AsNoTracking()
+                    .FirstOrDefaultAsync(p => p.StationId == hierarchy.StationId && p.Pid == req.Pid && p.InspectTime == inspectTime);
+
+                return new PcbResultDto(
+                    duplicate?.Id ?? entity.Id,
+                    channelId,
+                    hierarchy.ChannelName,
+                    hierarchy.StationId,
+                    hierarchy.StationName,
+                    hierarchy.LineId,
+                    hierarchy.LineName,
+                    req.Pid,
+                    normalizedResult,
+                    req.ErrorCode,
+                    inspectTime,
+                    req.Steps ?? new List<TestStepInputDto>()
+                );
+            }
 
             var dto = new PcbResultDto(
                 entity.Id,

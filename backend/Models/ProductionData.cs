@@ -100,10 +100,25 @@ namespace PMSystem2.Api.Models
 
     public class SubmitPcbRequest
     {
+        [System.Text.Json.Serialization.JsonPropertyName("channel_id")]
         public int ChannelId { get; set; }
+
+        [System.Text.Json.Serialization.JsonPropertyName("pid")]
         public string Pid { get; set; } = string.Empty;
+
+        [System.Text.Json.Serialization.JsonPropertyName("result")]
         public string Result { get; set; } = "OK"; // OK / NG
+
+        [System.Text.Json.Serialization.JsonPropertyName("error_code")]
         public string? ErrorCode { get; set; }
+
+        [System.Text.Json.Serialization.JsonPropertyName("inspect_time")]
+        public DateTime? InspectTime { get; set; }
+
+        [System.Text.Json.Serialization.JsonPropertyName("start_time")]
+        public DateTime? StartTime { get; set; }
+
+        [System.Text.Json.Serialization.JsonPropertyName("steps")]
         public List<TestStepInputDto>? Steps { get; set; }
     }
 

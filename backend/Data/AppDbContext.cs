@@ -43,6 +43,11 @@ namespace PMSystem2.Api.Data
                 .WithMany(p => p.TestSteps)
                 .HasForeignKey(t => t.PcbResultId)
                 .OnDelete(DeleteBehavior.Cascade);
+
+            modelBuilder.Entity<PcbResult>()
+                .HasIndex(p => new { p.StationId, p.Pid, p.InspectTime, p.Result })
+                .IsUnique()
+                .HasDatabaseName("UX_pcb_results_station_pid_time_result");
         }
     }
 }
