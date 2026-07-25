@@ -24,6 +24,7 @@ import {
   ChevronDown,
   Folder,
   FolderOpen,
+  FolderTree,
   Search,
   Check,
   X
@@ -180,18 +181,36 @@ export default function CommandControl({ lines = [], stations = [], channels = [
   const getTargetDescription = () => {
     if (targetMode === 'all') return '🌐 Tất cả thiết bị (Broadcast All)';
     if (targetMode === 'line') {
-      const lineObj = lines.find((l) => String(l.id) === String(selectedLineId));
+      const lineObj = (lines || []).find((l) => String(l.id) === String(selectedLineId));
       return `🏭 Dây chuyền: ${lineObj ? lineObj.name : 'Chưa chọn Line'}`;
     }
     if (targetMode === 'station') {
-      const stObj = stations.find((s) => String(s.id) === String(selectedStationId));
+      const stObj = (stations || []).find((s) => String(s.id) === String(selectedStationId));
       return `🚉 Trạm kiểm tra: ${stObj ? stObj.name : 'Chưa chọn Station'}`;
     }
     if (targetMode === 'channel') {
-      const chObj = channels.find((c) => String(c.id) === String(selectedChannelId));
+      const chObj = (channels || []).find((c) => String(c.id) === String(selectedChannelId));
       return `🔌 Kênh #${selectedChannelId} (${chObj ? chObj.channelName || chObj.macAddress || 'Channel' : 'Chưa chọn Channel'})`;
     }
     return 'Chưa xác định';
+  };
+
+  // Helper: Get Trigger Bar Selected Node Label
+  const getSelectedNodeLabel = () => {
+    if (targetMode === 'all') return 'Tất Cả Các Máy (Broadcast All)';
+    if (targetMode === 'line') {
+      const line = (lines || []).find((l) => String(l.id) === String(selectedLineId));
+      return line ? `Dây chuyền: ${line.name}` : 'Chưa chọn Line (Nhấp vào đây để chọn...)';
+    }
+    if (targetMode === 'station') {
+      const station = (stations || []).find((s) => String(s.id) === String(selectedStationId));
+      return station ? `Trạm: ${station.name}` : 'Chưa chọn Station (Nhấp vào đây để chọn...)';
+    }
+    if (targetMode === 'channel') {
+      const ch = (channels || []).find((c) => String(c.id) === String(selectedChannelId));
+      return ch ? `Kênh #${ch.channelNo || ch.id} (${ch.channelName || ch.macAddress || 'Kênh'})` : 'Chưa chọn Channel (Nhấp vào đây để chọn...)';
+    }
+    return 'Chọn phạm vi nhận lệnh...';
   };
 
   // Show Temporary Notification Banner
@@ -307,12 +326,16 @@ export default function CommandControl({ lines = [], stations = [], channels = [
 
   // Build Tree Data Hierarchy (Root -> Line -> Station -> Channel)
   const treeData = useMemo(() => {
-    const lineNodes = lines.map((line) => {
-      const lineStations = stations.filter((s) => String(s.lineId) === String(line.id));
-      const lineChannels = channels.filter((c) => String(c.lineId) === String(line.id));
+    const safeLines = lines || [];
+    const safeStations = stations || [];
+    const safeChannels = channels || [];
+
+    const lineNodes = safeLines.map((line) => {
+      const lineStations = safeStations.filter((s) => String(s.lineId) === String(line.id));
+      const lineChannels = safeChannels.filter((c) => String(c.lineId) === String(line.id));
 
       const stationNodes = lineStations.map((station) => {
-        const stationChannels = channels.filter((c) => String(c.stationId) === String(station.id));
+        const stationChannels = safeChannels.filter((c) => String(c.stationId) === String(station.id));
 
         const channelNodes = stationChannels.map((ch) => ({
           id: `channel-${ch.id}`,
@@ -351,7 +374,7 @@ export default function CommandControl({ lines = [], stations = [], channels = [
       id: 'root-all',
       type: 'all',
       label: 'Tất Cả Các Máy (Broadcast All)',
-      sublabel: `${channels.length} thiết bị`,
+      sublabel: `${safeChannels.length} thiết bị`,
       children: lineNodes,
     };
   }, [lines, stations, channels]);
