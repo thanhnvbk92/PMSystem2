@@ -505,19 +505,25 @@ export default function CommandControl({ lines = [], stations = [], channels = [
       const stationNodes = lineStations.map((station) => {
         const stationChannels = safeChannels.filter((c) => String(c.stationId) === String(station.id));
 
-        const channelNodes = stationChannels.map((ch) => ({
-          id: `channel-${ch.id}`,
-          type: 'channel',
-          lineId: line.id,
-          stationId: station.id,
-          channelId: ch.id,
-          label: `Channel #${ch.channelNo || ch.id} (${ch.channelName || 'Kênh'})`,
-          sublabel: ch.macAddress || ch.ipAddress || 'MAC-N/A',
-          macAddress: ch.macAddress,
-          ipAddress: ch.ipAddress,
-          isOnline: ch.status === 'Active' || ch.status === 'online' || ch.isOnline === true || Boolean(ch.macAddress),
-          children: [],
-        }));
+        const channelNodes = stationChannels.map((ch) => {
+          const name = ch.channelName || ch.name || `Kênh #${ch.channelNo || ch.id}`;
+          const ip = ch.ipAddress || ch.ip;
+          const ipText = ip ? `IP: ${ip}` : (ch.macAddress ? `MAC: ${ch.macAddress}` : 'IP: N/A');
+
+          return {
+            id: `channel-${ch.id}`,
+            type: 'channel',
+            lineId: line.id,
+            stationId: station.id,
+            channelId: ch.id,
+            label: name,
+            sublabel: ipText,
+            macAddress: ch.macAddress,
+            ipAddress: ip,
+            isOnline: ch.status === 'Active' || ch.status === 'online' || ch.isOnline === true || Boolean(ch.macAddress),
+            children: [],
+          };
+        });
 
         const onlineCount = channelNodes.filter((c) => c.isOnline).length;
 
@@ -548,19 +554,25 @@ export default function CommandControl({ lines = [], stations = [], channels = [
       if (targetStation) {
         const lineId = targetStation.lineId;
         const stationChannels = safeChannels.filter((c) => String(c.stationId) === String(targetStation.id));
-        const channelNodes = stationChannels.map((ch) => ({
-          id: `channel-${ch.id}`,
-          type: 'channel',
-          lineId: lineId,
-          stationId: targetStation.id,
-          channelId: ch.id,
-          label: `Channel #${ch.channelNo || ch.id} (${ch.channelName || 'Kênh'})`,
-          sublabel: ch.macAddress || ch.ipAddress || 'MAC-N/A',
-          macAddress: ch.macAddress,
-          ipAddress: ch.ipAddress,
-          isOnline: ch.status === 'Active' || ch.status === 'online' || ch.isOnline === true || Boolean(ch.macAddress),
-          children: [],
-        }));
+        const channelNodes = stationChannels.map((ch) => {
+          const name = ch.channelName || ch.name || `Kênh #${ch.channelNo || ch.id}`;
+          const ip = ch.ipAddress || ch.ip;
+          const ipText = ip ? `IP: ${ip}` : (ch.macAddress ? `MAC: ${ch.macAddress}` : 'IP: N/A');
+
+          return {
+            id: `channel-${ch.id}`,
+            type: 'channel',
+            lineId: lineId,
+            stationId: targetStation.id,
+            channelId: ch.id,
+            label: name,
+            sublabel: ipText,
+            macAddress: ch.macAddress,
+            ipAddress: ip,
+            isOnline: ch.status === 'Active' || ch.status === 'online' || ch.isOnline === true || Boolean(ch.macAddress),
+            children: [],
+          };
+        });
 
         const onlineCount = channelNodes.filter((c) => c.isOnline).length;
 
@@ -612,6 +624,7 @@ export default function CommandControl({ lines = [], stations = [], channels = [
     if (node.label?.toLowerCase().includes(q)) return true;
     if (node.sublabel?.toLowerCase().includes(q)) return true;
     if (node.macAddress?.toLowerCase().includes(q)) return true;
+    if (node.ipAddress?.toLowerCase().includes(q)) return true;
     if (node.children && node.children.some((c) => nodeMatchesSearch(c, q))) return true;
     return false;
   };
