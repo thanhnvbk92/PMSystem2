@@ -5,6 +5,7 @@ import Dashboard from './components/Dashboard';
 import Analytics from './components/Analytics';
 import PcbSearch from './components/PcbSearch';
 import MasterData from './components/MasterData';
+import CommandControl from './components/CommandControl';
 import { MasterDataApi, ProductionApi } from './services/api';
 import { initSignalR } from './services/signalr';
 import * as signalR from '@microsoft/signalr';
@@ -220,6 +221,15 @@ export default function App() {
               lines={lines}
               stations={stations}
               onFilterChange={handleFilterChange}
+            />
+          )}
+
+          {activeTab === 'command' && (
+            <CommandControl
+              lines={lines}
+              stations={stations}
+              channels={channels}
+              onRefreshMasterData={loadMasterData}
             />
           )}
 

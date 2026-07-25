@@ -112,6 +112,8 @@ namespace PMSystem2.Api.Hubs
             var httpContext = Context.GetHttpContext();
             var macAddress = httpContext?.Request.Query["mac_address"].ToString();
             var channelIdStr = httpContext?.Request.Query["channel_id"].ToString();
+            var stationIdStr = httpContext?.Request.Query["station_id"].ToString();
+            var lineIdStr = httpContext?.Request.Query["line_id"].ToString();
 
             _logger.LogInformation("[CommandHub] Client connected: ConnectionId={ConnectionId}, MAC={Mac}, ChannelId={ChannelId}",
                 Context.ConnectionId, macAddress, channelIdStr);
@@ -125,6 +127,16 @@ namespace PMSystem2.Api.Hubs
             if (int.TryParse(channelIdStr, out int channelId) && channelId > 0)
             {
                 await Groups.AddToGroupAsync(Context.ConnectionId, $"Channel_{channelId}");
+            }
+
+            if (int.TryParse(stationIdStr, out int stationId) && stationId > 0)
+            {
+                await Groups.AddToGroupAsync(Context.ConnectionId, $"Station_{stationId}");
+            }
+
+            if (int.TryParse(lineIdStr, out int lineId) && lineId > 0)
+            {
+                await Groups.AddToGroupAsync(Context.ConnectionId, $"Line_{lineId}");
             }
 
             await Groups.AddToGroupAsync(Context.ConnectionId, "AllCommandClients");
@@ -161,7 +173,7 @@ namespace PMSystem2.Api.Hubs
             await base.OnDisconnectedAsync(exception);
         }
 
-        public async Task RegisterMachineGroup(string macAddress, int? channelId, int? lineId)
+        public async Task RegisterMachineGroup(string macAddress, int? channelId, int? lineId, int? stationId = null)
         {
             if (!string.IsNullOrWhiteSpace(macAddress))
             {
@@ -172,6 +184,11 @@ namespace PMSystem2.Api.Hubs
             if (channelId.HasValue && channelId.Value > 0)
             {
                 await Groups.AddToGroupAsync(Context.ConnectionId, $"Channel_{channelId.Value}");
+            }
+
+            if (stationId.HasValue && stationId.Value > 0)
+            {
+                await Groups.AddToGroupAsync(Context.ConnectionId, $"Station_{stationId.Value}");
             }
 
             if (lineId.HasValue && lineId.Value > 0)

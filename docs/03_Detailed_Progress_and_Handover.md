@@ -17,6 +17,7 @@
 | **Chống trùng lặp Dữ liệu PCB (Deduplication)** | **100%** | Ràng buộc DB Unique Index + Service level pre-check thời gian kiểm tra |
 | **Tích hợp Station Yield API** | **100%** | Endpoint `/api/v1/production/stats/station-yield` |
 | **Loại bỏ Hardcoded Fallback UI** | **100%** | Biểu đồ & KPI Card trên `Dashboard.jsx` lấy 100% dữ liệu DB |
+| **Trang Điều Khiển Máy Từ Xa (Command Center)** | **100%** | Gửi lệnh tập trung theo Line, Station, Channel riêng lẻ qua SignalR |
 | **Nạp dữ liệu sản xuất quy mô lớn** | **Chờ chạy lệnh** | Cần chạy script migrate từ server ClickHouse cũ (`192.168.100.10`) |
 
 ---
@@ -64,6 +65,18 @@
   * **Database Unique Constraint**: Thêm Unique Index `UX_pcb_results_station_pid_time_result` trên 4 trường `(StationId, Pid, InspectTime, Result)` trong `AppDbContext.cs`.
   * **Ingestion Timestamp Mapping**: Cập nhật DTO `SubmitPcbRequest` tiếp nhận chính xác mốc thời gian kiểm tra thực tế (`inspect_time` / `start_time`) từ log file.
   * **Service Level Validation**: Trong `PcbService.SubmitResultAsync`, ứng dụng kiểm tra trước xem bộ kết quả với mốc thời gian tương ứng đã có trong DB chưa. Nếu đã có, hệ thống tự động ghi log cảnh báo và bỏ qua bản ghi trùng mà không chèn vào DB.
+
+### 2.7 Trang Điều Khiển & Gửi Lệnh Từ Xa (Command Center UI & Hub)
+* **Yêu cầu người dùng**: Thêm 1 trang Command mới để điều khiển từ xa tập trung hàng loạt máy collector. Hỗ trợ 3 cấp độ phạm vi điều khiển: theo **Dây Chuyền (Line)**, theo **Trạm Kiểm Tra (Station)**, hoặc **Kênh Riêng Lẻ (Channel/MAC)**.
+* **Cách đã xử lý**:
+  * **Backend (`CommandController.cs` & `CommandHub.cs`)**:
+    * Bổ sung thuộc tính `StationId` vào DTOs lệnh (`SendCommandRequest`, `ChangeModelCommandRequest`, `RestartCommandRequest`).
+    * Mở rộng nhóm SignalR Hub (`Line_{id}`, `Station_{id}`, `Channel_{id}`, `MAC_{mac}`, `AllCommandClients`). Client tự động đăng ký vào nhóm tương ứng khi kết nối.
+  * **Frontend (`CommandControl.jsx`)**:
+    * Xây dựng giao diện chọn phạm vi nhận lệnh trực quan (4 chế độ: Tất cả máy, Dây chuyền, Trạm kiểm tra, Kênh riêng lẻ) với xem trước danh sách máy sẽ nhận lệnh real-time.
+    * Hỗ trợ 3 mẫu lệnh chính: **Đổi Model sản xuất** (kèm các Preset chip chọn nhanh), **Khởi động lại App Backup Log** (chỉnh Delay Ms), và **Lệnh Tùy Chỉnh (JSON Payload)**.
+    * Tích hợp nhật ký thực thi phát lệnh (Command Execution Log Console) hiển thị thời gian, lệnh, thiết bị đích và phản hồi thời gian thực từ SignalR.
+  * **Sidebar Navigation**: Thêm mục menu **"Điều Khiển Máy"** (Command Center) với icon `Terminal` phân lớp `REMOTE CONTROL`.
 
 ---
 

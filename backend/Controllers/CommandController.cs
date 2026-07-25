@@ -8,6 +8,7 @@ namespace PMSystem2.Api.Controllers
     {
         public string? MacAddress { get; set; }
         public int? ChannelId { get; set; }
+        public int? StationId { get; set; }
         public int? LineId { get; set; }
         public string Command { get; set; } = string.Empty;
         public object? Data { get; set; }
@@ -17,6 +18,7 @@ namespace PMSystem2.Api.Controllers
     {
         public string? MacAddress { get; set; }
         public int? ChannelId { get; set; }
+        public int? StationId { get; set; }
         public int? LineId { get; set; }
         public string ModelName { get; set; } = string.Empty;
     }
@@ -25,6 +27,7 @@ namespace PMSystem2.Api.Controllers
     {
         public string? MacAddress { get; set; }
         public int? ChannelId { get; set; }
+        public int? StationId { get; set; }
         public int? LineId { get; set; }
         public int DelayMs { get; set; } = 1500;
     }
@@ -53,7 +56,7 @@ namespace PMSystem2.Api.Controllers
                 Data = req.Data
             };
 
-            var target = GetTargetClient(req.MacAddress, req.ChannelId, req.LineId);
+            var target = GetTargetClient(req.MacAddress, req.ChannelId, req.StationId, req.LineId);
             await target.ReceiveCommand(envelope);
 
             _logger.LogInformation("[CommandAPI] Command '{Command}' dispatched via SignalR", req.Command);
@@ -68,7 +71,7 @@ namespace PMSystem2.Api.Controllers
                 return BadRequest(new { error = "ModelName is required." });
             }
 
-            var target = GetTargetClient(req.MacAddress, req.ChannelId, req.LineId);
+            var target = GetTargetClient(req.MacAddress, req.ChannelId, req.StationId, req.LineId);
             await target.ChangeModel(req.ModelName);
 
             _logger.LogInformation("[CommandAPI] ChangeModel '{ModelName}' dispatched via SignalR", req.ModelName);
@@ -78,7 +81,7 @@ namespace PMSystem2.Api.Controllers
         [HttpPost("restart")]
         public async Task<IActionResult> RestartApp([FromBody] RestartCommandRequest req)
         {
-            var target = GetTargetClient(req.MacAddress, req.ChannelId, req.LineId);
+            var target = GetTargetClient(req.MacAddress, req.ChannelId, req.StationId, req.LineId);
             await target.RestartApp(req.DelayMs);
 
             _logger.LogInformation("[CommandAPI] RestartApp dispatched via SignalR");
@@ -92,7 +95,7 @@ namespace PMSystem2.Api.Controllers
             return Ok(new { status = "acknowledged" });
         }
 
-        private ICommandClient GetTargetClient(string? macAddress, int? channelId, int? lineId)
+        private ICommandClient GetTargetClient(string? macAddress, int? channelId, int? stationId, int? lineId)
         {
             if (!string.IsNullOrWhiteSpace(macAddress))
             {
@@ -103,6 +106,11 @@ namespace PMSystem2.Api.Controllers
             if (channelId.HasValue && channelId.Value > 0)
             {
                 return _hubContext.Clients.Group($"Channel_{channelId.Value}");
+            }
+
+            if (stationId.HasValue && stationId.Value > 0)
+            {
+                return _hubContext.Clients.Group($"Station_{stationId.Value}");
             }
 
             if (lineId.HasValue && lineId.Value > 0)

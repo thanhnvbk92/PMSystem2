@@ -8,7 +8,8 @@ import {
   ChevronRight,
   BarChart3,
   Search,
-  Layers
+  Layers,
+  Terminal
 } from 'lucide-react';
 import * as signalR from '@microsoft/signalr';
 
@@ -71,6 +72,14 @@ export default function Sidebar({
       icon: Search,
       color: 'text-emerald-400',
       activeBg: 'from-emerald-600 to-teal-600',
+    },
+    {
+      id: 'command',
+      label: 'Điều Khiển Máy',
+      category: 'REMOTE CONTROL',
+      icon: Terminal,
+      color: 'text-amber-400',
+      activeBg: 'from-amber-600 to-orange-600',
     },
     {
       id: 'master',

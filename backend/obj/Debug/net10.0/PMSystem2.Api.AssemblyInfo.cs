@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("PMSystem2.Api")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+a0991f26207f69d681880583cc951e4960ee71ba")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+f8d659cad6ad354c4ab47c824fafcf754bcc2b05")]
 [assembly: System.Reflection.AssemblyProductAttribute("PMSystem2.Api")]
 [assembly: System.Reflection.AssemblyTitleAttribute("PMSystem2.Api")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

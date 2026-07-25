@@ -48,3 +48,10 @@ export const ProductionApi = {
   submitPcb: (data) => api.post('/production/submit', data).then(res => res.data),
 };
 
+export const CommandApi = {
+  sendCommand: (data) => api.post('/commands/send', data).then(res => res.data),
+  changeModel: (data) => api.post('/commands/change-model', data).then(res => res.data),
+  restartApp: (data) => api.post('/commands/restart', data).then(res => res.data),
+};
+
+
