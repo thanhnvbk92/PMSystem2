@@ -27,7 +27,12 @@ import {
   FolderTree,
   Search,
   Check,
-  X
+  X,
+  CheckSquare,
+  Square,
+  MinusSquare,
+  CheckCheck,
+  XSquare
 } from 'lucide-react';
 import { CommandApi } from '../services/api';
 
@@ -122,6 +127,91 @@ export default function CommandControl({ lines = [], stations = [], channels = [
     'DEFAULT_RUN'
   ];
 
+  // Checked Node IDs State (Default: 'root-all' checked)
+  const [checkedNodeIds, setCheckedNodeIds] = useState({ 'root-all': true });
+
+  // Get all descendant IDs of a node
+  const getDescendantNodeIds = (node) => {
+    if (!node) return [];
+    let ids = [node.id];
+    if (node.children && node.children.length > 0) {
+      node.children.forEach((child) => {
+        ids = ids.concat(getDescendantNodeIds(child));
+      });
+    }
+    return ids;
+  };
+
+  // Get leaf channel nodes under a node
+  const getLeafChannelNodes = (node) => {
+    if (!node) return [];
+    if (node.type === 'channel') return [node];
+    let list = [];
+    if (node.children) {
+      node.children.forEach((c) => {
+        list = list.concat(getLeafChannelNodes(c));
+      });
+    }
+    return list;
+  };
+
+  // Determine node check status ('checked' | 'indeterminate' | 'unchecked')
+  const getNodeCheckStatus = (node) => {
+    if (!node) return 'unchecked';
+    if (checkedNodeIds['root-all']) return 'checked';
+    if (checkedNodeIds[node.id]) return 'checked';
+
+    if (node.children && node.children.length > 0) {
+      const leafChannels = getLeafChannelNodes(node);
+      if (leafChannels.length === 0) return 'unchecked';
+
+      const checkedCount = leafChannels.filter(
+        (c) =>
+          checkedNodeIds[c.id] ||
+          checkedNodeIds[`line-${c.lineId}`] ||
+          checkedNodeIds[`station-${c.stationId}`] ||
+          checkedNodeIds['root-all']
+      ).length;
+
+      if (checkedCount === leafChannels.length) return 'checked';
+      if (checkedCount > 0) return 'indeterminate';
+    }
+
+    return 'unchecked';
+  };
+
+  // Toggle check/uncheck for a node and its children
+  const handleToggleNodeCheck = (node, e) => {
+    if (e) e.stopPropagation();
+
+    const currentStatus = getNodeCheckStatus(node);
+    const descendantIds = getDescendantNodeIds(node);
+
+    setCheckedNodeIds((prev) => {
+      const next = { ...prev };
+
+      if (currentStatus === 'checked') {
+        descendantIds.forEach((id) => { delete next[id]; });
+        delete next['root-all'];
+        if (node.lineId) delete next[`line-${node.lineId}`];
+        if (node.stationId) delete next[`station-${node.stationId}`];
+      } else {
+        descendantIds.forEach((id) => { next[id] = true; });
+        if (node.type === 'all') next['root-all'] = true;
+
+        const safeChannels = channels || [];
+        const allChecked = safeChannels.length > 0 && safeChannels.every(
+          (c) => next[`channel-${c.id}`] || next[`station-${c.stationId}`] || next[`line-${c.lineId}`]
+        );
+        if (allChecked) {
+          next['root-all'] = true;
+        }
+      }
+
+      return next;
+    });
+  };
+
   // Helper: Filter Stations based on Selected Line
   const filteredStations = useMemo(() => {
     if (!selectedLineId) return stations;
@@ -140,26 +230,23 @@ export default function CommandControl({ lines = [], stations = [], channels = [
     return list;
   }, [channels, selectedLineId, selectedStationId]);
 
-  // Calculate Targeted Channels based on targetMode
+  // Calculate Targeted Channels based on checkedNodeIds or targetMode
   const targetedChannels = useMemo(() => {
-    if (targetMode === 'all') return channels;
-    if (targetMode === 'line') {
-      if (!selectedLineId) return [];
-      return channels.filter((c) => String(c.lineId) === String(selectedLineId));
-    }
-    if (targetMode === 'station') {
-      if (!selectedStationId) return [];
-      return channels.filter((c) => String(c.stationId) === String(selectedStationId));
-    }
-    if (targetMode === 'channel') {
-      if (!selectedChannelId) return [];
-      return channels.filter((c) => String(c.id) === String(selectedChannelId));
-    }
-    return [];
-  }, [channels, targetMode, selectedLineId, selectedStationId, selectedChannelId]);
+    if (checkedNodeIds['root-all']) return channels || [];
+    const safeChannels = channels || [];
+    return safeChannels.filter((c) => {
+      return (
+        checkedNodeIds[`channel-${c.id}`] ||
+        checkedNodeIds[`station-${c.stationId}`] ||
+        checkedNodeIds[`line-${c.lineId}`] ||
+        checkedNodeIds['root-all']
+      );
+    });
+  }, [channels, checkedNodeIds]);
 
   // Get Target Payload Parameters for API
   const getTargetPayload = () => {
+    if (checkedNodeIds['root-all']) return {};
     const payload = {};
     if (targetMode === 'line' && selectedLineId) {
       payload.lineId = parseInt(selectedLineId, 10);
@@ -179,38 +266,38 @@ export default function CommandControl({ lines = [], stations = [], channels = [
 
   // Get Target Summary String for Console Display
   const getTargetDescription = () => {
-    if (targetMode === 'all') return '🌐 Tất cả thiết bị (Broadcast All)';
-    if (targetMode === 'line') {
-      const lineObj = (lines || []).find((l) => String(l.id) === String(selectedLineId));
-      return `🏭 Dây chuyền: ${lineObj ? lineObj.name : 'Chưa chọn Line'}`;
+    if (checkedNodeIds['root-all']) return '🌐 Tất cả thiết bị (Broadcast All)';
+    const count = targetedChannels.length;
+    if (count === 0) return '❌ Chưa chọn thiết bị nào';
+
+    if (count === (channels || []).length && count > 0) {
+      return '🌐 Tất cả thiết bị (Broadcast All)';
     }
-    if (targetMode === 'station') {
-      const stObj = (stations || []).find((s) => String(s.id) === String(selectedStationId));
-      return `🚉 Trạm kiểm tra: ${stObj ? stObj.name : 'Chưa chọn Station'}`;
+
+    if (count === 1) {
+      const chObj = targetedChannels[0];
+      return `🔌 Kênh #${chObj.channelNo || chObj.id} (${chObj.channelName || chObj.macAddress || 'Channel'})`;
     }
-    if (targetMode === 'channel') {
-      const chObj = (channels || []).find((c) => String(c.id) === String(selectedChannelId));
-      return `🔌 Kênh #${selectedChannelId} (${chObj ? chObj.channelName || chObj.macAddress || 'Channel' : 'Chưa chọn Channel'})`;
-    }
-    return 'Chưa xác định';
+
+    return `🎯 Đã tích chọn ${count} thiết bị (${count} channels)`;
   };
 
   // Helper: Get Trigger Bar Selected Node Label
   const getSelectedNodeLabel = () => {
-    if (targetMode === 'all') return 'Tất Cả Các Máy (Broadcast All)';
-    if (targetMode === 'line') {
-      const line = (lines || []).find((l) => String(l.id) === String(selectedLineId));
-      return line ? `Dây chuyền: ${line.name}` : 'Chưa chọn Line (Nhấp vào đây để chọn...)';
+    if (checkedNodeIds['root-all']) return 'Tất Cả Các Máy (Broadcast All)';
+    const count = targetedChannels.length;
+    if (count === 0) return 'Chưa chọn thiết bị nào (Nhấp vào đây để chọn...)';
+    
+    if (count === (channels || []).length && count > 0) {
+      return 'Tất Cả Các Máy (Broadcast All)';
     }
-    if (targetMode === 'station') {
-      const station = (stations || []).find((s) => String(s.id) === String(selectedStationId));
-      return station ? `Trạm: ${station.name}` : 'Chưa chọn Station (Nhấp vào đây để chọn...)';
+
+    if (count === 1) {
+      const ch = targetedChannels[0];
+      return `Kênh #${ch.channelNo || ch.id} (${ch.channelName || ch.macAddress || 'Kênh'})`;
     }
-    if (targetMode === 'channel') {
-      const ch = (channels || []).find((c) => String(c.id) === String(selectedChannelId));
-      return ch ? `Kênh #${ch.channelNo || ch.id} (${ch.channelName || ch.macAddress || 'Kênh'})` : 'Chưa chọn Channel (Nhấp vào đây để chọn...)';
-    }
-    return 'Chọn phạm vi nhận lệnh...';
+
+    return `Đã tích chọn ${count} thiết bị (${count} kênh)`;
   };
 
   // Show Temporary Notification Banner
@@ -405,7 +492,8 @@ export default function CommandControl({ lines = [], stations = [], channels = [
 
     const hasChildren = node.children && node.children.length > 0;
     const isExpanded = expandedNodes[node.id] || treeSearch.trim().length > 0;
-    const selected = isNodeSelected(node);
+    const checkStatus = getNodeCheckStatus(node);
+    const selected = checkStatus === 'checked';
 
     let IconComponent = Globe;
     let badgeColor = 'bg-blue-500/10 text-blue-400 border-blue-500/20';
@@ -424,11 +512,16 @@ export default function CommandControl({ lines = [], stations = [], channels = [
     return (
       <div key={node.id} className="select-none">
         <div
-          onClick={() => handleSelectTreeNode(node)}
+          onClick={(e) => {
+            handleToggleNodeCheck(node, e);
+            handleSelectTreeNode(node);
+          }}
           style={{ paddingLeft: `${depth * 16 + 8}px` }}
           className={`flex items-center justify-between py-2 px-2.5 my-0.5 rounded-lg text-xs cursor-pointer transition-all ${
-            selected
-              ? 'bg-gradient-to-r from-amber-500/20 to-orange-600/10 border border-amber-500/50 text-white font-medium shadow-sm'
+            checkStatus === 'checked'
+              ? 'bg-amber-500/15 border border-amber-500/40 text-white font-medium shadow-sm'
+              : checkStatus === 'indeterminate'
+              ? 'bg-amber-500/5 border border-amber-500/20 text-amber-200'
               : 'hover:bg-slate-800/60 text-slate-300 hover:text-slate-100 border border-transparent'
           }`}
         >
@@ -437,7 +530,7 @@ export default function CommandControl({ lines = [], stations = [], channels = [
               <button
                 type="button"
                 onClick={(e) => toggleExpandNode(node.id, e)}
-                className="w-4 h-4 rounded hover:bg-white/10 flex items-center justify-center text-slate-400 hover:text-white transition-colors"
+                className="w-4 h-4 rounded hover:bg-white/10 flex items-center justify-center text-slate-400 hover:text-white transition-colors flex-shrink-0"
               >
                 {isExpanded ? (
                   <ChevronDown className="w-3.5 h-3.5" />
@@ -448,6 +541,22 @@ export default function CommandControl({ lines = [], stations = [], channels = [
             ) : (
               <span className="w-4 h-4 flex-shrink-0"></span>
             )}
+
+            {/* Checkbox Icon Button */}
+            <button
+              type="button"
+              onClick={(e) => handleToggleNodeCheck(node, e)}
+              className="w-4 h-4 flex items-center justify-center flex-shrink-0 transition-transform active:scale-90"
+              title={checkStatus === 'checked' ? 'Bỏ chọn' : 'Chọn nút này'}
+            >
+              {checkStatus === 'checked' ? (
+                <CheckSquare className="w-4 h-4 text-amber-400 flex-shrink-0" />
+              ) : checkStatus === 'indeterminate' ? (
+                <MinusSquare className="w-4 h-4 text-amber-400/80 flex-shrink-0" />
+              ) : (
+                <Square className="w-4 h-4 text-slate-500 hover:text-slate-300 flex-shrink-0" />
+              )}
+            </button>
 
             <IconComponent className={`w-4 h-4 flex-shrink-0 ${selected ? 'text-amber-400' : 'text-slate-400'}`} />
             
@@ -465,7 +574,7 @@ export default function CommandControl({ lines = [], stations = [], channels = [
             <span className={`text-[9px] uppercase font-mono px-1.5 py-0.5 rounded border ${badgeColor}`}>
               {node.type}
             </span>
-            {selected && <Check className="w-4 h-4 text-amber-400" />}
+            {selected && <Check className="w-3.5 h-3.5 text-amber-400" />}
           </div>
         </div>
 
@@ -649,31 +758,39 @@ export default function CommandControl({ lines = [], stations = [], channels = [
                     )}
                   </div>
 
-                  {/* Expand / Collapse Actions */}
-                  <div className="flex items-center justify-between text-[11px] text-slate-400 px-1 py-0.5 border-b border-white/5">
-                    <span>Cấu trúc phân cấp</span>
-                    <div className="flex gap-2">
+                  {/* Expand / Collapse & Check / Uncheck Actions Toolbar */}
+                  <div className="flex items-center justify-between text-[11px] text-slate-400 px-1 py-1 border-b border-white/5 bg-slate-900/40 rounded-lg">
+                    <div className="flex items-center gap-1.5">
                       <button
                         type="button"
-                        onClick={() => {
-                          const allExpanded = {};
-                          allExpanded['root-all'] = true;
-                          lines.forEach(l => {
-                            allExpanded[`line-${l.id}`] = true;
-                            stations.filter(s => String(s.lineId) === String(l.id)).forEach(st => {
-                              allExpanded[`station-${st.id}`] = true;
-                            });
-                          });
-                          setExpandedNodes(allExpanded);
-                        }}
-                        className="hover:text-amber-400 transition-colors"
+                        onClick={handleCheckAll}
+                        className="flex items-center gap-1 px-1.5 py-0.5 rounded hover:bg-amber-500/10 hover:text-amber-400 transition-colors"
                       >
-                        Mở tất cả
+                        <CheckCheck className="w-3 h-3 text-amber-400" />
+                        <span>Chọn tất cả</span>
                       </button>
                       <span>•</span>
                       <button
                         type="button"
-                        onClick={() => setExpandedNodes({ 'root-all': true })}
+                        onClick={handleUncheckAll}
+                        className="flex items-center gap-1 px-1.5 py-0.5 rounded hover:bg-rose-500/10 hover:text-rose-400 transition-colors"
+                      >
+                        <XSquare className="w-3 h-3 text-rose-400" />
+                        <span>Bỏ chọn</span>
+                      </button>
+                    </div>
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={handleExpandAll}
+                        className="hover:text-amber-400 transition-colors"
+                      >
+                        Mở rộng
+                      </button>
+                      <span>•</span>
+                      <button
+                        type="button"
+                        onClick={handleCollapseAll}
                         className="hover:text-amber-400 transition-colors"
                       >
                         Thu gọn
