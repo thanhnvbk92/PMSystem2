@@ -196,13 +196,46 @@ namespace PMSystem2.Api.Controllers
         public async Task<IActionResult> Heartbeat([FromBody] HeartbeatPayload? req)
         {
             var targetChannelId = req?.ChannelId ?? req?.Channelid;
+            var reqMac = (req?.MacAddress ?? req?.Mac_Address)?.Trim();
+
             if (targetChannelId.HasValue && targetChannelId.Value > 0)
             {
                 var channels = await _masterDataService.GetChannelsAsync();
                 var ch = channels.FirstOrDefault(c => c.Id == targetChannelId.Value);
                 if (ch != null)
                 {
-                    await _masterDataService.UpdateChannelAsync(ch.Id, new UpdateChannelRequest(ch.StationId, ch.Name, ch.IpAddress, "online"));
+                    if (!string.IsNullOrWhiteSpace(reqMac))
+                    {
+                        if (string.IsNullOrWhiteSpace(ch.MacAddress))
+                        {
+                            await _masterDataService.UpdateChannelAsync(ch.Id, new UpdateChannelRequest(ch.StationId, ch.Name, ch.IpAddress, reqMac, "online"));
+                            await NotifyMasterDataChangedAsync("channels");
+                        }
+                        else if (!ch.MacAddress.Equals(reqMac, StringComparison.OrdinalIgnoreCase))
+                        {
+                            string oldMac = ch.MacAddress;
+                            await _masterDataService.UpdateChannelAsync(ch.Id, new UpdateChannelRequest(ch.StationId, ch.Name, ch.IpAddress, reqMac, "online"));
+                            await NotifyMasterDataChangedAsync("channels");
+
+                            Response.Headers["Date"] = DateTime.UtcNow.ToString("r");
+                            return Ok(new { 
+                                status = "online", 
+                                timestamp = DateTime.UtcNow,
+                                warning = "MAC_CHANGED",
+                                oldMac = oldMac,
+                                newMac = reqMac,
+                                message = $"Cảnh báo: Địa chỉ MAC của Channel #{ch.Id} ({ch.Name}) vừa thay đổi từ [{oldMac}] sang [{reqMac}]. Hệ thống đã tự động cập nhật địa chỉ MAC mới."
+                            });
+                        }
+                        else
+                        {
+                            await _masterDataService.UpdateChannelAsync(ch.Id, new UpdateChannelRequest(ch.StationId, ch.Name, ch.IpAddress, ch.MacAddress, "online"));
+                        }
+                    }
+                    else
+                    {
+                        await _masterDataService.UpdateChannelAsync(ch.Id, new UpdateChannelRequest(ch.StationId, ch.Name, ch.IpAddress, ch.MacAddress, "online"));
+                    }
                 }
             }
             Response.Headers["Date"] = DateTime.UtcNow.ToString("r");
@@ -264,7 +297,7 @@ namespace PMSystem2.Api.Controllers
 
                 var targetIp = req.IpAddress ?? req.Ip_Address ?? "127.0.0.1";
                 targetIp = string.IsNullOrWhiteSpace(targetIp) ? "127.0.0.1" : targetIp.Trim();
-                var targetMac = req.MacAddress ?? req.Mac_Address;
+                var targetMac = (req.MacAddress ?? req.Mac_Address)?.Trim();
 
                 var existingChannels = await _masterDataService.GetChannelsAsync();
 
@@ -279,7 +312,32 @@ namespace PMSystem2.Api.Controllers
                         // Nếu trùng IP và CÙNG Station -> Auto-bind an toàn
                         if (matchedChannel.StationId == stationId)
                         {
-                            return Ok(new { data = new { id = matchedChannel.Id, station_id = matchedChannel.StationId, name = matchedChannel.Name, status = matchedChannel.Status } });
+                            if (!string.IsNullOrWhiteSpace(targetMac))
+                            {
+                                if (string.IsNullOrWhiteSpace(matchedChannel.MacAddress))
+                                {
+                                    await _masterDataService.UpdateChannelAsync(matchedChannel.Id, new UpdateChannelRequest(
+                                        matchedChannel.StationId, matchedChannel.Name, matchedChannel.IpAddress, targetMac, matchedChannel.Status
+                                    ));
+                                    await NotifyMasterDataChangedAsync("channels");
+                                }
+                                else if (!matchedChannel.MacAddress.Equals(targetMac, StringComparison.OrdinalIgnoreCase))
+                                {
+                                    string oldMac = matchedChannel.MacAddress;
+                                    await _masterDataService.UpdateChannelAsync(matchedChannel.Id, new UpdateChannelRequest(
+                                        matchedChannel.StationId, matchedChannel.Name, matchedChannel.IpAddress, targetMac, matchedChannel.Status
+                                    ));
+                                    await NotifyMasterDataChangedAsync("channels");
+
+                                    return Ok(new { 
+                                        data = new { id = matchedChannel.Id, station_id = matchedChannel.StationId, name = matchedChannel.Name, status = matchedChannel.Status, macAddress = targetMac },
+                                        warning = "MAC_CHANGED",
+                                        message = $"Địa chỉ MAC của Channel #{matchedChannel.Id} ({matchedChannel.Name}) vừa thay đổi từ [{oldMac}] sang [{targetMac}]. Hệ thống đã tự động cập nhật địa chỉ MAC mới."
+                                    });
+                                }
+                            }
+
+                            return Ok(new { data = new { id = matchedChannel.Id, station_id = matchedChannel.StationId, name = matchedChannel.Name, status = matchedChannel.Status, macAddress = matchedChannel.MacAddress } });
                         }
 
                         // NẾU TRÙNG IP NHƯNG KHÁC STATION -> Người dùng nhập sai Station ở Backup Log!
@@ -296,7 +354,8 @@ namespace PMSystem2.Api.Controllers
 
                 var createReq = new CreateChannelRequest(stationId, req.Name, targetIp, targetMac);
                 var res = await _masterDataService.CreateChannelAsync(createReq);
-                return Ok(new { data = new { id = res.Id, station_id = res.StationId, name = res.Name, status = res.Status } });
+                await NotifyMasterDataChangedAsync("channels");
+                return Ok(new { data = new { id = res.Id, station_id = res.StationId, name = res.Name, status = res.Status, macAddress = res.MacAddress } });
             }
             catch (Exception ex)
             {
@@ -333,6 +392,30 @@ namespace PMSystem2.Api.Controllers
                 return BadRequest(new { error = $"Không thể xóa Channel này do có dữ liệu liên quan: {ex.Message}" });
             }
         }
+
+        [HttpPost("channels/merge")]
+        public async Task<ActionResult<ChannelDto>> MergeChannels([FromBody] MergeChannelsPayload req)
+        {
+            try
+            {
+                var res = await _masterDataService.MergeChannelsAsync(req.SourceChannelId, req.TargetChannelId);
+                return Ok(res);
+            }
+            catch (KeyNotFoundException ex)
+            {
+                return NotFound(new { error = ex.Message });
+            }
+            catch (Exception ex)
+            {
+                return BadRequest(new { error = ex.Message });
+            }
+        }
+    }
+
+    public class MergeChannelsPayload
+    {
+        public int SourceChannelId { get; set; }
+        public int TargetChannelId { get; set; }
     }
 
     public class HeartbeatPayload

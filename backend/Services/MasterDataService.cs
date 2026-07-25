@@ -29,6 +29,7 @@ namespace PMSystem2.Api.Services
         Task<ChannelDto> CreateChannelAsync(CreateChannelRequest req);
         Task<ChannelDto?> UpdateChannelAsync(int id, UpdateChannelRequest req);
         Task<bool> DeleteChannelAsync(int id);
+        Task<ChannelDto> MergeChannelsAsync(int sourceChannelId, int targetChannelId);
     }
 
     public record ChannelHierarchyInfo(
@@ -474,6 +475,61 @@ namespace PMSystem2.Api.Services
 
             await RefreshCacheAsync();
             return true;
+        }
+
+        public async Task<ChannelDto> MergeChannelsAsync(int sourceChannelId, int targetChannelId)
+        {
+            using var scope = _scopeFactory.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+            var sourceChannel = await db.Channels.FindAsync(sourceChannelId);
+            var targetChannel = await db.Channels.Include(c => c.Station).ThenInclude(s => s != null ? s.Line : null).FirstOrDefaultAsync(c => c.Id == targetChannelId);
+
+            if (sourceChannel == null || targetChannel == null)
+            {
+                throw new KeyNotFoundException("Channel nguồn hoặc Channel đích không tồn tại.");
+            }
+
+            if (sourceChannelId == targetChannelId)
+            {
+                throw new InvalidOperationException("Không thể gộp một Channel vào chính nó.");
+            }
+
+            var targetStationId = targetChannel.StationId;
+            var targetLineId = targetChannel.Station?.LineId ?? 0;
+
+            // Update all production logs from source channel to target channel
+            await db.PcbResults
+                .Where(p => p.ChannelId == sourceChannelId)
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(p => p.ChannelId, targetChannelId)
+                    .SetProperty(p => p.StationId, targetStationId)
+                    .SetProperty(p => p.LineId, targetLineId)
+                );
+
+            // Copy MAC Address if target channel lacks MAC
+            if (string.IsNullOrWhiteSpace(targetChannel.MacAddress) && !string.IsNullOrWhiteSpace(sourceChannel.MacAddress))
+            {
+                targetChannel.MacAddress = sourceChannel.MacAddress;
+            }
+
+            // Delete redundant source channel
+            db.Channels.Remove(sourceChannel);
+            await db.SaveChangesAsync();
+
+            await RefreshCacheAsync();
+
+            return new ChannelDto(
+                targetChannel.Id,
+                targetChannel.StationId,
+                targetChannel.Station?.Name ?? "",
+                targetChannel.Station?.LineId ?? 0,
+                targetChannel.Station?.Line?.Name ?? "",
+                targetChannel.Name,
+                targetChannel.IpAddress,
+                targetChannel.MacAddress,
+                targetChannel.Status
+            );
         }
     }
 }

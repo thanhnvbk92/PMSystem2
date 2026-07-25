@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Database, Plus, RefreshCw, Layers, Cpu, Radio, Building2, Pencil, Trash2, X, Search, Filter, AlertTriangle } from 'lucide-react';
+import { Database, Plus, RefreshCw, Layers, Cpu, Radio, Building2, Pencil, Trash2, X, Search, Filter, AlertTriangle, GitMerge } from 'lucide-react';
 import { MasterDataApi } from '../services/api';
 
 export default function MasterData({ buyers = [], lines = [], stations = [], channels = [], onRefresh }) {
@@ -283,6 +283,31 @@ export default function MasterData({ buyers = [], lines = [], stations = [], cha
     try {
       await MasterDataApi.deleteChannel(id);
       await onRefresh();
+    } catch (err) {
+      alert(err.response?.data?.error || err.message);
+      await onRefresh();
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleMergeChannels = async (sourceChannel, targetChannel) => {
+    const confirmMsg = `XÁC NHẬN GỘP CHANNEL:\n\n` +
+      `Bạn có chắc chắn 2 Channel này thực chất là 1 Channel vật lý?\n\n` +
+      `• Channel NGUỒN (Xóa): #${sourceChannel.id} - ${sourceChannel.name} (${sourceChannel.lineName || 'Unassigned Line'})\n` +
+      `• Channel ĐÍCH (Giữ lại): #${targetChannel.id} - ${targetChannel.name} (Chuyền: ${targetChannel.lineName || 'Unassigned Line'})\n\n` +
+      `Sau khi gộp:\n` +
+      `1. Toàn bộ lịch sử dữ liệu sản xuất của Channel #${sourceChannel.id} sẽ chuyển về Channel #${targetChannel.id}.\n` +
+      `2. Địa chỉ MAC sẽ tự động cập nhật cho Channel #${targetChannel.id} (nếu chưa có).\n` +
+      `3. Channel rác #${sourceChannel.id} sẽ được xóa bỏ khỏi Master Data.`;
+
+    if (!window.confirm(confirmMsg)) return;
+
+    setLoading(true);
+    try {
+      await MasterDataApi.mergeChannels(sourceChannel.id, targetChannel.id);
+      await onRefresh();
+      alert(`Đã gộp thành công Channel #${sourceChannel.id} vào Channel chính #${targetChannel.id}!`);
     } catch (err) {
       alert(err.response?.data?.error || err.message);
       await onRefresh();
@@ -872,17 +897,26 @@ export default function MasterData({ buyers = [], lines = [], stations = [], cha
                               <span className="text-white font-bold">{ch.name}</span>
                               <div className="text-[10px] text-slate-400">
                                 Chuyền: <strong className="text-slate-200">{ch.lineName || '—'}</strong> | Trạm: <strong className="text-slate-200">{ch.stationName}</strong>
-                                {ch.macAddress && (
-                                  <> | MAC: <strong className="text-amber-300 font-mono font-bold bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/20">{ch.macAddress}</strong></>
-                                )}
+                                {' | '}MAC: {ch.macAddress ? <strong className="text-amber-300 font-mono font-bold bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/20">{ch.macAddress}</strong> : <span className="text-slate-500 italic">Chưa đăng ký MAC</span>}
                               </div>
                             </div>
-                            <button
-                              onClick={() => setEditModal({ entityType: 'channel', item: { ...ch } })}
-                              className="px-2.5 py-1 rounded-lg bg-blue-500/20 hover:bg-blue-500/30 text-blue-300 font-bold text-[11px] transition-colors border border-blue-500/30 shrink-0 flex items-center gap-1"
-                            >
-                              <Pencil className="w-3 h-3" /> Sửa IP Channel #{ch.id}
-                            </button>
+                            <div className="flex items-center gap-1.5 shrink-0 flex-wrap">
+                              {conf.channels.length === 2 && (
+                                <button
+                                  onClick={() => handleMergeChannels(ch, conf.channels.find(c => c.id !== ch.id))}
+                                  className="px-2.5 py-1 rounded-lg bg-indigo-500/20 hover:bg-indigo-500/30 text-indigo-300 font-bold text-[11px] transition-colors border border-indigo-500/30 flex items-center gap-1"
+                                  title={`Gộp dữ liệu từ Channel #${ch.id} sang Channel chính #${conf.channels.find(c => c.id !== ch.id)?.id} và xóa Channel này`}
+                                >
+                                  <GitMerge className="w-3 h-3 text-indigo-400" /> Gộp vào #{conf.channels.find(c => c.id !== ch.id)?.id}
+                                </button>
+                              )}
+                              <button
+                                onClick={() => setEditModal({ entityType: 'channel', item: { ...ch } })}
+                                className="px-2.5 py-1 rounded-lg bg-blue-500/20 hover:bg-blue-500/30 text-blue-300 font-bold text-[11px] transition-colors border border-blue-500/30 flex items-center gap-1"
+                              >
+                                <Pencil className="w-3 h-3" /> Sửa IP
+                              </button>
+                            </div>
                           </div>
                         ))}
                       </div>
@@ -976,9 +1010,11 @@ export default function MasterData({ buyers = [], lines = [], stations = [], cha
                         <td className="p-3.5 font-bold text-white font-sans">{c.name}</td>
                         <td className="p-3.5 text-slate-300 font-sans">{c.lineName || '—'}</td>
                         <td className="p-3.5 text-slate-300 font-sans">{c.stationName}</td>
-                        <td className="p-3.5 text-blue-400 font-mono">
-                          <div>{c.ipAddress || '127.0.0.1'}</div>
-                          {c.macAddress && <div className="text-[10px] text-amber-300/80 font-mono">MAC: {c.macAddress}</div>}
+                        <td className="p-3.5 font-mono">
+                          <div className="text-blue-400 font-bold">{c.ipAddress || '127.0.0.1'}</div>
+                          <div className="text-[10px] text-slate-400 font-mono">
+                            MAC: {c.macAddress ? <span className="text-amber-300 font-bold">{c.macAddress}</span> : <span className="text-slate-500 italic">Chưa có MAC</span>}
+                          </div>
                         </td>
                         <td className="p-3.5 text-center">
                           <span className="badge badge-ok">{c.status || 'online'}</span>

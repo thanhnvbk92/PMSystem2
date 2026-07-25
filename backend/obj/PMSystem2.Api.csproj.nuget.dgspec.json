@@ -1,17 +1,17 @@
 {
   "format": 1,
   "restore": {
-    "D:\\1. Project\\PMSystem2\\backend\\PMSystem2.Api.csproj": {}
+    "d:\\1. Project\\PMSystem2\\backend\\PMSystem2.Api.csproj": {}
   },
   "projects": {
-    "D:\\1. Project\\PMSystem2\\backend\\PMSystem2.Api.csproj": {
+    "d:\\1. Project\\PMSystem2\\backend\\PMSystem2.Api.csproj": {
       "version": "1.0.0",
       "restore": {
-        "projectUniqueName": "D:\\1. Project\\PMSystem2\\backend\\PMSystem2.Api.csproj",
+        "projectUniqueName": "d:\\1. Project\\PMSystem2\\backend\\PMSystem2.Api.csproj",
         "projectName": "PMSystem2.Api",
-        "projectPath": "D:\\1. Project\\PMSystem2\\backend\\PMSystem2.Api.csproj",
+        "projectPath": "d:\\1. Project\\PMSystem2\\backend\\PMSystem2.Api.csproj",
         "packagesPath": "C:\\Users\\Administrator\\.nuget\\packages\\",
-        "outputPath": "D:\\1. Project\\PMSystem2\\backend\\obj\\",
+        "outputPath": "d:\\1. Project\\PMSystem2\\backend\\obj\\",
         "projectStyle": "PackageReference",
         "fallbackFolders": [
           "C:\\Program Files (x86)\\Microsoft Visual Studio\\Shared\\NuGetPackages"

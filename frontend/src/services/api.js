@@ -30,6 +30,7 @@ export const MasterDataApi = {
   createChannel: (data) => api.post('/master/channels', data).then(res => res.data),
   updateChannel: (id, data) => api.put(`/master/channels/${id}`, data).then(res => res.data),
   deleteChannel: (id) => api.delete(`/master/channels/${id}`).then(res => res.data),
+  mergeChannels: (sourceChannelId, targetChannelId) => api.post('/master/channels/merge', { sourceChannelId, targetChannelId }).then(res => res.data),
 };
 
 export const ProductionApi = {
