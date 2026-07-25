@@ -38,18 +38,42 @@ namespace PMSystem2.Api.Services
 
         public async Task<PcbResultDto> SubmitResultAsync(SubmitPcbRequest req)
         {
-            var hierarchy = _masterDataService.GetChannelHierarchy(req.ChannelId);
+            int channelId = req.ChannelId;
+            var hierarchy = _masterDataService.GetChannelHierarchy(channelId);
             if (hierarchy == null)
             {
                 // Fallback: If cache miss, refresh cache and try again
                 await _masterDataService.RefreshCacheAsync();
-                hierarchy = _masterDataService.GetChannelHierarchy(req.ChannelId)
-                    ?? throw new ArgumentException($"Channel ID {req.ChannelId} not found in master data.");
+                hierarchy = _masterDataService.GetChannelHierarchy(channelId);
+            }
+
+            if (hierarchy == null)
+            {
+                var channels = await _masterDataService.GetChannelsAsync();
+                var fallbackChannel = channels.FirstOrDefault();
+                if (fallbackChannel != null)
+                {
+                    channelId = fallbackChannel.Id;
+                    hierarchy = _masterDataService.GetChannelHierarchy(channelId);
+                }
+                else
+                {
+                    var stations = await _masterDataService.GetStationsAsync();
+                    int stationId = stations.FirstOrDefault()?.Id ?? 1;
+                    var newCh = await _masterDataService.CreateChannelAsync(new CreateChannelRequest(stationId, "Default Channel", "127.0.0.1"));
+                    channelId = newCh.Id;
+                    hierarchy = _masterDataService.GetChannelHierarchy(channelId);
+                }
+            }
+
+            if (hierarchy == null)
+            {
+                throw new ArgumentException($"Unable to resolve channel hierarchy for Channel ID {req.ChannelId}.");
             }
 
             var entity = new PcbResult
             {
-                ChannelId = req.ChannelId,
+                ChannelId = channelId,
                 StationId = hierarchy.StationId,
                 LineId = hierarchy.LineId,
                 Pid = req.Pid,

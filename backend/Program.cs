@@ -5,8 +5,15 @@ using PMSystem2.Api.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// Bind Kestrel to listen on all network interfaces (LAN & Localhost) on port 5000
+builder.WebHost.UseUrls("http://0.0.0.0:5000");
+
 // Add Services to Container
-builder.Services.AddControllers();
+builder.Services.AddControllers()
+    .AddJsonOptions(options =>
+    {
+        options.JsonSerializerOptions.PropertyNameCaseInsensitive = true;
+    });
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
@@ -27,12 +34,12 @@ builder.Services.AddDbContext<AppDbContext>(options =>
 builder.Services.AddSingleton<IMasterDataService, MasterDataService>();
 builder.Services.AddScoped<IPcbService, PcbService>();
 
-// Configure CORS
+// Configure CORS for LAN access
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowFrontend", policy =>
     {
-        policy.WithOrigins("http://localhost:5173", "http://localhost:3000", "http://localhost:5000", "http://127.0.0.1:5173")
+        policy.SetIsOriginAllowed(_ => true) // Allow any LAN IP or origin
               .AllowAnyHeader()
               .AllowAnyMethod()
               .AllowCredentials(); // Critical for SignalR WebSocket handshake
@@ -53,6 +60,7 @@ app.UseAuthorization();
 
 app.MapControllers();
 app.MapHub<ProductionHub>("/hubs/production");
+app.MapHub<CommandHub>("/hubs/command");
 
 // Initialize Database & Refresh Master Data Cache on Startup
 using (var scope = app.Services.CreateScope())

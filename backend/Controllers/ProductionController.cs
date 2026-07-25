@@ -6,6 +6,7 @@ namespace PMSystem2.Api.Controllers
 {
     [ApiController]
     [Route("api/v1/production")]
+    [Route("api/production")]
     public class ProductionController : ControllerBase
     {
         private readonly IPcbService _pcbService;
@@ -31,6 +32,73 @@ namespace PMSystem2.Api.Controllers
             {
                 return BadRequest(new { error = ex.Message });
             }
+        }
+
+        /// <summary>
+        /// Batch PCB inspection ingestion endpoint.
+        /// </summary>
+        [HttpPost("submit_batch")]
+        public async Task<IActionResult> SubmitBatch([FromBody] List<SubmitPcbRequest> requests)
+        {
+            if (requests == null || requests.Count == 0)
+            {
+                return Ok(new
+                {
+                    status = "success",
+                    count = 0,
+                    summary = new { total = 0, success = 0, failed = 0, skipped = 0 },
+                    details = new List<object>()
+                });
+            }
+
+            int successCount = 0;
+            int failedCount = 0;
+            var details = new List<object>();
+
+            foreach (var req in requests)
+            {
+                try
+                {
+                    var result = await _pcbService.SubmitResultAsync(req);
+                    successCount++;
+                    details.Add(new
+                    {
+                        pid = req.Pid,
+                        start_time = DateTime.UtcNow.ToString("o"),
+                        status = "success",
+                        inserted_pcb = 1,
+                        inserted_steps = req.Steps?.Count ?? 0,
+                        error = (string?)null
+                    });
+                }
+                catch (Exception ex)
+                {
+                    failedCount++;
+                    details.Add(new
+                    {
+                        pid = req.Pid,
+                        start_time = DateTime.UtcNow.ToString("o"),
+                        status = "failed",
+                        inserted_pcb = 0,
+                        inserted_steps = 0,
+                        error = ex.Message
+                    });
+                }
+            }
+
+            return Ok(new
+            {
+                status = failedCount == 0 ? "success" : "partial_success",
+                count = requests.Count,
+                summary = new
+                {
+                    total = requests.Count,
+                    success = successCount,
+                    failed = failedCount,
+                    skipped = 0
+                },
+                details = details
+            });
         }
 
         [HttpGet("latest")]
