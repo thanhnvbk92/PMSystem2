@@ -130,6 +130,9 @@ export default function CommandControl({ lines = [], stations = [], channels = [
   // Checked Node IDs State (Default: 'root-all' checked)
   const [checkedNodeIds, setCheckedNodeIds] = useState({ 'root-all': true });
 
+  // Execution status map per node (e.g. 'channel-12': { status: 'success' | 'error' | 'sending', timestamp: string, message: string })
+  const [executionStatuses, setExecutionStatuses] = useState({});
+
   // Get all descendant IDs of a node
   const getDescendantNodeIds = (node) => {
     if (!node) return [];
@@ -360,6 +363,22 @@ export default function CommandControl({ lines = [], stations = [], channels = [
 
     const targetPayload = getTargetPayload();
     const targetDesc = getTargetDescription();
+    const targeted = targetedChannels || [];
+    const nowTime = new Date().toLocaleTimeString();
+
+    // Mark targeted channels as sending in tree view
+    setExecutionStatuses((prev) => {
+      const next = { ...prev };
+      targeted.forEach((c) => {
+        next[`channel-${c.id}`] = {
+          status: 'sending',
+          timestamp: nowTime,
+          message: 'Đang gửi lệnh...',
+        };
+      });
+      return next;
+    });
+
     setIsSending(true);
 
     try {
@@ -413,6 +432,19 @@ export default function CommandControl({ lines = [], stations = [], channels = [
 
       showToast('success', `Đã phát lệnh '${cmdName}' thành công đến ${targetDesc}!`);
 
+      // Mark targeted channels as success
+      setExecutionStatuses((prev) => {
+        const next = { ...prev };
+        targeted.forEach((c) => {
+          next[`channel-${c.id}`] = {
+            status: 'success',
+            timestamp: nowTime,
+            message: res?.message || 'Đã nhận lệnh thành công',
+          };
+        });
+        return next;
+      });
+
       // Add entry to execution history console
       setCommandHistory((prev) => [
         {
@@ -430,6 +462,19 @@ export default function CommandControl({ lines = [], stations = [], channels = [
       console.error('Failed to send command:', err);
       const errMessage = err.response?.data?.error || err.message || 'Không thể kết nối đến máy chủ.';
       showToast('error', `Lỗi khi phát lệnh: ${errMessage}`);
+
+      // Mark targeted channels as error
+      setExecutionStatuses((prev) => {
+        const next = { ...prev };
+        targeted.forEach((c) => {
+          next[`channel-${c.id}`] = {
+            status: 'error',
+            timestamp: nowTime,
+            message: errMessage,
+          };
+        });
+        return next;
+      });
 
       setCommandHistory((prev) => [
         {
@@ -469,8 +514,12 @@ export default function CommandControl({ lines = [], stations = [], channels = [
           label: `Channel #${ch.channelNo || ch.id} (${ch.channelName || 'Kênh'})`,
           sublabel: ch.macAddress || ch.ipAddress || 'MAC-N/A',
           macAddress: ch.macAddress,
+          ipAddress: ch.ipAddress,
+          isOnline: ch.status === 'Active' || ch.status === 'online' || ch.isOnline === true || Boolean(ch.macAddress),
           children: [],
         }));
+
+        const onlineCount = channelNodes.filter((c) => c.isOnline).length;
 
         return {
           id: `station-${station.id}`,
@@ -478,7 +527,7 @@ export default function CommandControl({ lines = [], stations = [], channels = [
           lineId: line.id,
           stationId: station.id,
           label: station.name,
-          sublabel: `${channelNodes.length} kênh`,
+          sublabel: `${channelNodes.length} kênh (${onlineCount} online)`,
           children: channelNodes,
         };
       });
@@ -508,8 +557,12 @@ export default function CommandControl({ lines = [], stations = [], channels = [
           label: `Channel #${ch.channelNo || ch.id} (${ch.channelName || 'Kênh'})`,
           sublabel: ch.macAddress || ch.ipAddress || 'MAC-N/A',
           macAddress: ch.macAddress,
+          ipAddress: ch.ipAddress,
+          isOnline: ch.status === 'Active' || ch.status === 'online' || ch.isOnline === true || Boolean(ch.macAddress),
           children: [],
         }));
+
+        const onlineCount = channelNodes.filter((c) => c.isOnline).length;
 
         return {
           id: `station-${targetStation.id}`,
@@ -517,7 +570,7 @@ export default function CommandControl({ lines = [], stations = [], channels = [
           lineId: lineId,
           stationId: targetStation.id,
           label: `Trạm: ${targetStation.name}`,
-          sublabel: `${channelNodes.length} kênh`,
+          sublabel: `${channelNodes.length} kênh (${onlineCount} online)`,
           children: channelNodes,
         };
       }
@@ -571,6 +624,7 @@ export default function CommandControl({ lines = [], stations = [], channels = [
     const isExpanded = expandedNodes[node.id] || treeSearch.trim().length > 0;
     const checkStatus = getNodeCheckStatus(node);
     const selected = checkStatus === 'checked';
+    const execStatus = executionStatuses[node.id];
 
     let IconComponent = Globe;
     let badgeColor = 'bg-blue-500/10 text-blue-400 border-blue-500/20';
@@ -635,22 +689,76 @@ export default function CommandControl({ lines = [], stations = [], channels = [
               )}
             </button>
 
-            <IconComponent className={`w-4 h-4 flex-shrink-0 ${selected ? 'text-amber-400' : 'text-slate-400'}`} />
-            
-            <div className="truncate min-w-0">
+            {/* Icon & Online Status Indicator for Channel */}
+            <div className="relative flex items-center flex-shrink-0">
+              <IconComponent className={`w-4 h-4 ${selected ? 'text-amber-400' : 'text-slate-400'}`} />
+              {node.type === 'channel' && (
+                <span
+                  className={`absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full border border-slate-900 ${
+                    node.isOnline
+                      ? 'bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.8)] animate-pulse'
+                      : 'bg-slate-600'
+                  }`}
+                  title={node.isOnline ? 'Thiết bị Online' : 'Thiết bị Offline'}
+                />
+              )}
+            </div>
+
+            <div className="truncate min-w-0 flex items-center gap-1.5">
               <span className="truncate">{node.label}</span>
               {node.sublabel && (
-                <span className="text-[10px] text-slate-500 ml-2 font-mono truncate">
+                <span className="text-[10px] text-slate-500 font-mono truncate">
                   [{node.sublabel}]
                 </span>
               )}
             </div>
           </div>
 
-          <div className="flex items-center gap-2 flex-shrink-0">
-            <span className={`text-[9px] uppercase font-mono px-1.5 py-0.5 rounded border ${badgeColor}`}>
-              {node.type}
-            </span>
+          <div className="flex items-center gap-2 flex-shrink-0 ml-2">
+            {/* Execution Result Status Badge */}
+            {execStatus && (
+              <>
+                {execStatus.status === 'sending' && (
+                  <span className="text-[10px] bg-amber-500/20 text-amber-300 border border-amber-500/30 px-2 py-0.5 rounded flex items-center gap-1 font-mono animate-pulse">
+                    <RefreshCw className="w-2.5 h-2.5 animate-spin text-amber-400" />
+                    Đang gửi
+                  </span>
+                )}
+                {execStatus.status === 'success' && (
+                  <span className="text-[10px] bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-2 py-0.5 rounded flex items-center gap-1 font-mono" title={execStatus.message}>
+                    <CheckCircle2 className="w-2.5 h-2.5 text-emerald-400" />
+                    Đã nhận ({execStatus.timestamp})
+                  </span>
+                )}
+                {execStatus.status === 'error' && (
+                  <span className="text-[10px] bg-rose-500/20 text-rose-300 border border-rose-500/30 px-2 py-0.5 rounded flex items-center gap-1 font-mono" title={execStatus.message}>
+                    <XCircle className="w-2.5 h-2.5 text-rose-400" />
+                    Thất bại
+                  </span>
+                )}
+              </>
+            )}
+
+            {/* Online/Offline Badge for Channel */}
+            {node.type === 'channel' && !execStatus && (
+              <span
+                className={`text-[9px] font-mono px-1.5 py-0.5 rounded border uppercase ${
+                  node.isOnline
+                    ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
+                    : 'bg-slate-800 text-slate-500 border-slate-700'
+                }`}
+              >
+                {node.isOnline ? 'Online' : 'Offline'}
+              </span>
+            )}
+
+            {/* Node Type Badge */}
+            {node.type !== 'channel' && (
+              <span className={`text-[9px] uppercase font-mono px-1.5 py-0.5 rounded border ${badgeColor}`}>
+                {node.type}
+              </span>
+            )}
+
             {selected && <Check className="w-3.5 h-3.5 text-amber-400" />}
           </div>
         </div>
@@ -687,21 +795,21 @@ export default function CommandControl({ lines = [], stations = [], channels = [
       {/* Grid Section: Targeting Scope & Command Payload */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         
-        {/* Left Column (5 Cols): Scope / Target Selection */}
+        {/* Left Column (5 Cols): Scope / Target Selection with Embedded TreeView */}
         <div className="lg:col-span-5 space-y-6">
-          <div className="glass-card p-6 rounded-2xl border border-white/10 relative">
-            <div className="flex items-center justify-between mb-4 border-b border-white/5 pb-3">
+          <div className="glass-card p-5 rounded-2xl border border-white/10 relative flex flex-col">
+            <div className="flex items-center justify-between mb-3 border-b border-white/5 pb-2.5">
               <h2 className="text-sm font-semibold text-slate-200 flex items-center gap-2">
                 <Sliders className="w-4 h-4 text-amber-400" />
-                1. Chọn Phạm Vi Nhận Lệnh
+                1. Chọn Phạm Vi Nhận Lệnh (TreeView)
               </h2>
               <span className="text-[11px] text-slate-400 font-mono">
-                {targetedChannels.length} thiết bị phù hợp
+                {targetedChannels.length} / {channels.length} máy đã chọn
               </span>
             </div>
 
             {/* Combobox Selectors for Line and Station */}
-            <div className="grid grid-cols-2 gap-3 mb-4">
+            <div className="grid grid-cols-2 gap-3 mb-3">
               <div>
                 <label className="block text-xs font-medium text-slate-300 mb-1 flex items-center gap-1.5">
                   <Layers className="w-3.5 h-3.5 text-purple-400" />
@@ -769,159 +877,91 @@ export default function CommandControl({ lines = [], stations = [], channels = [
               </div>
             </div>
 
-            {/* TreeView Combobox Selector */}
-            <div className="relative" ref={treeDropdownRef}>
-              <label className="block text-xs font-medium text-slate-300 mb-1.5">
-                Cây Cấu Trúc Máy (Line → Station → Channel)
-              </label>
+            {/* Permanent Inline TreeView Container */}
+            <div className="bg-slate-950/80 border border-white/10 rounded-xl p-3 flex flex-col space-y-2">
+              {/* Search Bar */}
+              <div className="relative">
+                <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  value={treeSearch}
+                  onChange={(e) => setTreeSearch(e.target.value)}
+                  placeholder="Tìm Line, Station, Channel hoặc MAC..."
+                  className="w-full bg-slate-900/90 border border-white/10 focus:border-amber-500 text-xs text-slate-200 pl-8 pr-8 py-2 rounded-xl focus:outline-none"
+                />
+                {treeSearch && (
+                  <button
+                    type="button"
+                    onClick={() => setTreeSearch('')}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
 
-              {/* Trigger Input Bar */}
-              <div
-                onClick={() => setIsTreeOpen(!isTreeOpen)}
-                className="w-full bg-slate-900/80 border border-white/10 hover:border-amber-500/50 rounded-xl px-3.5 py-2.5 flex items-center justify-between cursor-pointer transition-all shadow-inner"
-              >
-                <div className="flex items-center gap-2.5 min-w-0">
-                  <FolderTree className="w-4 h-4 text-amber-400 flex-shrink-0" />
-                  <span className="text-xs text-slate-200 font-medium truncate">
-                    {getSelectedNodeLabel()}
-                  </span>
+              {/* Expand / Collapse & Check / Uncheck Actions Toolbar */}
+              <div className="flex items-center justify-between text-[11px] text-slate-400 px-2 py-1.5 border-b border-white/5 bg-slate-900/40 rounded-lg">
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handleCheckAll}
+                    className="flex items-center gap-1 px-2 py-0.5 rounded hover:bg-amber-500/10 hover:text-amber-400 transition-colors"
+                  >
+                    <CheckCheck className="w-3.5 h-3.5 text-amber-400" />
+                    <span>Chọn tất cả</span>
+                  </button>
+                  <span>•</span>
+                  <button
+                    type="button"
+                    onClick={handleUncheckAll}
+                    className="flex items-center gap-1 px-2 py-0.5 rounded hover:bg-rose-500/10 hover:text-rose-400 transition-colors"
+                  >
+                    <XSquare className="w-3.5 h-3.5 text-rose-400" />
+                    <span>Bỏ chọn</span>
+                  </button>
                 </div>
-                <div className="flex items-center gap-2 flex-shrink-0">
-                  <span className="text-[10px] font-mono uppercase bg-amber-500/10 text-amber-400 px-2 py-0.5 rounded border border-amber-500/20">
-                    {targetMode}
-                  </span>
-                  <ChevronDown className={`w-4 h-4 text-slate-400 transition-transform duration-200 ${isTreeOpen ? 'rotate-180 text-amber-400' : ''}`} />
+                <div className="flex gap-2 font-medium">
+                  <button
+                    type="button"
+                    onClick={handleExpandAll}
+                    className="hover:text-amber-400 transition-colors"
+                  >
+                    Mở rộng
+                  </button>
+                  <span>•</span>
+                  <button
+                    type="button"
+                    onClick={handleCollapseAll}
+                    className="hover:text-amber-400 transition-colors"
+                  >
+                    Thu gọn
+                  </button>
                 </div>
               </div>
 
-              {/* TreeView Dropdown Menu */}
-              {isTreeOpen && (
-                <div className="absolute z-40 top-full left-0 right-0 mt-2 bg-slate-950/95 border border-white/15 rounded-2xl shadow-2xl backdrop-blur-xl p-3 max-h-96 flex flex-col space-y-2">
-                  {/* Search Bar */}
-                  <div className="relative">
-                    <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                    <input
-                      type="text"
-                      value={treeSearch}
-                      onChange={(e) => setTreeSearch(e.target.value)}
-                      placeholder="Tìm Line, Station, Channel hoặc MAC..."
-                      className="w-full bg-slate-900/90 border border-white/10 focus:border-amber-500 text-xs text-slate-200 pl-8 pr-8 py-2 rounded-xl focus:outline-none"
-                    />
-                    {treeSearch && (
-                      <button
-                        type="button"
-                        onClick={() => setTreeSearch('')}
-                        className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white"
-                      >
-                        <X className="w-3.5 h-3.5" />
-                      </button>
-                    )}
-                  </div>
-
-                  {/* Expand / Collapse & Check / Uncheck Actions Toolbar */}
-                  <div className="flex items-center justify-between text-[11px] text-slate-400 px-1 py-1 border-b border-white/5 bg-slate-900/40 rounded-lg">
-                    <div className="flex items-center gap-1.5">
-                      <button
-                        type="button"
-                        onClick={handleCheckAll}
-                        className="flex items-center gap-1 px-1.5 py-0.5 rounded hover:bg-amber-500/10 hover:text-amber-400 transition-colors"
-                      >
-                        <CheckCheck className="w-3 h-3 text-amber-400" />
-                        <span>Chọn tất cả</span>
-                      </button>
-                      <span>•</span>
-                      <button
-                        type="button"
-                        onClick={handleUncheckAll}
-                        className="flex items-center gap-1 px-1.5 py-0.5 rounded hover:bg-rose-500/10 hover:text-rose-400 transition-colors"
-                      >
-                        <XSquare className="w-3 h-3 text-rose-400" />
-                        <span>Bỏ chọn</span>
-                      </button>
-                    </div>
-                    <div className="flex gap-2">
-                      <button
-                        type="button"
-                        onClick={handleExpandAll}
-                        className="hover:text-amber-400 transition-colors"
-                      >
-                        Mở rộng
-                      </button>
-                      <span>•</span>
-                      <button
-                        type="button"
-                        onClick={handleCollapseAll}
-                        className="hover:text-amber-400 transition-colors"
-                      >
-                        Thu gọn
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Scrollable Tree Container */}
-                  <div className="flex-1 overflow-y-auto pr-1 custom-scrollbar space-y-0.5">
-                    {renderTreeNode(treeData)}
-                  </div>
-                </div>
-              )}
+              {/* Extended Tall Scrollable Tree Container */}
+              <div className="h-[520px] overflow-y-auto pr-1 custom-scrollbar space-y-0.5 pt-1">
+                {renderTreeNode(treeData)}
+              </div>
             </div>
 
             {/* Target Description Summary */}
-            <div className="mt-4 p-3 bg-slate-900/50 border border-white/5 rounded-xl flex items-center justify-between text-xs">
+            <div className="mt-3 p-3 bg-slate-900/50 border border-white/5 rounded-xl flex items-center justify-between text-xs">
               <span className="text-slate-400 font-medium">Phạm vi đã chọn:</span>
               <span className="text-amber-300 font-semibold">{getTargetDescription()}</span>
             </div>
 
             {/* Broadcast Alert when Target Mode is 'all' */}
             {targetMode === 'all' && (
-              <div className="mt-3 p-3 bg-amber-500/10 border border-amber-500/30 rounded-xl text-xs text-amber-300 flex items-start gap-2.5">
+              <div className="mt-2.5 p-3 bg-amber-500/10 border border-amber-500/30 rounded-xl text-xs text-amber-300 flex items-start gap-2.5">
                 <ShieldAlert className="w-4 h-4 text-amber-400 flex-shrink-0 mt-0.5" />
                 <div>
                   <span className="font-semibold block mb-0.5">Chế độ Broadcast Toàn Mạng</span>
-                  Lệnh sẽ được gửi tới tất cả <strong className="text-white">{channels.length} máy collector</strong> hiện đang hoạt động trên hệ thống.
+                  Lệnh sẽ được phát tới tất cả <strong className="text-white">{channels.length} máy collector</strong> hiện có trong cây thiết bị.
                 </div>
               </div>
             )}
-
-            {/* Targeted Channels Preview */}
-            <div className="mt-5">
-              <div className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider mb-2.5 flex items-center justify-between">
-                <span>Danh Sách Máy Sẽ Nhận Lệnh ({targetedChannels.length})</span>
-                <span className="text-slate-500 font-mono text-[10px]">
-                  {targetedChannels.filter((c) => c.status === 'Active' || c.macAddress).length} Sẵn Sàng
-                </span>
-              </div>
-
-              <div className="max-h-48 overflow-y-auto space-y-1.5 pr-1 custom-scrollbar">
-                {targetedChannels.length === 0 ? (
-                  <div className="text-center py-6 text-xs text-slate-500 border border-dashed border-white/5 rounded-xl">
-                    Chưa có thiết bị nào phù hợp với phạm vi đã chọn.
-                  </div>
-                ) : (
-                  targetedChannels.map((c) => (
-                    <div
-                      key={c.id}
-                      className="p-2.5 bg-slate-900/40 border border-white/5 rounded-lg flex items-center justify-between text-xs hover:border-white/10 transition-colors"
-                    >
-                      <div className="flex items-center gap-2.5 min-w-0">
-                        <div className="w-2 h-2 rounded-full bg-emerald-400 flex-shrink-0"></div>
-                        <div className="truncate">
-                          <span className="font-semibold text-slate-200">
-                            Channel #{c.channelNo || c.id}
-                          </span>
-                          <span className="text-[11px] text-slate-400 ml-2 truncate">
-                            {c.stationName || 'Station'} ({c.lineName || 'Line'})
-                          </span>
-                        </div>
-                      </div>
-                      <div className="font-mono text-[11px] text-slate-400 bg-slate-950/60 px-2 py-0.5 rounded border border-white/5 flex-shrink-0">
-                        {c.macAddress || c.ipAddress || 'MAC-N/A'}
-                      </div>
-                    </div>
-                  ))
-                )}
-              </div>
-            </div>
           </div>
         </div>
 
