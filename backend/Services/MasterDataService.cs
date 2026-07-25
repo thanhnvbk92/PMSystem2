@@ -176,6 +176,8 @@ namespace PMSystem2.Api.Services
         {
             using var scope = _scopeFactory.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            try { await db.Database.ExecuteSqlRawAsync("ALTER TABLE channels ADD COLUMN IF NOT EXISTS mac_address VARCHAR(50);"); } catch { }
+
             return await db.Channels.Include(c => c.Station!).ThenInclude(s => s.Line!).AsNoTracking()
                 .Select(c => new ChannelDto(
                     c.Id,
@@ -185,6 +187,7 @@ namespace PMSystem2.Api.Services
                     c.Station != null && c.Station.Line != null ? c.Station.Line.Name : "Unassigned Line",
                     c.Name,
                     c.IpAddress,
+                    c.MacAddress,
                     c.Status
                 ))
                 .ToListAsync();
@@ -244,11 +247,23 @@ namespace PMSystem2.Api.Services
             using var scope = _scopeFactory.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
 
+            var targetIp = string.IsNullOrWhiteSpace(req.IpAddress) ? "127.0.0.1" : req.IpAddress.Trim();
+
+            if (targetIp != "127.0.0.1")
+            {
+                var existingWithIp = await db.Channels.AsNoTracking().FirstOrDefaultAsync(c => c.IpAddress == targetIp);
+                if (existingWithIp != null)
+                {
+                    throw new InvalidOperationException($"Địa chỉ IP '{targetIp}' đang được gán cho Channel '{existingWithIp.Name}' (ID: #{existingWithIp.Id}). Vui lòng cập nhật IP của Channel đó sang địa chỉ khác trước.");
+                }
+            }
+
             var entity = new Channel
             {
                 StationId = req.StationId,
                 Name = req.Name,
-                IpAddress = req.IpAddress ?? "127.0.0.1",
+                IpAddress = targetIp,
+                MacAddress = string.IsNullOrWhiteSpace(req.MacAddress) ? null : req.MacAddress.Trim(),
                 Status = "online"
             };
             db.Channels.Add(entity);
@@ -270,6 +285,7 @@ namespace PMSystem2.Api.Services
                 entity.Station?.Line?.Name ?? "",
                 entity.Name,
                 entity.IpAddress,
+                entity.MacAddress,
                 entity.Status
             );
         }
@@ -401,9 +417,23 @@ namespace PMSystem2.Api.Services
             var entity = await db.Channels.FindAsync(id);
             if (entity == null) return null;
 
+            if (!string.IsNullOrWhiteSpace(req.IpAddress))
+            {
+                var targetIp = req.IpAddress.Trim();
+                if (targetIp != "127.0.0.1" && targetIp != entity.IpAddress)
+                {
+                    var existingWithIp = await db.Channels.AsNoTracking().FirstOrDefaultAsync(c => c.Id != id && c.IpAddress == targetIp);
+                    if (existingWithIp != null)
+                    {
+                        throw new InvalidOperationException($"Địa chỉ IP '{targetIp}' đang được gán cho Channel '{existingWithIp.Name}' (ID: #{existingWithIp.Id}). Vui lòng cập nhật IP của Channel đó sang địa chỉ khác trước.");
+                    }
+                }
+                entity.IpAddress = targetIp;
+            }
+
             entity.StationId = req.StationId;
             entity.Name = req.Name;
-            if (req.IpAddress != null) entity.IpAddress = req.IpAddress;
+            if (req.MacAddress != null) entity.MacAddress = string.IsNullOrWhiteSpace(req.MacAddress) ? null : req.MacAddress.Trim();
             if (req.Status != null) entity.Status = req.Status;
 
             await db.SaveChangesAsync();
@@ -423,6 +453,7 @@ namespace PMSystem2.Api.Services
                 entity.Station?.Line?.Name ?? "",
                 entity.Name,
                 entity.IpAddress,
+                entity.MacAddress,
                 entity.Status
             );
         }

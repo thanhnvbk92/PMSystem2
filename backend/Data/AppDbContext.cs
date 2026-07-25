@@ -34,12 +34,15 @@ namespace PMSystem2.Api.Data
                 .HasForeignKey(c => c.StationId)
                 .OnDelete(DeleteBehavior.Cascade);
 
+            modelBuilder.Entity<Channel>()
+                .HasIndex(c => c.IpAddress)
+                .IsUnique();
+
             modelBuilder.Entity<TestStep>()
                 .HasOne(t => t.PcbResult)
                 .WithMany(p => p.TestSteps)
                 .HasForeignKey(t => t.PcbResultId)
                 .OnDelete(DeleteBehavior.Cascade);
-
         }
     }
 }

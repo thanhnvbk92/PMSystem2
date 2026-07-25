@@ -210,18 +210,45 @@ namespace PMSystem2.Api.Controllers
         }
 
         [HttpGet("channels/trace/{macAddress}")]
-        public async Task<IActionResult> CheckMacExists(string macAddress)
+        public async Task<IActionResult> CheckMacExists(
+            string macAddress, 
+            [FromQuery] int? stationId = null, 
+            [FromQuery] string? stationName = null)
         {
             if (string.IsNullOrWhiteSpace(macAddress)) return Ok(new { exists = false });
 
             var channels = await _masterDataService.GetChannelsAsync();
             var ch = channels.FirstOrDefault(c => 
-                (c.IpAddress != null && c.IpAddress.Equals(macAddress, StringComparison.OrdinalIgnoreCase)) ||
-                (c.Name != null && c.Name.Contains(macAddress, StringComparison.OrdinalIgnoreCase)));
+                (c.MacAddress != null && !string.IsNullOrWhiteSpace(macAddress) && c.MacAddress.Equals(macAddress, StringComparison.OrdinalIgnoreCase)) ||
+                (c.IpAddress != null && !string.IsNullOrWhiteSpace(macAddress) && c.IpAddress.Equals(macAddress, StringComparison.OrdinalIgnoreCase)) ||
+                (c.Name != null && !string.IsNullOrWhiteSpace(macAddress) && c.Name.Contains(macAddress, StringComparison.OrdinalIgnoreCase)));
 
             if (ch != null)
             {
-                return Ok(new { exists = true, data = new { id = ch.Id, station_id = ch.StationId, name = ch.Name, remark = "", status = ch.Status } });
+                bool isStationMatch = true;
+                if (stationId.HasValue && ch.StationId != stationId.Value)
+                {
+                    isStationMatch = false;
+                }
+                else if (!string.IsNullOrWhiteSpace(stationName) && !string.Equals(ch.StationName, stationName, StringComparison.OrdinalIgnoreCase))
+                {
+                    isStationMatch = false;
+                }
+
+                return Ok(new { 
+                    exists = true, 
+                    isStationMatch = isStationMatch,
+                    data = new { id = ch.Id, station_id = ch.StationId, name = ch.Name, station_name = ch.StationName, line_name = ch.LineName, ip = ch.IpAddress, mac = ch.MacAddress, status = ch.Status },
+                    conflictDetails = !isStationMatch ? new {
+                        conflictingChannelId = ch.Id,
+                        conflictingChannelName = ch.Name,
+                        conflictingStationId = ch.StationId,
+                        conflictingStationName = ch.StationName,
+                        conflictingLineName = ch.LineName,
+                        ipAddress = ch.IpAddress,
+                        macAddress = ch.MacAddress
+                    } : null
+                });
             }
 
             return Ok(new { exists = false });
@@ -235,7 +262,39 @@ namespace PMSystem2.Api.Controllers
                 var stations = await _masterDataService.GetStationsAsync();
                 int stationId = req.StationId ?? req.Station_Id ?? (stations.FirstOrDefault()?.Id ?? 1);
 
-                var createReq = new CreateChannelRequest(stationId, req.Name, req.IpAddress ?? req.Ip_Address ?? "127.0.0.1");
+                var targetIp = req.IpAddress ?? req.Ip_Address ?? "127.0.0.1";
+                targetIp = string.IsNullOrWhiteSpace(targetIp) ? "127.0.0.1" : targetIp.Trim();
+                var targetMac = req.MacAddress ?? req.Mac_Address;
+
+                var existingChannels = await _masterDataService.GetChannelsAsync();
+
+                // 1. Kiểm tra xem IP có trùng với Channel nào thuộc Station KHÁC không
+                if (targetIp != "127.0.0.1")
+                {
+                    var matchedChannel = existingChannels.FirstOrDefault(c => 
+                        c.IpAddress != null && c.IpAddress.Equals(targetIp, StringComparison.OrdinalIgnoreCase));
+
+                    if (matchedChannel != null)
+                    {
+                        // Nếu trùng IP và CÙNG Station -> Auto-bind an toàn
+                        if (matchedChannel.StationId == stationId)
+                        {
+                            return Ok(new { data = new { id = matchedChannel.Id, station_id = matchedChannel.StationId, name = matchedChannel.Name, status = matchedChannel.Status } });
+                        }
+
+                        // NẾU TRÙNG IP NHƯNG KHÁC STATION -> Người dùng nhập sai Station ở Backup Log!
+                        // Từ chối đăng ký và trả về thông báo lỗi rõ ràng để người dùng sửa lại
+                        return BadRequest(new { 
+                            error = "CONFIG_MISMATCH", 
+                            message = $"Địa chỉ IP {targetIp} đang được đăng ký chính thức cho Station '{matchedChannel.StationName}' (Chuyền: {matchedChannel.LineName ?? "N/A"}) trên Master Data Server, nhưng Backup Log lại khai báo Station ID {stationId}. Vui lòng sửa lại tên Station cho đúng hoặc cập nhật Master Data trên Web UI.",
+                            serverChannelId = matchedChannel.Id,
+                            serverStationName = matchedChannel.StationName,
+                            serverLineName = matchedChannel.LineName
+                        });
+                    }
+                }
+
+                var createReq = new CreateChannelRequest(stationId, req.Name, targetIp, targetMac);
                 var res = await _masterDataService.CreateChannelAsync(createReq);
                 return Ok(new { data = new { id = res.Id, station_id = res.StationId, name = res.Name, status = res.Status } });
             }

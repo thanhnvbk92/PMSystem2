@@ -89,6 +89,10 @@ namespace PMSystem2.Api.Models
         [Column("ip_address")]
         public string? IpAddress { get; set; }
 
+        [MaxLength(50)]
+        [Column("mac_address")]
+        public string? MacAddress { get; set; }
+
         [MaxLength(20)]
         [Column("status")]
         public string Status { get; set; } = "online";
@@ -104,7 +108,7 @@ namespace PMSystem2.Api.Models
     public record BuyerDto(int Id, string Name, string? Remark);
     public record LineDto(int Id, string Name, string? Remark);
     public record StationDto(int Id, int LineId, string LineName, string Name, string? Remark);
-    public record ChannelDto(int Id, int StationId, string StationName, int LineId, string LineName, string Name, string? IpAddress, string Status);
+    public record ChannelDto(int Id, int StationId, string StationName, int LineId, string LineName, string Name, string? IpAddress, string? MacAddress, string Status);
 
     public record CreateBuyerRequest(string Name, string? Remark);
     public record UpdateBuyerRequest(string Name, string? Remark);
@@ -115,6 +119,6 @@ namespace PMSystem2.Api.Models
     public record CreateStationRequest(int LineId, string Name, string? Remark);
     public record UpdateStationRequest(int LineId, string Name, string? Remark);
 
-    public record CreateChannelRequest(int StationId, string Name, string? IpAddress);
-    public record UpdateChannelRequest(int StationId, string Name, string? IpAddress, string? Status);
+    public record CreateChannelRequest(int StationId, string Name, string? IpAddress, string? MacAddress = null);
+    public record UpdateChannelRequest(int StationId, string Name, string? IpAddress, string? MacAddress = null, string? Status = null);
 }
