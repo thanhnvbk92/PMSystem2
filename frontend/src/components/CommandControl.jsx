@@ -212,6 +212,42 @@ export default function CommandControl({ lines = [], stations = [], channels = [
     });
   };
 
+  // Quick Action Toolbar Handlers
+  const handleCheckAll = () => {
+    const allIds = getDescendantNodeIds(treeData);
+    const next = {};
+    allIds.forEach((id) => { next[id] = true; });
+    setCheckedNodeIds(next);
+    setTargetMode('all');
+  };
+
+  const handleUncheckAll = () => {
+    setCheckedNodeIds({});
+    setTargetMode('all');
+    setSelectedLineId('');
+    setSelectedStationId('');
+    setSelectedChannelId('');
+  };
+
+  const handleExpandAll = () => {
+    const safeLines = lines || [];
+    const safeStations = stations || [];
+    const allExpanded = { 'root-all': true };
+    safeLines.forEach((l) => {
+      allExpanded[`line-${l.id}`] = true;
+      safeStations
+        .filter((s) => String(s.lineId) === String(l.id))
+        .forEach((st) => {
+          allExpanded[`station-${st.id}`] = true;
+        });
+    });
+    setExpandedNodes(allExpanded);
+  };
+
+  const handleCollapseAll = () => {
+    setExpandedNodes({ 'root-all': true });
+  };
+
   // Helper: Filter Stations based on Selected Line
   const filteredStations = useMemo(() => {
     if (!selectedLineId) return stations;
