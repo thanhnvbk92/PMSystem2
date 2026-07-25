@@ -45,17 +45,17 @@ graph TD
 
 ---
 
-## 🛠️ 2. Quyết Định Thiết Kế Kiến Trúc (Architectural Decisions)
+### 2.4 Tự động đồng bộ Địa chỉ MAC & Phát hiện hoán đổi phần cứng (MAC Address Auto-Sync & Hardware Swap)
+* **Vấn đề**: Khi máy tính/phần cứng thu thập dữ liệu (Backup Log) bị thay đổi card mạng hoặc thay máy mới, địa chỉ MAC cũ trên Master Data Server không còn đúng.
+* **Giải pháp**:
+  * Khi client `Backup_Log2` gửi thông điệp Đăng ký channel hoặc gửi Heartbeat lên Server, hệ thống gửi kèm địa chỉ MAC local thực tế.
+  * Backend (`MasterDataController.cs`) đối soát MAC address nhận được với MAC trong DB. Nếu khác nhau, tự động cập nhật MAC mới, ghi log sự kiện và phát thông điệp SignalR `NotifyMasterDataUpdated("channels")` để thông báo cho Web UI cập nhật danh sách Channel thời gian thực.
 
-### 2.1 Bộ nhớ đệm MasterData (MasterDataService Cache Pattern)
-* **Vấn đề**: Các bảng Master Data (`buyers`, `lines`, `stations`, `channels`) có số lượng thao tác đọc (Read) cực kỳ lớn (mỗi khi ghi 1 PCB result đều phải kiểm tra FK).
-* **Giải pháp**: Xây dựng `MasterDataService` dạng **Singleton Service**. Tất cả danh mục được nạp sẵn vào bộ nhớ RAM khi Backend khởi động (`SeedDefaultDataIfEmptyAsync` & `RefreshCacheAsync`). Khi người dùng tạo/sửa/xóa Master Data qua API, dịch vụ sẽ cập nhật DB đồng thời làm mới bộ nhớ đệm lập tức.
-
-### 2.2 Đẩy dữ liệu thời gian thực (Real-time SignalR Integration)
-* Khi có kết quả kiểm tra PCB mới được gửi về qua API `POST /api/v1/production/telemetry`, `PcbService` sẽ phát tín hiệu qua `ProductionHub` tới tất cả các client React đang mở Dashboard để tự động cập nhật biểu đồ mà không cần F5 trang.
-
-### 2.3 Quản lý dữ liệu thời gian (TimescaleDB Integration)
-* Bảng `pcb_results` được thiết kế dưới dạng Hypertable (Time-series data) trên TimescaleDB, cho phép truy vấn aggregate tổng sản lượng theo giờ/ngày/tuần với tốc độ xử lý hàng triệu bản ghi sub-second.
+### 2.5 Cơ chế Chống trùng lặp dữ liệu nhiều tầng (Multi-Layered Data Deduplication)
+* **Vấn đề**: Người dùng có thể vô tình nạp 1 log file kiểm tra bo mạch 2 lần hoặc client đẩy lại log file khi mất kết nối mạng.
+* **Giải pháp**:
+  * **Tầng DB**: Bổ sung `Unique Index` `UX_pcb_results_station_pid_time_result` trong EF Core `AppDbContext.cs` trên 4 cột `(StationId, Pid, InspectTime, Result)`.
+  * **Tầng Application Service**: Trong `PcbService.SubmitResultAsync`, hệ thống trích xuất mốc thời gian kiểm tra chuẩn từ log file (`inspect_time` / `start_time`), kiểm tra trước bản ghi trùng lặp trong DB. Nếu đã tồn tại, ứng dụng ghi log `[DEDUPLICATION] Duplicate PCB result ignored...` và trả về kết quả thành công hiện có mà không insert lặp.
 
 ---
 

@@ -31,14 +31,19 @@ Hệ thống đóng vai trò làm **Trung tâm điều hành sản xuất & Ch�
 * **Kênh thu thập thiết bị (Hardware Channels)**:
   * Cho phép Thêm / Sửa / Xóa kênh phần cứng.
   * Hỗ trợ bộ lọc **Line** để chọn nhanh **Station** tương ứng khi cấu hình Channel.
-  * Hiển thị đầy đủ thông tin tên Line, tên Station, Địa chỉ IP và Trạng thái kết nối.
+  * Hiển thị đầy đủ thông tin tên Line, tên Station, Địa chỉ IP, **Địa chỉ MAC** và Trạng thái kết nối.
+  * **Tự động đồng bộ Địa chỉ MAC (MAC Auto-Sync & Swap Detection)**: Khi máy collector gửi dữ liệu Đăng ký/Heartbeat lên Server, hệ thống tự động kiểm tra và cập nhật MAC address mới nếu phát hiện hoán đổi phần cứng, đồng thời phát thông báo SignalR cập nhật UI thời gian thực.
 * **Quy tắc An toàn Dữ liệu (Cascading / Unassigned Handling)**:
   * Khi xóa Line/Station/Channel, hệ thống cập nhật liên kết về bản ghi fallback `Unassigned` (ID=0) thay vì xóa mất dữ liệu nhật ký kiểm tra PCB đã phát sinh trong quá khứ.
 
-### 2.2 Thu Nhận & Xử Lý Dữ Liệu Sản Xuất (Telemetry Ingestion)
+### 2.2 Thu Nhận & Xử Lý Dữ Liệu Sản Xuất (Telemetry Ingestion & Deduplication)
 * Ghi nhận dữ liệu kiểm tra bo mạch PCB với tần suất cao (High-throughput Ingestion).
-* Lưu trữ các thông số: Mã PCB (Barcode), Trạm kiểm tra (`station_id`), Kênh (`channel_id`), Kết quả chung (`PASS` / `FAIL`), Thời gian kiểm tra (`inspected_at`).
+* Lưu trữ các thông số: Mã PCB (Barcode), Trạm kiểm tra (`station_id`), Kênh (`channel_id`), Kết quả chung (`PASS` / `FAIL`), Thời gian kiểm tra (`inspected_at` / `inspect_time`).
 * Ghi nhận chi tiết từng bước kiểm tra (`test_steps`): Tên bước, thông số đo đạc (`value`), ngưỡng min/max, trạng thái bước (`PASS`/`FAIL`).
+* **Cơ chế Chống Trùng Lặp Dữ Liệu (Multi-layered PCB Result Deduplication)**:
+  * **Tầng Database (Unique Constraint)**: Đã tạo Unique Index `UX_pcb_results_station_pid_time_result` trên bộ 4 trường: `(station_id, pid, inspect_time, result)`.
+  * **Tầng Dịch Vụ (Service Validation)**: `PcbService.SubmitResultAsync` tự động kiểm tra xem kết quả kiểm tra với cùng `StationId`, `PID`, `InspectTime`, và `Result` đã tồn tại chưa trước khi ghi DB.
+  * **Xử lý An toàn**: Nếu phát hiện trùng lặp (ví dụ log file bị re-upload hoặc đẩy trùng), hệ thống tự động bỏ qua (ignore), ghi log cảnh báo và giữ nguyên chỉ số sản lượng / FPY thực tế mà không làm phình DB.
 
 ### 2.3 Hiển Thị Dashboard Trực Quan (Real-time Dashboard & Analytics)
 * **Thống kê Tổng quan (KPI Cards)**: Tổng sản lượng, Số lượng OK, Số lượng NG, Tỷ lệ FPY.

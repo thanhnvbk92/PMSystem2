@@ -75,4 +75,13 @@ Nếu bạn là AI Coding Assistant bắt đầu phiên làm việc mới, hãy 
    * Danh sách Dây chuyền (Line) tại tất cả các ô Select được **sắp xếp theo thứ tự tăng dần (A-Z, 1-9)**.
    * Trang Master Data tab **Channels** cho phép lọc chọn Line trước để thu hẹp danh sách Station, giúp thao tác chọn trạm nhanh chóng.
 
-4. **Kế hoạch tiếp theo**: Xem file [`03_Detailed_Progress_and_Handover.md`](./03_Detailed_Progress_and_Handover.md) để biết các công việc cần làm tiếp.
+4. **Đồng bộ MAC Address & Cảnh báo hoán đổi phần cứng**:
+   * Client `Backup_Log2` gửi địa chỉ MAC local lên Server qua Heartbeat/Register.
+   * `MasterDataController.cs` tự động phát hiện MAC bị thay đổi khi hoán đổi thiết bị, cập nhật DB và phát thông báo SignalR `NotifyMasterDataUpdated("channels")` cho Web UI.
+
+5. **Chống trùng lặp dữ liệu kiểm tra PCB (Deduplication)**:
+   * Unique Index `UX_pcb_results_station_pid_time_result` trên 4 cột `(StationId, Pid, InspectTime, Result)`.
+   * `PcbService.cs` tự động kiểm tra mốc thời gian kiểm tra thực tế trong log file (`inspect_time`) trước khi lưu, đảm bảo nếu 1 log file bị gửi lặp lại 2 lần thì bản ghi thứ 2 sẽ bị bỏ qua an toàn mà không làm phình DB hay sai lệch FPY.
+
+6. **Kế hoạch tiếp theo**: Xem file [`03_Detailed_Progress_and_Handover.md`](./03_Detailed_Progress_and_Handover.md) để biết các công việc cần làm tiếp.
+

@@ -13,6 +13,8 @@
 | **PostgreSQL + TimescaleDB DB Schema** | **100%** | Đã tạo các bảng Master Data, PCB Results & Test Steps |
 | **Script Migration ClickHouse -> Postgres** | **100%** | Đã hoàn thiện script Python batching 10k bản ghi/lần |
 | **Quản lý Master Data (Buyers/Lines/Stations/Channels)** | **100%** | Full CRUD, sửa lỗi xóa mồ côi, sắp xếp tên Line A-Z |
+| **Đồng bộ Địa chỉ MAC & Hoán đổi phần cứng** | **100%** | Tự động đồng bộ MAC khi Heartbeat/Register, phát SignalR thông báo UI |
+| **Chống trùng lặp Dữ liệu PCB (Deduplication)** | **100%** | Ràng buộc DB Unique Index + Service level pre-check thời gian kiểm tra |
 | **Tích hợp Station Yield API** | **100%** | Endpoint `/api/v1/production/stats/station-yield` |
 | **Loại bỏ Hardcoded Fallback UI** | **100%** | Biểu đồ & KPI Card trên `Dashboard.jsx` lấy 100% dữ liệu DB |
 | **Nạp dữ liệu sản xuất quy mô lớn** | **Chờ chạy lệnh** | Cần chạy script migrate từ server ClickHouse cũ (`192.168.100.10`) |
@@ -48,6 +50,20 @@
   * Thêm hàm `ProductionApi.getStationYieldStats()` trong `frontend/src/services/api.js`.
   * Xóa sạch mảng tĩnh fallback trên `Dashboard.jsx` (`defectCategories`, `linePerformanceData`, `lineVolumePassData`, `stationVolumePassData`, `stationRiskData`).
   * Toàn bộ KPI Card và biểu đồ giờ đây phản ánh trung thực dữ liệu thời gian thực từ Database.
+
+### 2.5 Tự động đồng bộ MAC Address & Cảnh báo hoán đổi phần cứng
+* **Yêu cầu người dùng**: Hiển thị MAC Address trên Master Data UI và tự động phát hiện/cập nhật khi MAC của máy collector thay đổi.
+* **Cách đã xử lý**:
+  * Cập nhật `MasterData.jsx`: Bổ sung cột **MAC Address** vào bảng hiển thị Channels.
+  * Cập nhật `LogApiService.cs` trong `Backup_Log2`: Tự động trích xuất địa chỉ MAC card mạng chính và gửi kèm trong Heartbeat / Register Channel API.
+  * Cập nhật `MasterDataController.cs`: Tự động đối soát và cập nhật MAC address mới nếu phát hiện hoán đổi phần cứng, phát SignalR `NotifyMasterDataUpdated("channels")` thông báo cho Web UI cập nhật.
+
+### 2.6 Chống trùng lặp dữ liệu kết quả kiểm tra PCB (Deduplication)
+* **Yêu cầu người dùng**: Ngăn chặn tình trạng 1 log file bị đẩy 2 lần gây nhân đôi dữ liệu kiểm tra bo mạch.
+* **Cách đã xử lý**:
+  * **Database Unique Constraint**: Thêm Unique Index `UX_pcb_results_station_pid_time_result` trên 4 trường `(StationId, Pid, InspectTime, Result)` trong `AppDbContext.cs`.
+  * **Ingestion Timestamp Mapping**: Cập nhật DTO `SubmitPcbRequest` tiếp nhận chính xác mốc thời gian kiểm tra thực tế (`inspect_time` / `start_time`) từ log file.
+  * **Service Level Validation**: Trong `PcbService.SubmitResultAsync`, ứng dụng kiểm tra trước xem bộ kết quả với mốc thời gian tương ứng đã có trong DB chưa. Nếu đã có, hệ thống tự động ghi log cảnh báo và bỏ qua bản ghi trùng mà không chèn vào DB.
 
 ---
 
