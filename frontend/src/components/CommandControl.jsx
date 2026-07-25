@@ -453,7 +453,7 @@ export default function CommandControl({ lines = [], stations = [], channels = [
     const safeStations = stations || [];
     const safeChannels = channels || [];
 
-    const lineNodes = safeLines.map((line) => {
+    const buildLineNode = (line) => {
       const lineStations = safeStations.filter((s) => String(s.lineId) === String(line.id));
       const lineChannels = safeChannels.filter((c) => String(c.lineId) === String(line.id));
 
@@ -491,7 +491,48 @@ export default function CommandControl({ lines = [], stations = [], channels = [
         sublabel: `${lineChannels.length} kênh / ${stationNodes.length} trạm`,
         children: stationNodes,
       };
-    });
+    };
+
+    // Root at selected Station if selected
+    if (selectedStationId) {
+      const targetStation = safeStations.find((s) => String(s.id) === String(selectedStationId));
+      if (targetStation) {
+        const lineId = targetStation.lineId;
+        const stationChannels = safeChannels.filter((c) => String(c.stationId) === String(targetStation.id));
+        const channelNodes = stationChannels.map((ch) => ({
+          id: `channel-${ch.id}`,
+          type: 'channel',
+          lineId: lineId,
+          stationId: targetStation.id,
+          channelId: ch.id,
+          label: `Channel #${ch.channelNo || ch.id} (${ch.channelName || 'Kênh'})`,
+          sublabel: ch.macAddress || ch.ipAddress || 'MAC-N/A',
+          macAddress: ch.macAddress,
+          children: [],
+        }));
+
+        return {
+          id: `station-${targetStation.id}`,
+          type: 'station',
+          lineId: lineId,
+          stationId: targetStation.id,
+          label: `Trạm: ${targetStation.name}`,
+          sublabel: `${channelNodes.length} kênh`,
+          children: channelNodes,
+        };
+      }
+    }
+
+    // Root at selected Line if selected
+    if (selectedLineId) {
+      const targetLine = safeLines.find((l) => String(l.id) === String(selectedLineId));
+      if (targetLine) {
+        return buildLineNode(targetLine);
+      }
+    }
+
+    // Default: Full tree root
+    const lineNodes = safeLines.map(buildLineNode);
 
     return {
       id: 'root-all',
@@ -500,7 +541,7 @@ export default function CommandControl({ lines = [], stations = [], channels = [
       sublabel: `${safeChannels.length} thiết bị`,
       children: lineNodes,
     };
-  }, [lines, stations, channels]);
+  }, [lines, stations, channels, selectedLineId, selectedStationId]);
 
   // Check if a node is currently selected
   const isNodeSelected = (node) => {
@@ -743,6 +784,75 @@ export default function CommandControl({ lines = [], stations = [], channels = [
                 <Cpu className="w-3.5 h-3.5" />
                 <span>Channel</span>
               </button>
+            </div>
+
+            {/* Combobox Selectors for Line and Station */}
+            <div className="grid grid-cols-2 gap-3 mb-4">
+              <div>
+                <label className="block text-xs font-medium text-slate-300 mb-1 flex items-center gap-1.5">
+                  <Layers className="w-3.5 h-3.5 text-purple-400" />
+                  Chọn Line
+                </label>
+                <select
+                  value={selectedLineId}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setSelectedLineId(val);
+                    setSelectedStationId('');
+                    setSelectedChannelId('');
+                    if (val) {
+                      setTargetMode('line');
+                      setCheckedNodeIds({ [`line-${val}`]: true });
+                    } else {
+                      setTargetMode('all');
+                      setCheckedNodeIds({ 'root-all': true });
+                    }
+                  }}
+                  className="w-full bg-slate-900/90 border border-white/10 focus:border-amber-500/80 rounded-xl px-3 py-2 text-xs text-slate-200 focus:outline-none transition-all"
+                >
+                  <option value="">-- Tất cả Line (Broadcast All) --</option>
+                  {(lines || []).map((l) => (
+                    <option key={l.id} value={l.id}>
+                      {l.name} {l.buyerName ? `(${l.buyerName})` : ''}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-slate-300 mb-1 flex items-center gap-1.5">
+                  <Server className="w-3.5 h-3.5 text-amber-400" />
+                  Chọn Station
+                </label>
+                <select
+                  value={selectedStationId}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setSelectedStationId(val);
+                    setSelectedChannelId('');
+                    if (val) {
+                      setTargetMode('station');
+                      setCheckedNodeIds({ [`station-${val}`]: true });
+                      const st = (stations || []).find((s) => String(s.id) === String(val));
+                      if (st) setSelectedLineId(String(st.lineId));
+                    } else if (selectedLineId) {
+                      setTargetMode('line');
+                      setCheckedNodeIds({ [`line-${selectedLineId}`]: true });
+                    } else {
+                      setTargetMode('all');
+                      setCheckedNodeIds({ 'root-all': true });
+                    }
+                  }}
+                  className="w-full bg-slate-900/90 border border-white/10 focus:border-amber-500/80 rounded-xl px-3 py-2 text-xs text-slate-200 focus:outline-none transition-all"
+                >
+                  <option value="">-- Tất cả Station --</option>
+                  {filteredStations.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
             </div>
 
             {/* TreeView Combobox Selector */}
