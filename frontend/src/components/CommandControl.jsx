@@ -684,40 +684,6 @@ export default function CommandControl({ lines = [], stations = [], channels = [
         </div>
       )}
 
-      {/* Page Title & Action Header */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 glass-card p-6 rounded-2xl border border-white/10 relative overflow-hidden">
-        <div className="absolute -top-12 -right-12 w-48 h-48 bg-amber-500/10 rounded-full blur-3xl pointer-events-none"></div>
-        <div className="flex items-center gap-4">
-          <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-amber-500 via-orange-600 to-red-600 p-0.5 shadow-lg shadow-amber-500/20 flex items-center justify-center">
-            <div className="w-full h-full bg-slate-950/80 rounded-[10px] flex items-center justify-center backdrop-blur-md">
-              <Terminal className="w-6 h-6 text-amber-400 animate-pulse" />
-            </div>
-          </div>
-          <div>
-            <h1 className="text-xl font-bold text-white flex items-center gap-2">
-              Điều Khiển & Lệnh Hệ Thống
-              <span className="badge badge-warning text-[10px] uppercase font-mono px-2 py-0.5">
-                Command Center
-              </span>
-            </h1>
-            <p className="text-xs text-slate-400 mt-1">
-              Gửi lệnh từ xa (Đổi Model, Khởi Động Lại, Custom Command) đến thiết bị thu thập log SMT qua SignalR Realtime.
-            </p>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-3">
-          <button
-            onClick={onRefreshMasterData}
-            className="btn btn-secondary text-xs flex items-center gap-2 py-2 px-3.5"
-            title="Làm mới thông tin Master Data & Channels"
-          >
-            <RefreshCw className="w-3.5 h-3.5 text-slate-400" />
-            <span>Làm mới danh sách máy</span>
-          </button>
-        </div>
-      </div>
-
       {/* Grid Section: Targeting Scope & Command Payload */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         
@@ -732,58 +698,6 @@ export default function CommandControl({ lines = [], stations = [], channels = [
               <span className="text-[11px] text-slate-400 font-mono">
                 {targetedChannels.length} thiết bị phù hợp
               </span>
-            </div>
-
-            {/* Target Mode Quick Tabs */}
-            <div className="grid grid-cols-4 gap-1.5 mb-4 p-1 bg-slate-900/60 rounded-xl border border-white/5">
-              <button
-                type="button"
-                onClick={() => handleSelectTreeNode({ type: 'all' })}
-                className={`py-1.5 px-2 rounded-lg text-xs font-medium transition-all flex items-center justify-center gap-1.5 ${
-                  targetMode === 'all'
-                    ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40 shadow-sm'
-                    : 'text-slate-400 hover:text-slate-200 hover:bg-white/5'
-                }`}
-              >
-                <Globe className="w-3.5 h-3.5" />
-                <span>Tất cả</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setTargetMode('line')}
-                className={`py-1.5 px-2 rounded-lg text-xs font-medium transition-all flex items-center justify-center gap-1.5 ${
-                  targetMode === 'line'
-                    ? 'bg-purple-500/20 text-purple-300 border border-purple-500/40 shadow-sm'
-                    : 'text-slate-400 hover:text-slate-200 hover:bg-white/5'
-                }`}
-              >
-                <Layers className="w-3.5 h-3.5" />
-                <span>Line</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setTargetMode('station')}
-                className={`py-1.5 px-2 rounded-lg text-xs font-medium transition-all flex items-center justify-center gap-1.5 ${
-                  targetMode === 'station'
-                    ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40 shadow-sm'
-                    : 'text-slate-400 hover:text-slate-200 hover:bg-white/5'
-                }`}
-              >
-                <Server className="w-3.5 h-3.5" />
-                <span>Station</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setTargetMode('channel')}
-                className={`py-1.5 px-2 rounded-lg text-xs font-medium transition-all flex items-center justify-center gap-1.5 ${
-                  targetMode === 'channel'
-                    ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 shadow-sm'
-                    : 'text-slate-400 hover:text-slate-200 hover:bg-white/5'
-                }`}
-              >
-                <Cpu className="w-3.5 h-3.5" />
-                <span>Channel</span>
-              </button>
             </div>
 
             {/* Combobox Selectors for Line and Station */}

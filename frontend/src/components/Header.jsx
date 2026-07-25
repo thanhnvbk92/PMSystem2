@@ -1,5 +1,5 @@
 import React from 'react';
-import { Activity, Database, BarChart3, Search, RefreshCw, Radio } from 'lucide-react';
+import { Activity, Database, BarChart3, Search, RefreshCw, Radio, Terminal } from 'lucide-react';
 
 export default function Header({ activeTab, onRefresh, summaryData }) {
   const getTabDetails = () => {
@@ -24,6 +24,13 @@ export default function Header({ activeTab, onRefresh, summaryData }) {
           subtitle: 'Quản lý Dây chuyền sản xuất SMT, Trạm kiểm tra & Các Channels',
           icon: Database,
           color: 'text-cyan-400',
+        };
+      case 'command':
+        return {
+          title: 'Điều Khiển & Lệnh Hệ Thống (Command Center)',
+          subtitle: 'Gửi lệnh từ xa (Đổi Model, Khởi Động Lại, Custom Command) đến các thiết bị thu thập log SMT',
+          icon: Terminal,
+          color: 'text-amber-400',
         };
       case 'dashboard':
       default:
