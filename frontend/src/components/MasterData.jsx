@@ -890,35 +890,39 @@ export default function MasterData({ buyers = [], lines = [], stations = [], cha
                         </span>
                       </div>
                       <div className="pl-3 border-l-2 border-amber-500/50 space-y-1.5 font-sans text-slate-300 text-[11px]">
-                        {conf.channels.map(ch => (
-                          <div key={ch.id} className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 bg-slate-900/60 p-2 rounded border border-slate-800">
-                            <div>
-                              <span className="font-bold text-amber-400">Channel #{ch.id}:</span>{' '}
-                              <span className="text-white font-bold">{ch.name}</span>
-                              <div className="text-[10px] text-slate-400">
-                                Chuyền: <strong className="text-slate-200">{ch.lineName || '—'}</strong> | Trạm: <strong className="text-slate-200">{ch.stationName}</strong>
-                                {' | '}MAC: {ch.macAddress ? <strong className="text-amber-300 font-mono font-bold bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/20">{ch.macAddress}</strong> : <span className="text-slate-500 italic">Chưa đăng ký MAC</span>}
+                        {conf.channels.map(ch => {
+                          const targetCandidates = conf.channels.filter(c => c.id !== ch.id);
+                          return (
+                            <div key={ch.id} className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 bg-slate-900/60 p-2 rounded border border-slate-800">
+                              <div>
+                                <span className="font-bold text-amber-400">Channel #{ch.id}:</span>{' '}
+                                <span className="text-white font-bold">{ch.name}</span>
+                                <div className="text-[10px] text-slate-400">
+                                  Chuyền: <strong className="text-slate-200">{ch.lineName || '—'}</strong> | Trạm: <strong className="text-slate-200">{ch.stationName}</strong>
+                                  {' | '}MAC: {ch.macAddress ? <strong className="text-amber-300 font-mono font-bold bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/20">{ch.macAddress}</strong> : <span className="text-slate-500 italic">Chưa đăng ký MAC</span>}
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-1.5 shrink-0 flex-wrap">
+                                {targetCandidates.map(targetCh => (
+                                  <button
+                                    key={targetCh.id}
+                                    onClick={() => handleMergeChannels(ch, targetCh)}
+                                    className="px-2.5 py-1 rounded-lg bg-indigo-500/20 hover:bg-indigo-500/30 text-indigo-300 font-bold text-[11px] transition-colors border border-indigo-500/30 flex items-center gap-1"
+                                    title={`Gộp dữ liệu từ Channel #${ch.id} (${ch.name}) sang Channel chính #${targetCh.id} (${targetCh.name}) và xóa Channel #${ch.id}`}
+                                  >
+                                    <GitMerge className="w-3 h-3 text-indigo-400" /> Gộp vào #{targetCh.id}
+                                  </button>
+                                ))}
+                                <button
+                                  onClick={() => setEditModal({ entityType: 'channel', item: { ...ch } })}
+                                  className="px-2.5 py-1 rounded-lg bg-blue-500/20 hover:bg-blue-500/30 text-blue-300 font-bold text-[11px] transition-colors border border-blue-500/30 flex items-center gap-1"
+                                >
+                                  <Pencil className="w-3 h-3" /> Sửa IP
+                                </button>
                               </div>
                             </div>
-                            <div className="flex items-center gap-1.5 shrink-0 flex-wrap">
-                              {conf.channels.length === 2 && (
-                                <button
-                                  onClick={() => handleMergeChannels(ch, conf.channels.find(c => c.id !== ch.id))}
-                                  className="px-2.5 py-1 rounded-lg bg-indigo-500/20 hover:bg-indigo-500/30 text-indigo-300 font-bold text-[11px] transition-colors border border-indigo-500/30 flex items-center gap-1"
-                                  title={`Gộp dữ liệu từ Channel #${ch.id} sang Channel chính #${conf.channels.find(c => c.id !== ch.id)?.id} và xóa Channel này`}
-                                >
-                                  <GitMerge className="w-3 h-3 text-indigo-400" /> Gộp vào #{conf.channels.find(c => c.id !== ch.id)?.id}
-                                </button>
-                              )}
-                              <button
-                                onClick={() => setEditModal({ entityType: 'channel', item: { ...ch } })}
-                                className="px-2.5 py-1 rounded-lg bg-blue-500/20 hover:bg-blue-500/30 text-blue-300 font-bold text-[11px] transition-colors border border-blue-500/30 flex items-center gap-1"
-                              >
-                                <Pencil className="w-3 h-3" /> Sửa IP
-                              </button>
-                            </div>
-                          </div>
-                        ))}
+                          );
+                        })}
                       </div>
                     </div>
                   ))}
