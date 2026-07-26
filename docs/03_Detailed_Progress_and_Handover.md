@@ -19,7 +19,9 @@
 | **Loại bỏ Hardcoded Fallback UI** | **100%** | Biểu đồ & KPI Card trên `Dashboard.jsx` lấy 100% dữ liệu DB |
 | **Trang Điều Khiển Máy Từ Xa (Command Center)** | **100%** | Gửi lệnh tập trung theo Tree View Line/Station, tích hợp thông tin IP/MAC |
 | **Hiển thị Chi tiết Step NG / FAIL & Dual Case JSON** | **100%** | Hỗ trợ camelCase/snake_case, hiển thị đúng stepName, Min/Max và highlight màu đỏ |
-| **Xuất CSV Dữ Liệu Sản Xuất Không Giới Hạn** | **100%** | Bỏ giới hạn 2,000 dòng, cảnh báo Modal xác nhận khi xuất >3,000 bản ghi |
+| **Xuất CSV Dữ Liệu Sản Xuất Không Giới Hạn** | **100%** | Bỏ giới hạn 3,000 dòng, cảnh báo Modal xác nhận khi xuất >3,000 bản ghi |
+| **Cập nhật & Đồng bộ ERD Database vào SRS Docs** | **100%** | Vẽ lại sơ đồ Mermaid ERD chuẩn 11 bảng CSDL và HTML interactive ERD |
+| **Chuẩn hóa CSDL pcb_results & Bỏ trùng lặp LineId/BuyerId** | **100%** | Lược bỏ các trường dư thừa (`line_id`, `buyer_id`), truy xuất phân cấp qua `channel_id` |
 
 ---
 
@@ -104,6 +106,38 @@
   * Bổ sung Combobox lọc Dây chuyền / Trạm kiểm tra để giới hạn gốc hiển thị Tree View thiết bị.
   * Nhúng thông tin Tên Channel, Địa chỉ IP, Trạng thái Kết nối và Trạng thái Nhận lệnh trực tiếp trong Tree View mà không bị ẩn panel.
   * Cập nhật `Sidebar.jsx` & `App.jsx` giữ nguyên tab trang hiện tại khi người dùng nhấn Refresh trình duyệt (tránh bị nhảy về Dashboard).
+
+### 2.11 Cập nhật & Đồng bộ Sơ đồ Quan hệ CSDL (PostgreSQL Master Data & Ingestion ERD)
+* **Yêu cầu người dùng**: Vẽ lại sơ đồ mối quan hệ giữa các bảng trong CSDL PostgreSQL hiện tại và cập nhật vào tài liệu hệ thống (`docs`).
+* **Cách đã xử lý**:
+  * Chuẩn hóa sơ đồ Mermaid ERD trong `docs/01_SRS_Software_Requirements_Specification.md` bao phủ 100% 11 bảng CSDL của hệ thống:
+    1. **`buyers`** (Khách hàng)
+    2. **`model_groups`** (Nhóm Model)
+    3. **`models`** (Model sản phẩm)
+    4. **`station_types`** (Loại Trạm kiểm tra)
+    5. **`lines`** (Dây chuyền sản xuất)
+    6. **`stations`** (Trạm kiểm tra)
+    7. **`channels`** (Kênh kết nối phần cứng / Collector)
+    8. **`device_types`** (Loại Thiết bị)
+    9. **`devices`** (Thiết bị thuộc Channel)
+    10. **`pcb_results`** (Nhật ký kết quả kiểm tra PCB - TimescaleDB Header)
+    11. **`test_steps`** (Chi tiết các bước kiểm tra PCB)
+  * Mô tả chính xác các ràng buộc khóa ngoại (Foreign Keys), khóa chính (Primary Keys), thuộc tính quan trọng (`job_file`, `error_code`, `mac_address`, `ip_address`,...) và cơ chế Cascade / SetNull deletion.
+  * Bổ sung đầy đủ 22 RESTful API Endpoints cho Master Data và Production Data trong tài liệu SRS.
+
+### 2.12 Chuẩn hóa CSDL `pcb_results` (Schema Normalization & Eliminating Duplicate Fields)
+* **Yêu cầu người dùng**: Lược bỏ các trường thông tin trùng lặp (`line_id`, `buyer_id`) trong bảng `pcb_results` để giữ chuẩn hóa CSDL (3NF), loại bỏ dư thừa dữ liệu.
+* **Cách đã xử lý**:
+  * **Backend (`ProductionData.cs`, `PcbService.cs`, `MasterDataService.cs`)**:
+    * Xóa bỏ thuộc tính `LineId` và `BuyerId` trong entity `PcbResult` và DTO `SubmitPcbRequest`.
+    * Cập nhật `PcbService` và `MasterDataService` tự động tra cứu hệ thống phân cấp (`Channel` -> `Station` -> `Line`, `Model` -> `ModelGroup` -> `Buyer`) thông qua `GetChannelHierarchy(channelId)` trong bộ nhớ đệm cache.
+    * Cập nhật các truy vấn lọc, thống kê sản lượng theo Line (`GetLineYieldStatsAsync`, `GetStationYieldStatsAsync`, `GetHourlyStatsAsync`, `GetDefectParetoAsync`, `GetExportCsvAsync`) lọc qua danh sách `StationId` thay vì truy vấn `line_id` trực tiếp.
+  * **Python Migration Script (`scripts/migrate_clickhouse_to_postgres.py`)**: Cập nhật câu lệnh `INSERT INTO pcb_results` bỏ cột `line_id`.
+  * **Trực quan Sơ đồ CSDL Interactive (`docs/database_erd.html`)**: Cập nhật file HTML ERD loại bỏ các liên kết dư thừa từ `pcb_results` tới `lines` và `buyers`.
+  * **Bổ sung cột & Đồng bộ CSDL - Backend & ERD**:
+    * **Bảng `stations`**: Thêm cột `process_info` (`string?`) lưu trữ cấu hình quy trình trạm kiểm tra trong cả Entity C# (`Station`), DTOs (`StationDto`, `CreateStationRequest`, `UpdateStationRequest`), `MasterDataService` và ERD.
+    * **Bảng `pcb_results`**: Bổ sung `gmes_status` (`string?` - trạng thái đồng bộ GMES) và `created_at` (`timestamp` - thời điểm ghi nhận dữ liệu) trong C# entity (`PcbResult`), DTOs, `PcbService` và ERD.
+    * **Xác nhận kiểu dữ liệu `start_time` & `inspect_time`**: Lưu dưới dạng `timestamp` (bao gồm cả Ngày + Giờ UTC đầy đủ).
 
 ---
 

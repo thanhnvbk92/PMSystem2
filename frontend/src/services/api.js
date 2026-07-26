@@ -11,26 +11,50 @@ export const api = axios.create({
 
 export const MasterDataApi = {
   getBuyers: () => api.get('/master/buyers').then(res => res.data),
-  getLines: () => api.get('/master/lines').then(res => res.data),
-  getStations: () => api.get('/master/stations').then(res => res.data),
-  getChannels: () => api.get('/master/channels').then(res => res.data),
-  
   createBuyer: (data) => api.post('/master/buyers', data).then(res => res.data),
   updateBuyer: (id, data) => api.put(`/master/buyers/${id}`, data).then(res => res.data),
   deleteBuyer: (id) => api.delete(`/master/buyers/${id}`).then(res => res.data),
 
+  getModelGroups: () => api.get('/master/model-groups').then(res => res.data),
+  createModelGroup: (data) => api.post('/master/model-groups', data).then(res => res.data),
+  updateModelGroup: (id, data) => api.put(`/master/model-groups/${id}`, data).then(res => res.data),
+  deleteModelGroup: (id) => api.delete(`/master/model-groups/${id}`).then(res => res.data),
+
+  getModels: () => api.get('/master/models').then(res => res.data),
+  createModel: (data) => api.post('/master/models', data).then(res => res.data),
+  updateModel: (id, data) => api.put(`/master/models/${id}`, data).then(res => res.data),
+  deleteModel: (id) => api.delete(`/master/models/${id}`).then(res => res.data),
+
+  getStationTypes: () => api.get('/master/station-types').then(res => res.data),
+  createStationType: (data) => api.post('/master/station-types', data).then(res => res.data),
+  updateStationType: (id, data) => api.put(`/master/station-types/${id}`, data).then(res => res.data),
+  deleteStationType: (id) => api.delete(`/master/station-types/${id}`).then(res => res.data),
+
+  getLines: () => api.get('/master/lines').then(res => res.data),
   createLine: (data) => api.post('/master/lines', data).then(res => res.data),
   updateLine: (id, data) => api.put(`/master/lines/${id}`, data).then(res => res.data),
   deleteLine: (id) => api.delete(`/master/lines/${id}`).then(res => res.data),
 
+  getStations: () => api.get('/master/stations').then(res => res.data),
   createStation: (data) => api.post('/master/stations', data).then(res => res.data),
   updateStation: (id, data) => api.put(`/master/stations/${id}`, data).then(res => res.data),
   deleteStation: (id) => api.delete(`/master/stations/${id}`).then(res => res.data),
 
+  getChannels: () => api.get('/master/channels').then(res => res.data),
   createChannel: (data) => api.post('/master/channels', data).then(res => res.data),
   updateChannel: (id, data) => api.put(`/master/channels/${id}`, data).then(res => res.data),
   deleteChannel: (id) => api.delete(`/master/channels/${id}`).then(res => res.data),
   mergeChannels: (sourceChannelId, targetChannelId) => api.post('/master/channels/merge', { sourceChannelId, targetChannelId }).then(res => res.data),
+
+  getDeviceTypes: () => api.get('/master/device-types').then(res => res.data),
+  createDeviceType: (data) => api.post('/master/device-types', data).then(res => res.data),
+  updateDeviceType: (id, data) => api.put(`/master/device-types/${id}`, data).then(res => res.data),
+  deleteDeviceType: (id) => api.delete(`/master/device-types/${id}`).then(res => res.data),
+
+  getDevices: () => api.get('/master/devices').then(res => res.data),
+  createDevice: (data) => api.post('/master/devices', data).then(res => res.data),
+  updateDevice: (id, data) => api.put(`/master/devices/${id}`, data).then(res => res.data),
+  deleteDevice: (id) => api.delete(`/master/devices/${id}`).then(res => res.data),
 };
 
 export const ProductionApi = {
@@ -86,5 +110,3 @@ export const CommandApi = {
   changeModel: (data) => api.post('/commands/change-model', data).then(res => res.data),
   restartApp: (data) => api.post('/commands/restart', data).then(res => res.data),
 };
-
-

@@ -60,14 +60,45 @@ Hệ thống đóng vai trò làm **Trung tâm điều hành sản xuất & Ch�
 
 ```mermaid
 erDiagram
-    BUYERS ||--o{ LINES : "cho phép gán"
+    BUYERS ||--o{ MODEL_GROUPS : "sở hữu"
+    BUYERS ||--o{ PCB_RESULTS : "liên kết"
+    MODEL_GROUPS ||--o{ MODELS : "chứa"
+    MODEL_GROUPS ||--o{ STATIONS : "áp dụng cho"
+    STATION_TYPES ||--o{ STATIONS : "phân loại"
     LINES ||--o{ STATIONS : "chứa"
     STATIONS ||--o{ CHANNELS : "kết nối"
     STATIONS ||--o{ PCB_RESULTS : "phát sinh"
+    LINES ||--o{ PCB_RESULTS : "phát sinh"
+    MODELS ||--o{ PCB_RESULTS : "thuộc về"
+    CHANNELS ||--o{ DEVICES : "quản lý"
     CHANNELS ||--o{ PCB_RESULTS : "ghi nhận"
-    PCB_RESULTS ||--o{ TEST_STEPS : "chứa"
+    DEVICE_TYPES ||--o{ DEVICES : "phân loại"
+    PCB_RESULTS ||--o{ TEST_STEPS : "chứa chi tiết"
 
     BUYERS {
+        int id PK
+        string name
+        string remark
+        datetime created_at
+    }
+
+    MODEL_GROUPS {
+        int id PK
+        int buyer_id FK
+        string name
+        string remark
+        datetime created_at
+    }
+
+    MODELS {
+        int id PK
+        int model_group_id FK
+        string name
+        string remark
+        datetime created_at
+    }
+
+    STATION_TYPES {
         int id PK
         string name
         string remark
@@ -84,6 +115,8 @@ erDiagram
     STATIONS {
         int id PK
         int line_id FK
+        int model_group_id FK
+        int station_type_id FK
         string name
         string remark
         datetime created_at
@@ -93,31 +126,68 @@ erDiagram
         int id PK
         int station_id FK
         string name
+        string machine_partno
         string ip_address
+        string mac_address
+        string gmes_name
         string status
+        string remark
+        datetime created_at
+    }
+
+    DEVICE_TYPES {
+        int id PK
+        string name
+        string remark
+        datetime created_at
+    }
+
+    DEVICES {
+        int id PK
+        int channel_id FK
+        int device_type_id FK
+        string name
+        string model_partno
+        string serial_number
+        string status
+        datetime calibration_date
+        datetime calibration_due_date
+        string calibration_status
+        string remark
         datetime created_at
     }
 
     PCB_RESULTS {
-        bigint id PK
-        int station_id FK
+        uuid id PK
         int channel_id FK
-        string serial_number
+        int station_id FK
+        int line_id FK
+        int model_id FK
+        int buyer_id FK
+        string pid
+        string job_file
+        string fid
+        string pcba_partno
+        datetime start_time
+        datetime end_time
+        double test_time
+        string file_path
         string result
-        string judge_code
-        datetime inspected_at
+        string error_code
+        datetime inspect_time
     }
 
     TEST_STEPS {
         bigint id PK
-        bigint pcb_result_id FK
-        string step_name
+        uuid pcb_result_id FK
         string step_type
         int step_number
-        string val
+        string step_name
+        string value
         string spec_min
         string spec_max
         string result
+        datetime created_at
     }
 ```
 
@@ -125,11 +195,23 @@ erDiagram
 
 ## 🌐 4. Danh Sách API Endpoints (REST API Specification)
 
-### 4.1 Master Data APIs (`/api/v1/masterdata`)
+### 4.1 Master Data APIs (`/api/master` hoặc `/api/v1/masterdata`)
 * `GET /buyers` - Lấy danh sách Khách hàng
 * `POST /buyers` - Tạo mới Khách hàng
 * `PUT /buyers/{id}` - Cập nhật Khách hàng
 * `DELETE /buyers/{id}` - Xóa Khách hàng
+* `GET /model-groups` - Lấy danh sách Nhóm Model
+* `POST /model-groups` - Tạo mới Nhóm Model
+* `PUT /model-groups/{id}` - Cập nhật Nhóm Model
+* `DELETE /model-groups/{id}` - Xóa Nhóm Model
+* `GET /models` - Lấy danh sách Model sản phẩm
+* `POST /models` - Tạo mới Model sản phẩm
+* `PUT /models/{id}` - Cập nhật Model sản phẩm
+* `DELETE /models/{id}` - Xóa Model sản phẩm
+* `GET /station-types` - Lấy danh sách Loại Trạm kiểm tra
+* `POST /station-types` - Tạo mới Loại Trạm
+* `PUT /station-types/{id}` - Cập nhật Loại Trạm
+* `DELETE /station-types/{id}` - Xóa Loại Trạm
 * `GET /lines` - Lấy danh sách Dây chuyền (Đã sắp xếp A-Z)
 * `POST /lines` - Tạo mới Dây chuyền
 * `PUT /lines/{id}` - Cập nhật Dây chuyền
@@ -142,6 +224,15 @@ erDiagram
 * `POST /channels` - Tạo mới Kênh kết nối
 * `PUT /channels/{id}` - Cập nhật Kênh kết nối
 * `DELETE /channels/{id}` - Xóa Kênh kết nối
+* `POST /channels/merge` - Gộp dữ liệu 2 Channels
+* `GET /device-types` - Lấy danh sách Loại Thiết bị
+* `POST /device-types` - Tạo mới Loại Thiết bị
+* `PUT /device-types/{id}` - Cập nhật Loại Thiết bị
+* `DELETE /device-types/{id}` - Xóa Loại Thiết bị
+* `GET /devices` - Lấy danh sách Thiết bị
+* `POST /devices` - Tạo mới Thiết bị
+* `PUT /devices/{id}` - Cập nhật Thiết bị
+* `DELETE /devices/{id}` - Xóa Thiết bị
 
 ### 4.2 Production Analytics APIs (`/api/v1/production`)
 * `GET /summary` - Thống kê KPI tổng quan sản lượng, OK, NG, Yield %
@@ -150,3 +241,4 @@ erDiagram
 * `GET /stats/station-yield` - Thống kê sản lượng và tỷ lệ đạt theo từng Trạm kiểm tra
 * `GET /stats/defect-pareto` - Thống kê phân tích tần suất mã lỗi (Defect Pareto)
 * `POST /telemetry` - Tiếp nhận nhật ký kiểm tra PCB từ phần cứng / Collector
+

@@ -59,9 +59,14 @@ export default function App() {
 
   // Master Data State
   const [buyers, setBuyers] = useState([]);
+  const [modelGroups, setModelGroups] = useState([]);
+  const [models, setModels] = useState([]);
+  const [stationTypes, setStationTypes] = useState([]);
   const [lines, setLines] = useState([]);
   const [stations, setStations] = useState([]);
   const [channels, setChannels] = useState([]);
+  const [deviceTypes, setDeviceTypes] = useState([]);
+  const [devices, setDevices] = useState([]);
 
   // Production State
   const [summary, setSummary] = useState(null);
@@ -79,19 +84,29 @@ export default function App() {
   // Load Master Data
   const loadMasterData = async () => {
     try {
-      const [b, l, s, c] = await Promise.all([
+      const [b, mg, m, st, l, s, c, dt, d] = await Promise.all([
         MasterDataApi.getBuyers(),
+        MasterDataApi.getModelGroups(),
+        MasterDataApi.getModels(),
+        MasterDataApi.getStationTypes(),
         MasterDataApi.getLines(),
         MasterDataApi.getStations(),
         MasterDataApi.getChannels(),
+        MasterDataApi.getDeviceTypes(),
+        MasterDataApi.getDevices(),
       ]);
       const sortedLines = [...(l || [])].sort((a, b) => 
         (a.name || '').localeCompare(b.name || '', undefined, { numeric: true, sensitivity: 'base' })
       );
       setBuyers(b || []);
+      setModelGroups(mg || []);
+      setModels(m || []);
+      setStationTypes(st || []);
       setLines(sortedLines);
       setStations(s || []);
       setChannels(c || []);
+      setDeviceTypes(dt || []);
+      setDevices(d || []);
       setDbError(null);
     } catch (err) {
       console.error('Failed to load Master Data:', err);
@@ -279,9 +294,14 @@ export default function App() {
           {activeTab === 'master' && (
             <MasterData
               buyers={buyers}
+              modelGroups={modelGroups}
+              models={models}
+              stationTypes={stationTypes}
               lines={lines}
               stations={stations}
               channels={channels}
+              deviceTypes={deviceTypes}
+              devices={devices}
               onRefresh={loadMasterData}
             />
           )}

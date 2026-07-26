@@ -70,6 +70,79 @@ using (var scope = app.Services.CreateScope())
     {
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         db.Database.EnsureCreated();
+
+        // Ensure all missing ClickHouse master data tables and columns exist in PostgreSQL
+        try
+        {
+            await db.Database.ExecuteSqlRawAsync(@"
+                CREATE TABLE IF NOT EXISTS model_groups (
+                    id SERIAL PRIMARY KEY,
+                    buyer_id INT REFERENCES buyers(id) ON DELETE SET NULL,
+                    name VARCHAR(100) NOT NULL,
+                    remark TEXT,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                );
+
+                CREATE TABLE IF NOT EXISTS models (
+                    id SERIAL PRIMARY KEY,
+                    model_group_id INT REFERENCES model_groups(id) ON DELETE SET NULL,
+                    name VARCHAR(100) NOT NULL,
+                    remark TEXT,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                );
+
+                CREATE TABLE IF NOT EXISTS station_types (
+                    id SERIAL PRIMARY KEY,
+                    name VARCHAR(100) NOT NULL,
+                    remark TEXT,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                );
+
+                CREATE TABLE IF NOT EXISTS device_types (
+                    id SERIAL PRIMARY KEY,
+                    name VARCHAR(100) NOT NULL,
+                    remark TEXT,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                );
+
+                CREATE TABLE IF NOT EXISTS devices (
+                    id SERIAL PRIMARY KEY,
+                    channel_id INT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+                    device_type_id INT REFERENCES device_types(id) ON DELETE SET NULL,
+                    name VARCHAR(100) NOT NULL,
+                    model_partno VARCHAR(100),
+                    serial_number VARCHAR(100),
+                    status VARCHAR(20) NOT NULL DEFAULT 'OK',
+                    calibration_date TIMESTAMPTZ,
+                    calibration_due_date TIMESTAMPTZ,
+                    calibration_status VARCHAR(50),
+                    remark TEXT,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                );
+
+                ALTER TABLE stations ADD COLUMN IF NOT EXISTS model_group_id INT REFERENCES model_groups(id) ON DELETE SET NULL;
+                ALTER TABLE stations ADD COLUMN IF NOT EXISTS station_type_id INT REFERENCES station_types(id) ON DELETE SET NULL;
+
+                ALTER TABLE channels ADD COLUMN IF NOT EXISTS machine_partno VARCHAR(100);
+                ALTER TABLE channels ADD COLUMN IF NOT EXISTS gmes_name VARCHAR(100);
+                ALTER TABLE channels ADD COLUMN IF NOT EXISTS remark TEXT;
+
+                ALTER TABLE pcb_results ADD COLUMN IF NOT EXISTS job_file VARCHAR(100);
+                ALTER TABLE pcb_results ADD COLUMN IF NOT EXISTS model_id INT REFERENCES models(id) ON DELETE SET NULL;
+                ALTER TABLE pcb_results ADD COLUMN IF NOT EXISTS buyer_id INT REFERENCES buyers(id) ON DELETE SET NULL;
+                ALTER TABLE pcb_results ADD COLUMN IF NOT EXISTS fid VARCHAR(100);
+                ALTER TABLE pcb_results ADD COLUMN IF NOT EXISTS pcba_partno VARCHAR(100);
+                ALTER TABLE pcb_results ADD COLUMN IF NOT EXISTS start_time TIMESTAMPTZ;
+                ALTER TABLE pcb_results ADD COLUMN IF NOT EXISTS end_time TIMESTAMPTZ;
+                ALTER TABLE pcb_results ADD COLUMN IF NOT EXISTS test_time DOUBLE PRECISION;
+                ALTER TABLE pcb_results ADD COLUMN IF NOT EXISTS file_path VARCHAR(500);
+            ");
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Notice during schema initialization / column synchronization.");
+        }
+
         logger.LogInformation("PostgreSQL Database initialized successfully.");
 
         var masterDataService = app.Services.GetRequiredService<IMasterDataService>();

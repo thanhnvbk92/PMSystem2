@@ -1,0 +1,1099 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PMSystem2 - PostgreSQL Database ERD Schema</title>
+    <style>
+        :root {
+            --bg-canvas: #f4f6f9;
+            --grid-color: #e2e7ec;
+            --card-header-bg: #e76f51; /* Coral Red matching reference image */
+            --card-header-text: #ffffff;
+            --card-bg: #ffffff;
+            --card-border: #d0d7de;
+            --card-shadow: 0 4px 14px rgba(0, 0, 0, 0.08);
+            --row-even: #f8fafc;
+            --row-odd: #ffffff;
+            --row-hover: #eef2f6;
+            --text-main: #2b2d42;
+            --text-muted: #6c757d;
+            --pk-color: #d97706;
+            --fk-color: #2563eb;
+            --line-color: #5c677d;
+            --line-active: #e76f51;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, Roboto, sans-serif;
+        }
+
+        body {
+            background-color: var(--bg-canvas);
+            background-image: 
+                linear-gradient(var(--grid-color) 1px, transparent 1px),
+                linear-gradient(90deg, var(--grid-color) 1px, transparent 1px);
+            background-size: 24px 24px;
+            color: var(--text-main);
+            overflow: hidden;
+            width: 100vw;
+            height: 100vh;
+        }
+
+        /* Top Header Control Bar */
+        header {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 60px;
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            border-bottom: 1px solid var(--card-border);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 24px;
+            z-index: 1000;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+        }
+
+        .brand {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .brand-icon {
+            width: 32px;
+            height: 32px;
+            background: var(--card-header-bg);
+            color: white;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            font-size: 18px;
+        }
+
+        .brand-title {
+            font-size: 18px;
+            font-weight: 700;
+            color: #1e293b;
+        }
+
+        .brand-subtitle {
+            font-size: 12px;
+            color: var(--text-muted);
+            margin-top: 2px;
+        }
+
+        .controls {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .btn {
+            background: white;
+            border: 1px solid #cbd5e1;
+            padding: 8px 14px;
+            border-radius: 6px;
+            font-size: 13px;
+            font-weight: 600;
+            color: #334155;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            transition: all 0.2s ease;
+        }
+
+        .btn:hover {
+            background: #f1f5f9;
+            border-color: #94a3b8;
+            color: #0f172a;
+        }
+
+        .btn-primary {
+            background: var(--card-header-bg);
+            color: white;
+            border: none;
+        }
+
+        .btn-primary:hover {
+            background: #d65a3c;
+            color: white;
+        }
+
+        .search-box {
+            position: relative;
+        }
+
+        .search-box input {
+            padding: 8px 12px 8px 32px;
+            border: 1px solid #cbd5e1;
+            border-radius: 6px;
+            font-size: 13px;
+            width: 220px;
+            outline: none;
+        }
+
+        .search-box input:focus {
+            border-color: var(--card-header-bg);
+            box-shadow: 0 0 0 3px rgba(231, 111, 81, 0.15);
+        }
+
+        .search-icon {
+            position: absolute;
+            left: 10px;
+            top: 50%;
+            transform: translateY(-50%);
+            color: #94a3b8;
+            font-size: 14px;
+        }
+
+        /* Canvas Workspace */
+        #workspace {
+            position: absolute;
+            top: 60px;
+            left: 0;
+            width: 100vw;
+            height: calc(100vh - 60px);
+            overflow: auto;
+            cursor: grab;
+        }
+
+        #workspace:active {
+            cursor: grabbing;
+        }
+
+        #canvas-content {
+            position: relative;
+            width: 3200px;
+            height: 2000px;
+            transform-origin: 0 0;
+        }
+
+        /* SVG Line Connections Layer */
+        #svg-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 10;
+        }
+
+        path.connector {
+            fill: none;
+            stroke: var(--line-color);
+            stroke-width: 2px;
+            transition: stroke 0.2s, stroke-width 0.2s;
+            stroke-dasharray: none;
+        }
+
+        path.connector.active {
+            stroke: var(--line-active);
+            stroke-width: 3.5px;
+            z-index: 50;
+        }
+
+        path.connector.dimmed {
+            opacity: 0.15;
+        }
+
+        /* ERD Table Cards */
+        .erd-table {
+            position: absolute;
+            width: 280px;
+            background: var(--card-bg);
+            border: 1px solid var(--card-border);
+            border-radius: 8px;
+            box-shadow: var(--card-shadow);
+            z-index: 20;
+            user-select: none;
+            transition: box-shadow 0.2s, opacity 0.2s, transform 0.1s;
+        }
+
+        .erd-table:hover {
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
+            z-index: 40;
+        }
+
+        .erd-table.active {
+            border-color: var(--card-header-bg);
+            box-shadow: 0 0 0 3px rgba(231, 111, 81, 0.3);
+            z-index: 45;
+        }
+
+        .erd-table.dimmed {
+            opacity: 0.25;
+        }
+
+        /* Card Header - Matching Salmon Coral Color from Reference Image */
+        .table-header {
+            background: var(--card-header-bg);
+            color: var(--card-header-text);
+            padding: 10px 14px;
+            border-top-left-radius: 7px;
+            border-top-right-radius: 7px;
+            font-weight: 700;
+            font-size: 14px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            cursor: move;
+        }
+
+        .table-title {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            letter-spacing: 0.3px;
+        }
+
+        .table-subtitle {
+            font-size: 11px;
+            font-weight: normal;
+            opacity: 0.9;
+        }
+
+        .table-body {
+            padding: 0;
+            background: white;
+            border-bottom-left-radius: 7px;
+            border-bottom-right-radius: 7px;
+            overflow: hidden;
+        }
+
+        .column-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 7px 12px;
+            font-size: 12px;
+            border-bottom: 1px solid #edf2f7;
+            transition: background 0.15s;
+        }
+
+        .column-row:last-child {
+            border-bottom: none;
+        }
+
+        .column-row:nth-child(even) {
+            background-color: var(--row-even);
+        }
+
+        .column-row:nth-child(odd) {
+            background-color: var(--row-odd);
+        }
+
+        .column-row:hover {
+            background-color: var(--row-hover);
+        }
+
+        .column-row.pk-row {
+            font-weight: 700;
+            color: #1e293b;
+        }
+
+        .column-row.fk-row {
+            color: #1e40af;
+        }
+
+        .col-left {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .badge {
+            font-size: 9px;
+            font-weight: 800;
+            padding: 2px 5px;
+            border-radius: 4px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .badge-pk {
+            background: #fef3c7;
+            color: #b45309;
+            border: 1px solid #fde68a;
+        }
+
+        .badge-fk {
+            background: #dbeafe;
+            color: #1d4ed8;
+            border: 1px solid #bfdbfe;
+        }
+
+        .col-type {
+            font-family: 'Consolas', 'Courier New', monospace;
+            font-size: 11px;
+            color: var(--text-muted);
+        }
+
+        /* Legend Footer Bar */
+        footer {
+            position: fixed;
+            bottom: 16px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            border: 1px solid var(--card-border);
+            padding: 8px 20px;
+            border-radius: 30px;
+            display: flex;
+            align-items: center;
+            gap: 20px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.08);
+            z-index: 1000;
+            font-size: 12px;
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-weight: 600;
+            color: #475569;
+        }
+
+        .legend-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+        }
+
+        /* Help Modal */
+        .tooltip {
+            position: absolute;
+            background: #1e293b;
+            color: white;
+            padding: 6px 10px;
+            border-radius: 4px;
+            font-size: 11px;
+            z-index: 2000;
+            pointer-events: none;
+            display: none;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.2);
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Header Navigation Bar -->
+    <header>
+        <div class="brand">
+            <div class="brand-icon">DB</div>
+            <div>
+                <div class="brand-title">PMSystem2 - Database ERD Schema</div>
+                <div class="brand-subtitle">PostgreSQL + TimescaleDB (11 Tables Master & Telemetry Data)</div>
+            </div>
+        </div>
+
+        <div class="controls">
+            <div class="search-box">
+                <span class="search-icon">🔍</span>
+                <input type="text" id="searchInput" placeholder="Tìm kiếm bảng hoặc cột..." onkeyup="filterTables()">
+            </div>
+            <button class="btn" onclick="resetLayout()">🔄 Reset Vị Trí</button>
+            <button class="btn" onclick="zoomIn()">🔍 Zoom +</button>
+            <button class="btn" onclick="zoomOut()">🔍 Zoom -</button>
+            <button class="btn btn-primary" onclick="exportSVG()">📥 Tải Sơ Đồ SVG</button>
+        </div>
+    </header>
+
+    <!-- Canvas Workspace for Drag & Drop -->
+    <div id="workspace">
+        <div id="canvas-content">
+            <!-- SVG Layer for Connection Lines -->
+            <svg id="svg-layer">
+                <defs>
+                    <!-- Marker Crow's Foot Many -->
+                    <marker id="crowsfoot-many" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+                        <path d="M 0 1 L 8 5 L 0 9 M 8 1 L 8 9" fill="none" stroke="#5c677d" stroke-width="1.5"/>
+                    </marker>
+                    <marker id="crowsfoot-many-active" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+                        <path d="M 0 1 L 8 5 L 0 9 M 8 1 L 8 9" fill="none" stroke="#e76f51" stroke-width="2"/>
+                    </marker>
+                    <!-- Marker One -->
+                    <marker id="crowsfoot-one" viewBox="0 0 10 10" refX="2" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+                        <path d="M 2 1 L 2 9 M 6 1 L 6 9" fill="none" stroke="#5c677d" stroke-width="1.5"/>
+                    </marker>
+                    <marker id="crowsfoot-one-active" viewBox="0 0 10 10" refX="2" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+                        <path d="M 2 1 L 2 9 M 6 1 L 6 9" fill="none" stroke="#e76f51" stroke-width="2"/>
+                    </marker>
+                </defs>
+            </svg>
+
+            <!-- 11 TABLE CARDS -->
+
+            <!-- Column 1: Customer & Model Hierarchy -->
+            <div class="erd-table" id="tbl-buyers" style="left: 60px; top: 80px;">
+                <div class="table-header">
+                    <div class="table-title">👤 buyers</div>
+                    <div class="table-subtitle">Khách hàng</div>
+                </div>
+                <div class="table-body">
+                    <div class="column-row pk-row" id="col-buyers-id">
+                        <div class="col-left"><span class="badge badge-pk">PK</span> <span>id</span></div>
+                        <span class="col-type">integer</span>
+                    </div>
+                    <div class="column-row">
+                        <div class="col-left"><span>name</span></div>
+                        <span class="col-type">varchar</span>
+                    </div>
+                    <div class="column-row">
+                        <div class="col-left"><span>remark</span></div>
+                        <span class="col-type">text</span>
+                    </div>
+                    <div class="column-row">
+                        <div class="col-left"><span>created_at</span></div>
+                        <span class="col-type">timestamp</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="erd-table" id="tbl-model_groups" style="left: 60px; top: 320px;">
+                <div class="table-header">
+                    <div class="table-title">📦 model_groups</div>
+                    <div class="table-subtitle">Nhóm Model</div>
+                </div>
+                <div class="table-body">
+                    <div class="column-row pk-row" id="col-model_groups-id">
+                        <div class="col-left"><span class="badge badge-pk">PK</span> <span>id</span></div>
+                        <span class="col-type">integer</span>
+                    </div>
+                    <div class="column-row fk-row" id="col-model_groups-buyer_id">
+                        <div class="col-left"><span class="badge badge-fk">FK</span> <span>buyer_id</span></div>
+                        <span class="col-type">integer</span>
+                    </div>
+                    <div class="column-row">
+                        <div class="col-left"><span>name</span></div>
+                        <span class="col-type">varchar</span>
+                    </div>
+                    <div class="column-row">
+                        <div class="col-left"><span>remark</span></div>
+                        <span class="col-type">text</span>
+                    </div>
+                    <div class="column-row">
+                        <div class="col-left"><span>created_at</span></div>
+                        <span class="col-type">timestamp</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="erd-table" id="tbl-models" style="left: 60px; top: 590px;">
+                <div class="table-header">
+                    <div class="table-title">📱 models</div>
+                    <div class="table-subtitle">Model Sản Phẩm</div>
+                </div>
+                <div class="table-body">
+                    <div class="column-row pk-row" id="col-models-id">
+                        <div class="col-left"><span class="badge badge-pk">PK</span> <span>id</span></div>
+                        <span class="col-type">integer</span>
+                    </div>
+                    <div class="column-row fk-row" id="col-models-model_group_id">
+                        <div class="col-left"><span class="badge badge-fk">FK</span> <span>model_group_id</span></div>
+                        <span class="col-type">integer</span>
+                    </div>
+                    <div class="column-row">
+                        <div class="col-left"><span>name</span></div>
+                        <span class="col-type">varchar</span>
+                    </div>
+                    <div class="column-row">
+                        <div class="col-left"><span>remark</span></div>
+                        <span class="col-type">text</span>
+                    </div>
+                    <div class="column-row">
+                        <div class="col-left"><span>created_at</span></div>
+                        <span class="col-type">timestamp</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Column 2: Line & Station Hierarchy -->
+            <div class="erd-table" id="tbl-lines" style="left: 440px; top: 80px;">
+                <div class="table-header">
+                    <div class="table-title">🏭 lines</div>
+                    <div class="table-subtitle">Dây Chuyền Sản Xuất</div>
+                </div>
+                <div class="table-body">
+                    <div class="column-row pk-row" id="col-lines-id">
+                        <div class="col-left"><span class="badge badge-pk">PK</span> <span>id</span></div>
+                        <span class="col-type">integer</span>
+                    </div>
+                    <div class="column-row">
+                        <div class="col-left"><span>name</span></div>
+                        <span class="col-type">varchar</span>
+                    </div>
+                    <div class="column-row">
+                        <div class="col-left"><span>remark</span></div>
+                        <span class="col-type">text</span>
+                    </div>
+                    <div class="column-row">
+                        <div class="col-left"><span>created_at</span></div>
+                        <span class="col-type">timestamp</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="erd-table" id="tbl-station_types" style="left: 440px; top: 590px;">
+                <div class="table-header">
+                    <div class="table-title">🏷️ station_types</div>
+                    <div class="table-subtitle">Loại Trạm (SPI/AOI...)</div>
+                </div>
+                <div class="table-body">
+                    <div class="column-row pk-row" id="col-station_types-id">
+                        <div class="col-left"><span class="badge badge-pk">PK</span> <span>id</span></div>
+                        <span class="col-type">integer</span>
+                    </div>
+                    <div class="column-row">
+                        <div class="col-left"><span>name</span></div>
+                        <span class="col-type">varchar</span>
+                    </div>
+                    <div class="column-row">
+                        <div class="col-left"><span>remark</span></div>
+                        <span class="col-type">text</span>
+                    </div>
+                    <div class="column-row">
+                        <div class="col-left"><span>created_at</span></div>
+                        <span class="col-type">timestamp</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="erd-table" id="tbl-stations" style="left: 440px; top: 300px;">
+                <div class="table-header">
+                    <div class="table-title">🖥️ stations</div>
+                    <div class="table-subtitle">Trạm Kiểm Tra</div>
+                </div>
+                <div class="table-body">
+                    <div class="column-row pk-row" id="col-stations-id">
+                        <div class="col-left"><span class="badge badge-pk">PK</span> <span>id</span></div>
+                        <span class="col-type">integer</span>
+                    </div>
+                    <div class="column-row fk-row" id="col-stations-line_id">
+                        <div class="col-left"><span class="badge badge-fk">FK</span> <span>line_id</span></div>
+                        <span class="col-type">integer</span>
+                    </div>
+                    <div class="column-row fk-row" id="col-stations-model_group_id">
+                        <div class="col-left"><span class="badge badge-fk">FK</span> <span>model_group_id</span></div>
+                        <span class="col-type">integer</span>
+                    </div>
+                    <div class="column-row fk-row" id="col-stations-station_type_id">
+                        <div class="col-left"><span class="badge badge-fk">FK</span> <span>station_type_id</span></div>
+                        <span class="col-type">integer</span>
+                    </div>
+                    <div class="column-row">
+                        <div class="col-left"><span>name</span></div>
+                        <span class="col-type">varchar</span>
+                    </div>
+                    <div class="column-row">
+                        <div class="col-left"><span>process_info</span></div>
+                        <span class="col-type">varchar (Process Config)</span>
+                    </div>
+                    <div class="column-row">
+                        <div class="col-left"><span>remark</span></div>
+                        <span class="col-type">text</span>
+                    </div>
+                    <div class="column-row">
+                        <div class="col-left"><span>created_at</span></div>
+                        <span class="col-type">timestamp</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Column 3: Hardware Collector Channels & Devices -->
+            <div class="erd-table" id="tbl-channels" style="left: 820px; top: 80px;">
+                <div class="table-header">
+                    <div class="table-title">🔌 channels</div>
+                    <div class="table-subtitle">Kênh Phần Cứng / Collector</div>
+                </div>
+                <div class="table-body">
+                    <div class="column-row pk-row" id="col-channels-id">
+                        <div class="col-left"><span class="badge badge-pk">PK</span> <span>id</span></div>
+                        <span class="col-type">integer</span>
+                    </div>
+                    <div class="column-row fk-row" id="col-channels-station_id">
+                        <div class="col-left"><span class="badge badge-fk">FK</span> <span>station_id</span></div>
+                        <span class="col-type">integer</span>
+                    </div>
+                    <div class="column-row">
+                        <div class="col-left"><span>name</span></div>
+                        <span class="col-type">varchar</span>
+                    </div>
+                    <div class="column-row">
+                        <div class="col-left"><span>machine_partno</span></div>
+                        <span class="col-type">varchar</span>
+                    </div>
+                    <div class="column-row">
+                        <div class="col-left"><span>ip_address</span></div>
+                        <span class="col-type">varchar (UQ)</span>
+                    </div>
+                    <div class="column-row">
+                        <div class="col-left"><span>mac_address</span></div>
+                        <span class="col-type">varchar</span>
+                    </div>
+                    <div class="column-row">
+                        <div class="col-left"><span>gmes_name</span></div>
+                        <span class="col-type">varchar</span>
+                    </div>
+                    <div class="column-row">
+                        <div class="col-left"><span>status</span></div>
+                        <span class="col-type">varchar</span>
+                    </div>
+                    <div class="column-row">
+                        <div class="col-left"><span>created_at</span></div>
+                        <span class="col-type">timestamp</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="erd-table" id="tbl-device_types" style="left: 820px; top: 590px;">
+                <div class="table-header">
+                    <div class="table-title">📷 device_types</div>
+                    <div class="table-subtitle">Loại Thiết Bị Phần Cứng</div>
+                </div>
+                <div class="table-body">
+                    <div class="column-row pk-row" id="col-device_types-id">
+                        <div class="col-left"><span class="badge badge-pk">PK</span> <span>id</span></div>
+                        <span class="col-type">integer</span>
+                    </div>
+                    <div class="column-row">
+                        <div class="col-left"><span>name</span></div>
+                        <span class="col-type">varchar</span>
+                    </div>
+                    <div class="column-row">
+                        <div class="col-left"><span>remark</span></div>
+                        <span class="col-type">text</span>
+                    </div>
+                    <div class="column-row">
+                        <div class="col-left"><span>created_at</span></div>
+                        <span class="col-type">timestamp</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="erd-table" id="tbl-devices" style="left: 1200px; top: 80px;">
+                <div class="table-header">
+                    <div class="table-title">⚙️ devices</div>
+                    <div class="table-subtitle">Thiết Bị Linh Kiện Trạm</div>
+                </div>
+                <div class="table-body">
+                    <div class="column-row pk-row" id="col-devices-id">
+                        <div class="col-left"><span class="badge badge-pk">PK</span> <span>id</span></div>
+                        <span class="col-type">integer</span>
+                    </div>
+                    <div class="column-row fk-row" id="col-devices-channel_id">
+                        <div class="col-left"><span class="badge badge-fk">FK</span> <span>channel_id</span></div>
+                        <span class="col-type">integer</span>
+                    </div>
+                    <div class="column-row fk-row" id="col-devices-device_type_id">
+                        <div class="col-left"><span class="badge badge-fk">FK</span> <span>device_type_id</span></div>
+                        <span class="col-type">integer</span>
+                    </div>
+                    <div class="column-row">
+                        <div class="col-left"><span>name</span></div>
+                        <span class="col-type">varchar</span>
+                    </div>
+                    <div class="column-row">
+                        <div class="col-left"><span>model_partno</span></div>
+                        <span class="col-type">varchar</span>
+                    </div>
+                    <div class="column-row">
+                        <div class="col-left"><span>serial_number</span></div>
+                        <span class="col-type">varchar</span>
+                    </div>
+                    <div class="column-row">
+                        <div class="col-left"><span>status</span></div>
+                        <span class="col-type">varchar</span>
+                    </div>
+                    <div class="column-row">
+                        <div class="col-left"><span>calibration_date</span></div>
+                        <span class="col-type">timestamp</span>
+                    </div>
+                    <div class="column-row">
+                        <div class="col-left"><span>calibration_due_date</span></div>
+                        <span class="col-type">timestamp</span>
+                    </div>
+                    <div class="column-row">
+                        <div class="col-left"><span>calibration_status</span></div>
+                        <span class="col-type">varchar</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Column 4: High-Throughput Production Results & Steps -->
+            <div class="erd-table" id="tbl-pcb_results" style="left: 1200px; top: 480px;">
+                <div class="table-header">
+                    <div class="table-title">🔬 pcb_results</div>
+                    <div class="table-subtitle">Nhật Ký Kiểm Tra PCB (TimescaleDB)</div>
+                </div>
+                <div class="table-body">
+                    <div class="column-row pk-row" id="col-pcb_results-id">
+                        <div class="col-left"><span class="badge badge-pk">PK</span> <span>id</span></div>
+                        <span class="col-type">uuid</span>
+                    </div>
+                    <div class="column-row fk-row" id="col-pcb_results-station_id">
+                        <div class="col-left"><span class="badge badge-fk">FK</span> <span>station_id</span></div>
+                        <span class="col-type">integer</span>
+                    </div>
+                    <div class="column-row fk-row" id="col-pcb_results-channel_id">
+                        <div class="col-left"><span class="badge badge-fk">FK</span> <span>channel_id</span></div>
+                        <span class="col-type">integer</span>
+                    </div>
+                    <div class="column-row fk-row" id="col-pcb_results-model_id">
+                        <div class="col-left"><span class="badge badge-fk">FK</span> <span>model_id</span></div>
+                        <span class="col-type">integer</span>
+                    </div>
+                    <div class="column-row">
+                        <div class="col-left"><span>pid</span></div>
+                        <span class="col-type">varchar (Barcode)</span>
+                    </div>
+                    <div class="column-row">
+                        <div class="col-left"><span>job_file</span></div>
+                        <span class="col-type">varchar</span>
+                    </div>
+                    <div class="column-row">
+                        <div class="col-left"><span>fid</span></div>
+                        <span class="col-type">varchar</span>
+                    </div>
+                    <div class="column-row">
+                        <div class="col-left"><span>pcba_partno</span></div>
+                        <span class="col-type">varchar</span>
+                    </div>
+                    <div class="column-row">
+                        <div class="col-left"><span>start_time</span></div>
+                        <span class="col-type">timestamp (Date + Time)</span>
+                    </div>
+                    <div class="column-row">
+                        <div class="col-left"><span>end_time</span></div>
+                        <span class="col-type">timestamp (Date + Time)</span>
+                    </div>
+                    <div class="column-row">
+                        <div class="col-left"><span>test_time</span></div>
+                        <span class="col-type">double precision</span>
+                    </div>
+                    <div class="column-row">
+                        <div class="col-left"><span>file_path</span></div>
+                        <span class="col-type">text</span>
+                    </div>
+                    <div class="column-row">
+                        <div class="col-left"><span>result</span></div>
+                        <span class="col-type">varchar (OK/NG)</span>
+                    </div>
+                    <div class="column-row">
+                        <div class="col-left"><span>error_code</span></div>
+                        <span class="col-type">varchar (Step NG)</span>
+                    </div>
+                    <div class="column-row">
+                        <div class="col-left"><span>gmes_status</span></div>
+                        <span class="col-type">varchar (Nullable)</span>
+                    </div>
+                    <div class="column-row">
+                        <div class="col-left"><span>inspect_time</span></div>
+                        <span class="col-type">timestamp (Date + Time)</span>
+                    </div>
+                    <div class="column-row">
+                        <div class="col-left"><span>created_at</span></div>
+                        <span class="col-type">timestamp</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="erd-table" id="tbl-test_steps" style="left: 1600px; top: 480px;">
+                <div class="table-header">
+                    <div class="table-title">📊 test_steps</div>
+                    <div class="table-subtitle">Chi Tiết Bước Thử Nghiệm</div>
+                </div>
+                <div class="table-body">
+                    <div class="column-row pk-row" id="col-test_steps-id">
+                        <div class="col-left"><span class="badge badge-pk">PK</span> <span>id</span></div>
+                        <span class="col-type">bigint</span>
+                    </div>
+                    <div class="column-row fk-row" id="col-test_steps-pcb_result_id">
+                        <div class="col-left"><span class="badge badge-fk">FK</span> <span>pcb_result_id</span></div>
+                        <span class="col-type">uuid</span>
+                    </div>
+                    <div class="column-row">
+                        <div class="col-left"><span>step_type</span></div>
+                        <span class="col-type">varchar</span>
+                    </div>
+                    <div class="column-row">
+                        <div class="col-left"><span>step_number</span></div>
+                        <span class="col-type">integer</span>
+                    </div>
+                    <div class="column-row">
+                        <div class="col-left"><span>step_name</span></div>
+                        <span class="col-type">varchar</span>
+                    </div>
+                    <div class="column-row">
+                        <div class="col-left"><span>value</span></div>
+                        <span class="col-type">varchar</span>
+                    </div>
+                    <div class="column-row">
+                        <div class="col-left"><span>spec_min</span></div>
+                        <span class="col-type">varchar</span>
+                    </div>
+                    <div class="column-row">
+                        <div class="col-left"><span>spec_max</span></div>
+                        <span class="col-type">varchar</span>
+                    </div>
+                    <div class="column-row">
+                        <div class="col-left"><span>result</span></div>
+                        <span class="col-type">varchar (OK/NG)</span>
+                    </div>
+                    <div class="column-row">
+                        <div class="col-left"><span>created_at</span></div>
+                        <span class="col-type">timestamp</span>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+    </div>
+
+    <!-- Legend Footer Bar -->
+    <footer>
+        <div class="legend-item">
+            <span class="badge badge-pk">PK</span> Khóa Chính (Primary Key)
+        </div>
+        <div class="legend-item">
+            <span class="badge badge-fk">FK</span> Khóa Ngoại (Foreign Key)
+        </div>
+        <div class="legend-item">
+            <div class="legend-dot" style="background: var(--card-header-bg);"></div> Bảng Master / Telemetry Data
+        </div>
+        <div class="legend-item">
+            <div class="legend-dot" style="background: var(--line-color);"></div> Mối quan hệ 1 - N (Crow's Foot)
+        </div>
+    </footer>
+
+    <!-- Interactive Script for Dragging & Redrawing SVG Lines -->
+    <script>
+        // Define Relationships (From Table/Col -> To Table/Col)
+        const relationships = [
+            { fromTable: 'tbl-buyers', fromCol: 'col-buyers-id', toTable: 'tbl-model_groups', toCol: 'col-model_groups-buyer_id', label: '1 : N' },
+            { fromTable: 'tbl-model_groups', fromCol: 'col-model_groups-id', toTable: 'tbl-models', toCol: 'col-models-model_group_id', label: '1 : N' },
+            { fromTable: 'tbl-lines', fromCol: 'col-lines-id', toTable: 'tbl-stations', toCol: 'col-stations-line_id', label: '1 : N' },
+            { fromTable: 'tbl-model_groups', fromCol: 'col-model_groups-id', toTable: 'tbl-stations', toCol: 'col-stations-model_group_id', label: '1 : N' },
+            { fromTable: 'tbl-station_types', fromCol: 'col-station_types-id', toTable: 'tbl-stations', toCol: 'col-stations-station_type_id', label: '1 : N' },
+            { fromTable: 'tbl-stations', fromCol: 'col-stations-id', toTable: 'tbl-channels', toCol: 'col-channels-station_id', label: '1 : N' },
+            { fromTable: 'tbl-channels', fromCol: 'col-channels-id', toTable: 'tbl-devices', toCol: 'col-devices-channel_id', label: '1 : N' },
+            { fromTable: 'tbl-device_types', fromCol: 'col-device_types-id', toTable: 'tbl-devices', toCol: 'col-devices-device_type_id', label: '1 : N' },
+            
+            // PCB Results Relationships (Normalized: Line and Buyer are derived via Channel & Model hierarchy)
+            { fromTable: 'tbl-stations', fromCol: 'col-stations-id', toTable: 'tbl-pcb_results', toCol: 'col-pcb_results-station_id', label: '1 : N' },
+            { fromTable: 'tbl-channels', fromCol: 'col-channels-id', toTable: 'tbl-pcb_results', toCol: 'col-pcb_results-channel_id', label: '1 : N' },
+            { fromTable: 'tbl-models', fromCol: 'col-models-id', toTable: 'tbl-pcb_results', toCol: 'col-pcb_results-model_id', label: '1 : N' },
+            
+            // Test Steps Relationship
+            { fromTable: 'tbl-pcb_results', fromCol: 'col-pcb_results-id', toTable: 'tbl-test_steps', toCol: 'col-test_steps-pcb_result_id', label: '1 : N' }
+        ];
+
+        const initialPositions = {};
+        let currentZoom = 1.0;
+
+        // Save initial positions for Reset
+        document.querySelectorAll('.erd-table').forEach(table => {
+            initialPositions[table.id] = {
+                left: table.offsetLeft,
+                top: table.offsetTop
+            };
+            makeDraggable(table);
+        });
+
+        // Draw Lines initially
+        window.addEventListener('load', () => {
+            drawConnectors();
+        });
+
+        function drawConnectors() {
+            const svgLayer = document.getElementById('svg-layer');
+            // Remove existing paths
+            svgLayer.querySelectorAll('path.connector').forEach(el => el.remove());
+
+            const workspaceRect = document.getElementById('canvas-content').getBoundingClientRect();
+
+            relationships.forEach((rel, index) => {
+                const fromEl = document.getElementById(rel.fromCol) || document.getElementById(rel.fromTable);
+                const toEl = document.getElementById(rel.toCol) || document.getElementById(rel.toTable);
+
+                if (!fromEl || !toEl) return;
+
+                const fromRect = fromEl.getBoundingClientRect();
+                const toRect = toEl.getBoundingClientRect();
+
+                // Compute relative coordinates inside canvas-content
+                const x1 = (fromRect.right - workspaceRect.left) / currentZoom;
+                const y1 = (fromRect.top + fromRect.height / 2 - workspaceRect.top) / currentZoom;
+
+                const x2 = (toRect.left - workspaceRect.left) / currentZoom;
+                const y2 = (toRect.top + toRect.height / 2 - workspaceRect.top) / currentZoom;
+
+                // Create SVG Cubic Bezier Curve
+                const deltaX = Math.abs(x2 - x1) * 0.5;
+                const controlX1 = x1 + Math.max(deltaX, 40);
+                const controlX2 = x2 - Math.max(deltaX, 40);
+
+                const d = `M ${x1} ${y1} C ${controlX1} ${y1}, ${controlX2} ${y2}, ${x2} ${y2}`;
+
+                const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+                path.setAttribute('d', d);
+                path.setAttribute('class', 'connector');
+                path.setAttribute('id', `rel-line-${index}`);
+                path.setAttribute('data-from', rel.fromTable);
+                path.setAttribute('data-to', rel.toTable);
+                path.setAttribute('marker-start', 'url(#crowsfoot-one)');
+                path.setAttribute('marker-end', 'url(#crowsfoot-many)');
+
+                svgLayer.appendChild(path);
+            });
+        }
+
+        // Draggable Card Logic
+        function makeDraggable(element) {
+            const header = element.querySelector('.table-header');
+            let posX = 0, posY = 0, mouseX = 0, mouseY = 0;
+
+            header.onmousedown = dragMouseDown;
+
+            function dragMouseDown(e) {
+                e.preventDefault();
+                mouseX = e.clientX;
+                mouseY = e.clientY;
+
+                document.onmouseup = closeDragElement;
+                document.onmousemove = elementDrag;
+
+                // Highlight active table
+                highlightConnections(element.id);
+            }
+
+            function elementDrag(e) {
+                e.preventDefault();
+                const dx = (e.clientX - mouseX) / currentZoom;
+                const dy = (e.clientY - mouseY) / currentZoom;
+                mouseX = e.clientX;
+                mouseY = e.clientY;
+
+                element.style.left = (element.offsetLeft + dx) + "px";
+                element.style.top = (element.offsetTop + dy) + "px";
+
+                drawConnectors();
+            }
+
+            function closeDragElement() {
+                document.onmouseup = null;
+                document.onmousemove = null;
+            }
+        }
+
+        // Highlight Connections on Hover/Click
+        function highlightConnections(tableId) {
+            document.querySelectorAll('.erd-table').forEach(tbl => tbl.classList.add('dimmed'));
+            document.querySelectorAll('path.connector').forEach(p => p.classList.add('dimmed'));
+
+            const targetTbl = document.getElementById(tableId);
+            if (targetTbl) targetTbl.classList.remove('dimmed');
+
+            document.querySelectorAll(`path.connector[data-from="${tableId}"], path.connector[data-to="${tableId}"]`).forEach(p => {
+                p.classList.remove('dimmed');
+                p.classList.add('active');
+                p.setAttribute('marker-start', 'url(#crowsfoot-one-active)');
+                p.setAttribute('marker-end', 'url(#crowsfoot-many-active)');
+
+                const relatedFrom = p.getAttribute('data-from');
+                const relatedTo = p.getAttribute('data-to');
+                document.getElementById(relatedFrom)?.classList.remove('dimmed');
+                document.getElementById(relatedTo)?.classList.remove('dimmed');
+            });
+        }
+
+        // Clear Highlight on Canvas Click
+        document.getElementById('workspace').addEventListener('click', (e) => {
+            if (e.target.id === 'workspace' || e.target.id === 'canvas-content' || e.target.id === 'svg-layer') {
+                document.querySelectorAll('.erd-table').forEach(tbl => {
+                    tbl.classList.remove('dimmed', 'active');
+                });
+                document.querySelectorAll('path.connector').forEach(p => {
+                    p.classList.remove('dimmed', 'active');
+                    p.setAttribute('marker-start', 'url(#crowsfoot-one)');
+                    p.setAttribute('marker-end', 'url(#crowsfoot-many)');
+                });
+            }
+        });
+
+        // Hover Effect on Rows
+        document.querySelectorAll('.erd-table').forEach(table => {
+            table.addEventListener('mouseenter', () => {
+                highlightConnections(table.id);
+            });
+        });
+
+        // Reset Layout
+        function resetLayout() {
+            Object.keys(initialPositions).forEach(id => {
+                const tbl = document.getElementById(id);
+                if (tbl) {
+                    tbl.style.left = initialPositions[id].left + 'px';
+                    tbl.style.top = initialPositions[id].top + 'px';
+                }
+            });
+            drawConnectors();
+        }
+
+        // Filter / Search
+        function filterTables() {
+            const query = document.getElementById('searchInput').value.toLowerCase();
+            document.querySelectorAll('.erd-table').forEach(tbl => {
+                const text = tbl.innerText.toLowerCase();
+                if (text.includes(query)) {
+                    tbl.style.display = 'block';
+                } else {
+                    tbl.style.display = 'none';
+                }
+            });
+            drawConnectors();
+        }
+
+        // Zoom Control
+        function zoomIn() {
+            currentZoom = Math.min(currentZoom + 0.1, 1.8);
+            applyZoom();
+        }
+
+        function zoomOut() {
+            currentZoom = Math.max(currentZoom - 0.1, 0.5);
+            applyZoom();
+        }
+
+        function applyZoom() {
+            document.getElementById('canvas-content').style.transform = `scale(${currentZoom})`;
+            drawConnectors();
+        }
+
+        // Export SVG
+        function exportSVG() {
+            const svgEl = document.getElementById('svg-layer');
+            const svgData = new XMLSerializer().serializeToString(svgEl);
+            const blob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = 'PMSystem2_Database_ERD.svg';
+            link.click();
+        }
+    </script>
+</body>
+</html>

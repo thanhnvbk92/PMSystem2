@@ -91,12 +91,13 @@ export default function PcbSearch({ lines, stations, channels = [], onFilterChan
         : '';
 
       // Extract JobFile / Model name
-      let jobFile = "DEFAULT_JOB";
-      if (l.pid) {
+      let jobFile = l.jobFile || l.job_file || "";
+      if (!jobFile && l.pid) {
         const parts = l.pid.split(/[-_/]/).filter(Boolean);
         if (parts.length > 1) jobFile = parts[0];
         else jobFile = l.pid;
       }
+      if (!jobFile) jobFile = "DEFAULT_JOB";
 
       // Lookup channel IP
       let channelIp = l.channelIp || '';

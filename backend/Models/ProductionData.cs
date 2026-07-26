@@ -16,13 +16,38 @@ namespace PMSystem2.Api.Models
         [Column("station_id")]
         public int StationId { get; set; }
 
-        [Column("line_id")]
-        public int LineId { get; set; }
-
         [Required]
         [MaxLength(100)]
         [Column("pid")]
         public string Pid { get; set; } = string.Empty;
+
+        [MaxLength(100)]
+        [Column("job_file")]
+        public string? JobFile { get; set; }
+
+        [Column("model_id")]
+        public int? ModelId { get; set; }
+
+        [MaxLength(100)]
+        [Column("fid")]
+        public string? Fid { get; set; }
+
+        [MaxLength(100)]
+        [Column("pcba_partno")]
+        public string? PcbaPartNo { get; set; }
+
+        [Column("start_time")]
+        public DateTime? StartTime { get; set; }
+
+        [Column("end_time")]
+        public DateTime? EndTime { get; set; }
+
+        [Column("test_time")]
+        public double? TestTime { get; set; }
+
+        [MaxLength(500)]
+        [Column("file_path")]
+        public string? FilePath { get; set; }
 
         [Required]
         [MaxLength(10)]
@@ -33,8 +58,15 @@ namespace PMSystem2.Api.Models
         [Column("error_code")]
         public string? ErrorCode { get; set; }
 
+        [MaxLength(50)]
+        [Column("gmes_status")]
+        public string? GmesStatus { get; set; }
+
         [Column("inspect_time")]
         public DateTime InspectTime { get; set; } = DateTime.UtcNow;
+
+        [Column("created_at")]
+        public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
         public ICollection<TestStep> TestSteps { get; set; } = new List<TestStep>();
     }
@@ -154,17 +186,48 @@ namespace PMSystem2.Api.Models
         [System.Text.Json.Serialization.JsonPropertyName("pid")]
         public string Pid { get; set; } = string.Empty;
 
+        [System.Text.Json.Serialization.JsonPropertyName("job_file")]
+        public string? JobFile { get; set; }
+
+        [System.Text.Json.Serialization.JsonPropertyName("jobfile")]
+        public string? JobFileAlias
+        {
+            get => JobFile;
+            set { if (!string.IsNullOrWhiteSpace(value)) JobFile = value; }
+        }
+
         [System.Text.Json.Serialization.JsonPropertyName("result")]
         public string Result { get; set; } = "OK"; // OK / NG
 
         [System.Text.Json.Serialization.JsonPropertyName("error_code")]
         public string? ErrorCode { get; set; }
 
+        [System.Text.Json.Serialization.JsonPropertyName("gmes_status")]
+        public string? GmesStatus { get; set; }
+
         [System.Text.Json.Serialization.JsonPropertyName("inspect_time")]
         public DateTime? InspectTime { get; set; }
 
         [System.Text.Json.Serialization.JsonPropertyName("start_time")]
         public DateTime? StartTime { get; set; }
+
+        [System.Text.Json.Serialization.JsonPropertyName("end_time")]
+        public DateTime? EndTime { get; set; }
+
+        [System.Text.Json.Serialization.JsonPropertyName("test_time")]
+        public double? TestTime { get; set; }
+
+        [System.Text.Json.Serialization.JsonPropertyName("model_id")]
+        public int? ModelId { get; set; }
+
+        [System.Text.Json.Serialization.JsonPropertyName("fid")]
+        public string? Fid { get; set; }
+
+        [System.Text.Json.Serialization.JsonPropertyName("pcba_partno")]
+        public string? PcbaPartNo { get; set; }
+
+        [System.Text.Json.Serialization.JsonPropertyName("file_path")]
+        public string? FilePath { get; set; }
 
         [System.Text.Json.Serialization.JsonPropertyName("steps")]
         public List<TestStepInputDto>? Steps { get; set; }
@@ -182,7 +245,18 @@ namespace PMSystem2.Api.Models
         string Pid,
         string Result,
         string? ErrorCode,
+        string? GmesStatus,
         DateTime InspectTime,
+        DateTime CreatedAt,
+        string? JobFile,
+        int? ModelId,
+        int? BuyerId,
+        string? Fid,
+        string? PcbaPartNo,
+        DateTime? StartTime,
+        DateTime? EndTime,
+        double? TestTime,
+        string? FilePath,
         List<TestStepInputDto> Steps
     );
 

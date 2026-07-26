@@ -45,6 +45,7 @@ namespace PMSystem2.Api.Controllers
             try
             {
                 var res = await _masterDataService.CreateBuyerAsync(req);
+                await NotifyMasterDataChangedAsync("buyers");
                 return CreatedAtAction(nameof(GetBuyers), new { id = res.Id }, res);
             }
             catch (Exception ex)
@@ -60,6 +61,7 @@ namespace PMSystem2.Api.Controllers
             {
                 var res = await _masterDataService.UpdateBuyerAsync(id, req);
                 if (res == null) return NotFound(new { error = "Buyer not found" });
+                await NotifyMasterDataChangedAsync("buyers");
                 return Ok(res);
             }
             catch (Exception ex)
@@ -75,11 +77,174 @@ namespace PMSystem2.Api.Controllers
             {
                 var success = await _masterDataService.DeleteBuyerAsync(id);
                 if (!success) return NotFound(new { error = "Buyer không tồn tại" });
+                await NotifyMasterDataChangedAsync("buyers");
                 return NoContent();
             }
             catch (Exception ex)
             {
                 return BadRequest(new { error = $"Không thể xóa Buyer: {ex.Message}" });
+            }
+        }
+
+        // --- MODEL GROUPS ---
+        [HttpGet("model-groups")]
+        public async Task<ActionResult<List<ModelGroupDto>>> GetModelGroups()
+        {
+            return Ok(await _masterDataService.GetModelGroupsAsync());
+        }
+
+        [HttpPost("model-groups")]
+        public async Task<ActionResult<ModelGroupDto>> CreateModelGroup([FromBody] CreateModelGroupRequest req)
+        {
+            try
+            {
+                var res = await _masterDataService.CreateModelGroupAsync(req);
+                await NotifyMasterDataChangedAsync("model-groups");
+                return CreatedAtAction(nameof(GetModelGroups), new { id = res.Id }, res);
+            }
+            catch (Exception ex)
+            {
+                return BadRequest(new { error = ex.Message });
+            }
+        }
+
+        [HttpPut("model-groups/{id}")]
+        public async Task<ActionResult<ModelGroupDto>> UpdateModelGroup(int id, [FromBody] UpdateModelGroupRequest req)
+        {
+            try
+            {
+                var res = await _masterDataService.UpdateModelGroupAsync(id, req);
+                if (res == null) return NotFound(new { error = "ModelGroup not found" });
+                await NotifyMasterDataChangedAsync("model-groups");
+                return Ok(res);
+            }
+            catch (Exception ex)
+            {
+                return BadRequest(new { error = ex.Message });
+            }
+        }
+
+        [HttpDelete("model-groups/{id}")]
+        public async Task<IActionResult> DeleteModelGroup(int id)
+        {
+            try
+            {
+                var success = await _masterDataService.DeleteModelGroupAsync(id);
+                if (!success) return NotFound(new { error = "ModelGroup không tồn tại" });
+                await NotifyMasterDataChangedAsync("model-groups");
+                return NoContent();
+            }
+            catch (Exception ex)
+            {
+                return BadRequest(new { error = ex.Message });
+            }
+        }
+
+        // --- MODELS ---
+        [HttpGet("models")]
+        public async Task<ActionResult<List<ModelItemDto>>> GetModels()
+        {
+            return Ok(await _masterDataService.GetModelsAsync());
+        }
+
+        [HttpPost("models")]
+        public async Task<ActionResult<ModelItemDto>> CreateModel([FromBody] CreateModelItemRequest req)
+        {
+            try
+            {
+                var res = await _masterDataService.CreateModelAsync(req);
+                await NotifyMasterDataChangedAsync("models");
+                return CreatedAtAction(nameof(GetModels), new { id = res.Id }, res);
+            }
+            catch (Exception ex)
+            {
+                return BadRequest(new { error = ex.Message });
+            }
+        }
+
+        [HttpPut("models/{id}")]
+        public async Task<ActionResult<ModelItemDto>> UpdateModel(int id, [FromBody] UpdateModelItemRequest req)
+        {
+            try
+            {
+                var res = await _masterDataService.UpdateModelAsync(id, req);
+                if (res == null) return NotFound(new { error = "Model not found" });
+                await NotifyMasterDataChangedAsync("models");
+                return Ok(res);
+            }
+            catch (Exception ex)
+            {
+                return BadRequest(new { error = ex.Message });
+            }
+        }
+
+        [HttpDelete("models/{id}")]
+        public async Task<IActionResult> DeleteModel(int id)
+        {
+            try
+            {
+                var success = await _masterDataService.DeleteModelAsync(id);
+                if (!success) return NotFound(new { error = "Model không tồn tại" });
+                await NotifyMasterDataChangedAsync("models");
+                return NoContent();
+            }
+            catch (Exception ex)
+            {
+                return BadRequest(new { error = ex.Message });
+            }
+        }
+
+        // --- STATION TYPES ---
+        [HttpGet("station-types")]
+        public async Task<ActionResult<List<StationTypeDto>>> GetStationTypes()
+        {
+            return Ok(await _masterDataService.GetStationTypesAsync());
+        }
+
+        [HttpPost("station-types")]
+        public async Task<ActionResult<StationTypeDto>> CreateStationType([FromBody] CreateStationTypeRequest req)
+        {
+            try
+            {
+                var res = await _masterDataService.CreateStationTypeAsync(req);
+                await NotifyMasterDataChangedAsync("station-types");
+                return CreatedAtAction(nameof(GetStationTypes), new { id = res.Id }, res);
+            }
+            catch (Exception ex)
+            {
+                return BadRequest(new { error = ex.Message });
+            }
+        }
+
+        [HttpPut("station-types/{id}")]
+        public async Task<ActionResult<StationTypeDto>> UpdateStationType(int id, [FromBody] UpdateStationTypeRequest req)
+        {
+            try
+            {
+                var res = await _masterDataService.UpdateStationTypeAsync(id, req);
+                if (res == null) return NotFound(new { error = "StationType not found" });
+                await NotifyMasterDataChangedAsync("station-types");
+                return Ok(res);
+            }
+            catch (Exception ex)
+            {
+                return BadRequest(new { error = ex.Message });
+            }
+        }
+
+        [HttpDelete("station-types/{id}")]
+        public async Task<IActionResult> DeleteStationType(int id)
+        {
+            try
+            {
+                var success = await _masterDataService.DeleteStationTypeAsync(id);
+                if (!success) return NotFound(new { error = "StationType không tồn tại" });
+                await NotifyMasterDataChangedAsync("station-types");
+                return NoContent();
+            }
+            catch (Exception ex)
+            {
+                return BadRequest(new { error = ex.Message });
             }
         }
 
@@ -96,6 +261,7 @@ namespace PMSystem2.Api.Controllers
             try
             {
                 var res = await _masterDataService.CreateLineAsync(req);
+                await NotifyMasterDataChangedAsync("lines");
                 return CreatedAtAction(nameof(GetLines), new { id = res.Id }, res);
             }
             catch (Exception ex)
@@ -111,6 +277,7 @@ namespace PMSystem2.Api.Controllers
             {
                 var res = await _masterDataService.UpdateLineAsync(id, req);
                 if (res == null) return NotFound(new { error = "Line not found" });
+                await NotifyMasterDataChangedAsync("lines");
                 return Ok(res);
             }
             catch (Exception ex)
@@ -126,6 +293,7 @@ namespace PMSystem2.Api.Controllers
             {
                 var success = await _masterDataService.DeleteLineAsync(id);
                 if (!success) return NotFound(new { error = "Line không tồn tại" });
+                await NotifyMasterDataChangedAsync("lines");
                 return NoContent();
             }
             catch (Exception ex)
@@ -147,6 +315,7 @@ namespace PMSystem2.Api.Controllers
             try
             {
                 var res = await _masterDataService.CreateStationAsync(req);
+                await NotifyMasterDataChangedAsync("stations");
                 return CreatedAtAction(nameof(GetStations), new { id = res.Id }, res);
             }
             catch (Exception ex)
@@ -162,6 +331,7 @@ namespace PMSystem2.Api.Controllers
             {
                 var res = await _masterDataService.UpdateStationAsync(id, req);
                 if (res == null) return NotFound(new { error = "Station not found" });
+                await NotifyMasterDataChangedAsync("stations");
                 return Ok(res);
             }
             catch (Exception ex)
@@ -177,6 +347,7 @@ namespace PMSystem2.Api.Controllers
             {
                 var success = await _masterDataService.DeleteStationAsync(id);
                 if (!success) return NotFound(new { error = "Station không tồn tại" });
+                await NotifyMasterDataChangedAsync("stations");
                 return NoContent();
             }
             catch (Exception ex)
@@ -208,13 +379,13 @@ namespace PMSystem2.Api.Controllers
                     {
                         if (string.IsNullOrWhiteSpace(ch.MacAddress))
                         {
-                            await _masterDataService.UpdateChannelAsync(ch.Id, new UpdateChannelRequest(ch.StationId, ch.Name, ch.IpAddress, reqMac, "online"));
+                            await _masterDataService.UpdateChannelAsync(ch.Id, new UpdateChannelRequest(ch.StationId, ch.Name, IpAddress: ch.IpAddress, MacAddress: reqMac, Status: "online"));
                             await NotifyMasterDataChangedAsync("channels");
                         }
                         else if (!ch.MacAddress.Equals(reqMac, StringComparison.OrdinalIgnoreCase))
                         {
                             string oldMac = ch.MacAddress;
-                            await _masterDataService.UpdateChannelAsync(ch.Id, new UpdateChannelRequest(ch.StationId, ch.Name, ch.IpAddress, reqMac, "online"));
+                            await _masterDataService.UpdateChannelAsync(ch.Id, new UpdateChannelRequest(ch.StationId, ch.Name, IpAddress: ch.IpAddress, MacAddress: reqMac, Status: "online"));
                             await NotifyMasterDataChangedAsync("channels");
 
                             Response.Headers["Date"] = DateTime.UtcNow.ToString("r");
@@ -229,12 +400,12 @@ namespace PMSystem2.Api.Controllers
                         }
                         else
                         {
-                            await _masterDataService.UpdateChannelAsync(ch.Id, new UpdateChannelRequest(ch.StationId, ch.Name, ch.IpAddress, ch.MacAddress, "online"));
+                            await _masterDataService.UpdateChannelAsync(ch.Id, new UpdateChannelRequest(ch.StationId, ch.Name, IpAddress: ch.IpAddress, MacAddress: ch.MacAddress, Status: "online"));
                         }
                     }
                     else
                     {
-                        await _masterDataService.UpdateChannelAsync(ch.Id, new UpdateChannelRequest(ch.StationId, ch.Name, ch.IpAddress, ch.MacAddress, "online"));
+                        await _masterDataService.UpdateChannelAsync(ch.Id, new UpdateChannelRequest(ch.StationId, ch.Name, IpAddress: ch.IpAddress, MacAddress: ch.MacAddress, Status: "online"));
                     }
                 }
             }
@@ -301,7 +472,6 @@ namespace PMSystem2.Api.Controllers
 
                 var existingChannels = await _masterDataService.GetChannelsAsync();
 
-                // 1. Kiểm tra xem IP có trùng với Channel nào thuộc Station KHÁC không
                 if (targetIp != "127.0.0.1")
                 {
                     var matchedChannel = existingChannels.FirstOrDefault(c => 
@@ -309,7 +479,6 @@ namespace PMSystem2.Api.Controllers
 
                     if (matchedChannel != null)
                     {
-                        // Nếu trùng IP và CÙNG Station -> Auto-bind an toàn
                         if (matchedChannel.StationId == stationId)
                         {
                             if (!string.IsNullOrWhiteSpace(targetMac))
@@ -317,7 +486,7 @@ namespace PMSystem2.Api.Controllers
                                 if (string.IsNullOrWhiteSpace(matchedChannel.MacAddress))
                                 {
                                     await _masterDataService.UpdateChannelAsync(matchedChannel.Id, new UpdateChannelRequest(
-                                        matchedChannel.StationId, matchedChannel.Name, matchedChannel.IpAddress, targetMac, matchedChannel.Status
+                                        matchedChannel.StationId, matchedChannel.Name, IpAddress: matchedChannel.IpAddress, MacAddress: targetMac, Status: matchedChannel.Status
                                     ));
                                     await NotifyMasterDataChangedAsync("channels");
                                 }
@@ -325,7 +494,7 @@ namespace PMSystem2.Api.Controllers
                                 {
                                     string oldMac = matchedChannel.MacAddress;
                                     await _masterDataService.UpdateChannelAsync(matchedChannel.Id, new UpdateChannelRequest(
-                                        matchedChannel.StationId, matchedChannel.Name, matchedChannel.IpAddress, targetMac, matchedChannel.Status
+                                        matchedChannel.StationId, matchedChannel.Name, IpAddress: matchedChannel.IpAddress, MacAddress: targetMac, Status: matchedChannel.Status
                                     ));
                                     await NotifyMasterDataChangedAsync("channels");
 
@@ -340,8 +509,6 @@ namespace PMSystem2.Api.Controllers
                             return Ok(new { data = new { id = matchedChannel.Id, station_id = matchedChannel.StationId, name = matchedChannel.Name, status = matchedChannel.Status, macAddress = matchedChannel.MacAddress } });
                         }
 
-                        // NẾU TRÙNG IP NHƯNG KHÁC STATION -> Người dùng nhập sai Station ở Backup Log!
-                        // Từ chối đăng ký và trả về thông báo lỗi rõ ràng để người dùng sửa lại
                         return BadRequest(new { 
                             error = "CONFIG_MISMATCH", 
                             message = $"Địa chỉ IP {targetIp} đang được đăng ký chính thức cho Station '{matchedChannel.StationName}' (Chuyền: {matchedChannel.LineName ?? "N/A"}) trên Master Data Server, nhưng Backup Log lại khai báo Station ID {stationId}. Vui lòng sửa lại tên Station cho đúng hoặc cập nhật Master Data trên Web UI.",
@@ -352,7 +519,7 @@ namespace PMSystem2.Api.Controllers
                     }
                 }
 
-                var createReq = new CreateChannelRequest(stationId, req.Name, targetIp, targetMac);
+                var createReq = new CreateChannelRequest(stationId, req.Name, IpAddress: targetIp, MacAddress: targetMac);
                 var res = await _masterDataService.CreateChannelAsync(createReq);
                 await NotifyMasterDataChangedAsync("channels");
                 return Ok(new { data = new { id = res.Id, station_id = res.StationId, name = res.Name, status = res.Status, macAddress = res.MacAddress } });
@@ -370,6 +537,7 @@ namespace PMSystem2.Api.Controllers
             {
                 var res = await _masterDataService.UpdateChannelAsync(id, req);
                 if (res == null) return NotFound(new { error = "Channel not found" });
+                await NotifyMasterDataChangedAsync("channels");
                 return Ok(res);
             }
             catch (Exception ex)
@@ -385,6 +553,7 @@ namespace PMSystem2.Api.Controllers
             {
                 var success = await _masterDataService.DeleteChannelAsync(id);
                 if (!success) return NotFound(new { error = "Channel không tồn tại" });
+                await NotifyMasterDataChangedAsync("channels");
                 return NoContent();
             }
             catch (Exception ex)
@@ -399,11 +568,120 @@ namespace PMSystem2.Api.Controllers
             try
             {
                 var res = await _masterDataService.MergeChannelsAsync(req.SourceChannelId, req.TargetChannelId);
+                await NotifyMasterDataChangedAsync("channels");
                 return Ok(res);
             }
             catch (KeyNotFoundException ex)
             {
                 return NotFound(new { error = ex.Message });
+            }
+            catch (Exception ex)
+            {
+                return BadRequest(new { error = ex.Message });
+            }
+        }
+
+        // --- DEVICE TYPES ---
+        [HttpGet("device-types")]
+        public async Task<ActionResult<List<DeviceTypeDto>>> GetDeviceTypes()
+        {
+            return Ok(await _masterDataService.GetDeviceTypesAsync());
+        }
+
+        [HttpPost("device-types")]
+        public async Task<ActionResult<DeviceTypeDto>> CreateDeviceType([FromBody] CreateDeviceTypeRequest req)
+        {
+            try
+            {
+                var res = await _masterDataService.CreateDeviceTypeAsync(req);
+                await NotifyMasterDataChangedAsync("device-types");
+                return CreatedAtAction(nameof(GetDeviceTypes), new { id = res.Id }, res);
+            }
+            catch (Exception ex)
+            {
+                return BadRequest(new { error = ex.Message });
+            }
+        }
+
+        [HttpPut("device-types/{id}")]
+        public async Task<ActionResult<DeviceTypeDto>> UpdateDeviceType(int id, [FromBody] UpdateDeviceTypeRequest req)
+        {
+            try
+            {
+                var res = await _masterDataService.UpdateDeviceTypeAsync(id, req);
+                if (res == null) return NotFound(new { error = "DeviceType not found" });
+                await NotifyMasterDataChangedAsync("device-types");
+                return Ok(res);
+            }
+            catch (Exception ex)
+            {
+                return BadRequest(new { error = ex.Message });
+            }
+        }
+
+        [HttpDelete("device-types/{id}")]
+        public async Task<IActionResult> DeleteDeviceType(int id)
+        {
+            try
+            {
+                var success = await _masterDataService.DeleteDeviceTypeAsync(id);
+                if (!success) return NotFound(new { error = "DeviceType không tồn tại" });
+                await NotifyMasterDataChangedAsync("device-types");
+                return NoContent();
+            }
+            catch (Exception ex)
+            {
+                return BadRequest(new { error = ex.Message });
+            }
+        }
+
+        // --- DEVICES ---
+        [HttpGet("devices")]
+        public async Task<ActionResult<List<DeviceDto>>> GetDevices()
+        {
+            return Ok(await _masterDataService.GetDevicesAsync());
+        }
+
+        [HttpPost("devices")]
+        public async Task<ActionResult<DeviceDto>> CreateDevice([FromBody] CreateDeviceRequest req)
+        {
+            try
+            {
+                var res = await _masterDataService.CreateDeviceAsync(req);
+                await NotifyMasterDataChangedAsync("devices");
+                return CreatedAtAction(nameof(GetDevices), new { id = res.Id }, res);
+            }
+            catch (Exception ex)
+            {
+                return BadRequest(new { error = ex.Message });
+            }
+        }
+
+        [HttpPut("devices/{id}")]
+        public async Task<ActionResult<DeviceDto>> UpdateDevice(int id, [FromBody] UpdateDeviceRequest req)
+        {
+            try
+            {
+                var res = await _masterDataService.UpdateDeviceAsync(id, req);
+                if (res == null) return NotFound(new { error = "Device not found" });
+                await NotifyMasterDataChangedAsync("devices");
+                return Ok(res);
+            }
+            catch (Exception ex)
+            {
+                return BadRequest(new { error = ex.Message });
+            }
+        }
+
+        [HttpDelete("devices/{id}")]
+        public async Task<IActionResult> DeleteDevice(int id)
+        {
+            try
+            {
+                var success = await _masterDataService.DeleteDeviceAsync(id);
+                if (!success) return NotFound(new { error = "Device không tồn tại" });
+                await NotifyMasterDataChangedAsync("devices");
+                return NoContent();
             }
             catch (Exception ex)
             {

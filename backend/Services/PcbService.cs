@@ -62,7 +62,7 @@ namespace PMSystem2.Api.Services
                 {
                     var stations = await _masterDataService.GetStationsAsync();
                     int stationId = stations.FirstOrDefault()?.Id ?? 1;
-                    var newCh = await _masterDataService.CreateChannelAsync(new CreateChannelRequest(stationId, "Default Channel", "127.0.0.1"));
+                    var newCh = await _masterDataService.CreateChannelAsync(new CreateChannelRequest(stationId, "Default Channel", IpAddress: "127.0.0.1"));
                     channelId = newCh.Id;
                     hierarchy = _masterDataService.GetChannelHierarchy(channelId);
                 }
@@ -77,14 +77,31 @@ namespace PMSystem2.Api.Services
             var rawInspectTime = req.InspectTime ?? req.StartTime ?? DateTime.UtcNow;
             var inspectTime = DateTime.SpecifyKind(rawInspectTime, DateTimeKind.Utc);
 
-            // 1. Check if an identical PCB test result already exists (Deduplication)
+            // Calculate ErrorCode: First NG step name if NG/FAIL, else null if OK
+            string? computedErrorCode = null;
+            if (normalizedResult == "NG" || normalizedResult == "FAIL")
+            {
+                var firstNgStep = req.Steps?.FirstOrDefault(s =>
+                    !string.Equals(s.Result, "OK", StringComparison.OrdinalIgnoreCase) &&
+                    !string.Equals(s.Result, "PASS", StringComparison.OrdinalIgnoreCase));
+
+                if (firstNgStep != null)
+                {
+                    computedErrorCode = !string.IsNullOrWhiteSpace(firstNgStep.StepName)
+                        ? firstNgStep.StepName
+                        : (!string.IsNullOrWhiteSpace(firstNgStep.Value) ? firstNgStep.Value : "DEFECT_UNSPECIFIED");
+                }
+                else
+                {
+                    computedErrorCode = !string.IsNullOrWhiteSpace(req.ErrorCode) ? req.ErrorCode : "DEFECT_UNSPECIFIED";
+                }
+            }
+
+            // Deduplication Check
             var existingRecord = await _db.PcbResults
-                .AsNoTracking()
                 .Include(p => p.TestSteps)
-                .FirstOrDefaultAsync(p => p.StationId == hierarchy.StationId
-                                       && p.Pid == req.Pid
-                                       && p.InspectTime == inspectTime
-                                       && p.Result == normalizedResult);
+                .AsNoTracking()
+                .FirstOrDefaultAsync(p => p.StationId == hierarchy.StationId && p.Pid == req.Pid && p.InspectTime == inspectTime);
 
             if (existingRecord != null)
             {
@@ -103,7 +120,18 @@ namespace PMSystem2.Api.Services
                     existingRecord.Pid,
                     existingRecord.Result,
                     existingRecord.ErrorCode,
+                    existingRecord.GmesStatus,
                     existingRecord.InspectTime,
+                    existingRecord.CreatedAt,
+                    existingRecord.JobFile,
+                    existingRecord.ModelId,
+                    null,
+                    existingRecord.Fid,
+                    existingRecord.PcbaPartNo,
+                    existingRecord.StartTime,
+                    existingRecord.EndTime,
+                    existingRecord.TestTime,
+                    existingRecord.FilePath,
                     existingRecord.TestSteps.OrderBy(t => t.StepNumber).Select(t => new TestStepInputDto
                     {
                         StepType = t.StepType,
@@ -121,11 +149,20 @@ namespace PMSystem2.Api.Services
             {
                 ChannelId = channelId,
                 StationId = hierarchy.StationId,
-                LineId = hierarchy.LineId,
                 Pid = req.Pid,
+                JobFile = req.JobFile,
+                ModelId = req.ModelId,
+                Fid = req.Fid,
+                PcbaPartNo = req.PcbaPartNo,
+                StartTime = req.StartTime ?? inspectTime,
+                EndTime = req.EndTime,
+                TestTime = req.TestTime,
+                FilePath = req.FilePath,
                 Result = normalizedResult,
-                ErrorCode = req.ErrorCode,
-                InspectTime = inspectTime
+                ErrorCode = computedErrorCode,
+                GmesStatus = req.GmesStatus,
+                InspectTime = inspectTime,
+                CreatedAt = DateTime.UtcNow
             };
 
             if (req.Steps != null && req.Steps.Count > 0)
@@ -171,8 +208,19 @@ namespace PMSystem2.Api.Services
                     hierarchy.LineName,
                     req.Pid,
                     normalizedResult,
-                    req.ErrorCode,
+                    computedErrorCode,
+                    duplicate?.GmesStatus ?? req.GmesStatus,
                     inspectTime,
+                    duplicate?.CreatedAt ?? entity.CreatedAt,
+                    duplicate?.JobFile ?? req.JobFile,
+                    duplicate?.ModelId ?? req.ModelId,
+                    null,
+                    duplicate?.Fid ?? req.Fid,
+                    duplicate?.PcbaPartNo ?? req.PcbaPartNo,
+                    duplicate?.StartTime ?? entity.StartTime,
+                    duplicate?.EndTime ?? entity.EndTime,
+                    duplicate?.TestTime ?? entity.TestTime,
+                    duplicate?.FilePath ?? entity.FilePath,
                     req.Steps ?? new List<TestStepInputDto>()
                 );
             }
@@ -184,18 +232,29 @@ namespace PMSystem2.Api.Services
                 hierarchy.IpAddress,
                 entity.StationId,
                 hierarchy.StationName,
-                entity.LineId,
+                hierarchy.LineId,
                 hierarchy.LineName,
                 entity.Pid,
                 entity.Result,
                 entity.ErrorCode,
+                entity.GmesStatus,
                 entity.InspectTime,
+                entity.CreatedAt,
+                entity.JobFile,
+                entity.ModelId,
+                null,
+                entity.Fid,
+                entity.PcbaPartNo,
+                entity.StartTime,
+                entity.EndTime,
+                entity.TestTime,
+                entity.FilePath,
                 req.Steps ?? new List<TestStepInputDto>()
             );
 
             // Broadcast via SignalR to all connected clients & target groups
             await _hubContext.Clients.All.ReceivePcbResult(dto);
-            await _hubContext.Clients.Group($"Line_{entity.LineId}").ReceivePcbResult(dto);
+            await _hubContext.Clients.Group($"Line_{hierarchy.LineId}").ReceivePcbResult(dto);
             await _hubContext.Clients.Group($"Station_{entity.StationId}").ReceivePcbResult(dto);
 
             return dto;
@@ -212,7 +271,9 @@ namespace PMSystem2.Api.Services
 
             if (lineId.HasValue)
             {
-                query = query.Where(p => p.LineId == lineId.Value);
+                var stations = await _masterDataService.GetStationsAsync();
+                var stationIds = stations.Where(s => s.LineId == lineId.Value).Select(s => s.Id).ToList();
+                query = query.Where(p => stationIds.Contains(p.StationId));
             }
             if (stationId.HasValue)
             {
@@ -252,12 +313,23 @@ namespace PMSystem2.Api.Services
                     hierarchy?.IpAddress ?? "",
                     item.StationId,
                     hierarchy?.StationName ?? $"Station {item.StationId}",
-                    item.LineId,
-                    hierarchy?.LineName ?? $"Line {item.LineId}",
+                    hierarchy?.LineId ?? 0,
+                    hierarchy?.LineName ?? $"Line {hierarchy?.LineId}",
                     item.Pid,
                     item.Result,
                     item.ErrorCode,
+                    item.GmesStatus,
                     item.InspectTime,
+                    item.CreatedAt,
+                    item.JobFile,
+                    item.ModelId,
+                    null,
+                    item.Fid,
+                    item.PcbaPartNo,
+                    item.StartTime,
+                    item.EndTime,
+                    item.TestTime,
+                    item.FilePath,
                     item.TestSteps.OrderBy(t => t.StepNumber).Select(t => new TestStepInputDto {
                         StepType = t.StepType,
                         StepNumber = t.StepNumber,
@@ -283,7 +355,12 @@ namespace PMSystem2.Api.Services
         {
             var query = _db.PcbResults.AsNoTracking().AsQueryable();
 
-            if (lineId.HasValue) query = query.Where(p => p.LineId == lineId.Value);
+            if (lineId.HasValue)
+            {
+                var stations = await _masterDataService.GetStationsAsync();
+                var stationIds = stations.Where(s => s.LineId == lineId.Value).Select(s => s.Id).ToList();
+                query = query.Where(p => stationIds.Contains(p.StationId));
+            }
             if (stationId.HasValue) query = query.Where(p => p.StationId == stationId.Value);
             if (!string.IsNullOrWhiteSpace(searchPid))
             {
@@ -312,7 +389,12 @@ namespace PMSystem2.Api.Services
         {
             var query = _db.PcbResults.AsNoTracking().AsQueryable();
 
-            if (lineId.HasValue) query = query.Where(p => p.LineId == lineId.Value);
+            if (lineId.HasValue)
+            {
+                var stations = await _masterDataService.GetStationsAsync();
+                var stationIds = stations.Where(s => s.LineId == lineId.Value).Select(s => s.Id).ToList();
+                query = query.Where(p => stationIds.Contains(p.StationId));
+            }
             if (stationId.HasValue) query = query.Where(p => p.StationId == stationId.Value);
             if (!string.IsNullOrWhiteSpace(searchPid))
             {
@@ -350,13 +432,14 @@ namespace PMSystem2.Api.Services
                 var dateStr = inspectTimeLocal.ToString("yyyy-MM-dd");
                 var timeStr = inspectTimeLocal.ToString("HH:mm:ss");
 
-                string jobFile = "DEFAULT_JOB";
-                if (!string.IsNullOrWhiteSpace(item.Pid))
+                string jobFile = item.JobFile ?? "";
+                if (string.IsNullOrWhiteSpace(jobFile) && !string.IsNullOrWhiteSpace(item.Pid))
                 {
                     var parts = item.Pid.Split(new[] { '-', '_', '/' }, StringSplitOptions.RemoveEmptyEntries);
                     if (parts.Length > 1) jobFile = parts[0];
                     else jobFile = item.Pid;
                 }
+                if (string.IsNullOrWhiteSpace(jobFile)) jobFile = "DEFAULT_JOB";
 
                 string errorCode = item.ErrorCode ?? (item.Result == "NG" || item.Result == "FAIL" ? "DEFECT_UNSPECIFIED" : "OK");
 
@@ -372,7 +455,7 @@ namespace PMSystem2.Api.Services
                     .ToList();
                 string failedStepsStr = failedSteps.Count > 0 ? string.Join("; ", failedSteps) : (item.Result == "NG" ? (item.ErrorCode != null ? $"Lỗi hệ thống ({item.ErrorCode})" : "Lỗi tổng hợp") : "N/A");
 
-                sb.AppendLine($"\"{item.Id}\",\"{EscapeCsv(item.Pid)}\",\"{EscapeCsv(errorCode)}\",\"{EscapeCsv(hierarchy?.ChannelName ?? $"Channel #{item.ChannelId}")}\",\"{EscapeCsv(hierarchy?.IpAddress ?? "")}\",\"{EscapeCsv(hierarchy?.LineName ?? $"Line #{item.LineId}")}\",\"{EscapeCsv(hierarchy?.StationName ?? $"Station #{item.StationId}")}\",\"{dateStr}\",\"{timeStr}\",\"{item.Result}\",\"{EscapeCsv(jobFile)}\",\"{EscapeCsv(failedStepsStr)}\"");
+                sb.AppendLine($"\"{item.Id}\",\"{EscapeCsv(item.Pid)}\",\"{EscapeCsv(errorCode)}\",\"{EscapeCsv(hierarchy?.ChannelName ?? $"Channel #{item.ChannelId}")}\",\"{EscapeCsv(hierarchy?.IpAddress ?? "")}\",\"{EscapeCsv(hierarchy?.LineName ?? $"Line #{hierarchy?.LineId}")}\",\"{EscapeCsv(hierarchy?.StationName ?? $"Station #{item.StationId}")}\",\"{dateStr}\",\"{timeStr}\",\"{item.Result}\",\"{EscapeCsv(jobFile)}\",\"{EscapeCsv(failedStepsStr)}\"");
             }
 
             return System.Text.Encoding.UTF8.GetBytes(sb.ToString());
@@ -390,7 +473,9 @@ namespace PMSystem2.Api.Services
 
             if (lineId.HasValue)
             {
-                query = query.Where(p => p.LineId == lineId.Value);
+                var stations = await _masterDataService.GetStationsAsync();
+                var stationIds = stations.Where(s => s.LineId == lineId.Value).Select(s => s.Id).ToList();
+                query = query.Where(p => stationIds.Contains(p.StationId));
             }
             if (stationId.HasValue)
             {
@@ -451,25 +536,41 @@ namespace PMSystem2.Api.Services
 
         public async Task<List<LineYieldStatDto>> GetLineYieldStatsAsync(int? lineId = null)
         {
+            var stations = await _masterDataService.GetStationsAsync();
             var lines = await _masterDataService.GetLinesAsync();
             var query = _db.PcbResults.AsNoTracking().AsQueryable();
+
             if (lineId.HasValue)
             {
-                query = query.Where(p => p.LineId == lineId.Value);
+                var lineStationIds = stations.Where(s => s.LineId == lineId.Value).Select(s => s.Id).ToList();
+                query = query.Where(p => lineStationIds.Contains(p.StationId));
             }
 
-            var grouped = await query
-                .GroupBy(p => p.LineId)
+            var stationStats = await query
+                .GroupBy(p => p.StationId)
                 .Select(g => new {
-                    LineId = g.Key,
+                    StationId = g.Key,
                     Total = g.Count(),
                     Ok = g.Count(x => x.Result == "OK" || x.Result == "PASS"),
                     Ng = g.Count(x => x.Result == "NG" || x.Result == "FAIL")
                 })
                 .ToListAsync();
 
+            var lineGroups = stationStats
+                .Select(stStat => {
+                    var st = stations.FirstOrDefault(s => s.Id == stStat.StationId);
+                    return new { LineId = st?.LineId ?? 0, stStat.Total, stStat.Ok, stStat.Ng };
+                })
+                .GroupBy(x => x.LineId)
+                .Select(g => new {
+                    LineId = g.Key,
+                    Total = g.Sum(x => x.Total),
+                    Ok = g.Sum(x => x.Ok),
+                    Ng = g.Sum(x => x.Ng)
+                });
+
             var result = new List<LineYieldStatDto>();
-            foreach (var g in grouped)
+            foreach (var g in lineGroups)
             {
                 var lineName = lines.FirstOrDefault(l => l.Id == g.LineId)?.Name ?? $"Line {g.LineId}";
                 var yieldRate = g.Total > 0 ? Math.Round((double)g.Ok / g.Total * 100.0, 2) : 0.0;
@@ -484,9 +585,11 @@ namespace PMSystem2.Api.Services
             var stations = await _masterDataService.GetStationsAsync();
             var lines = await _masterDataService.GetLinesAsync();
             var query = _db.PcbResults.AsNoTracking().AsQueryable();
+
             if (lineId.HasValue)
             {
-                query = query.Where(p => p.LineId == lineId.Value);
+                var lineStationIds = stations.Where(s => s.LineId == lineId.Value).Select(s => s.Id).ToList();
+                query = query.Where(p => lineStationIds.Contains(p.StationId));
             }
 
             var grouped = await query
@@ -520,7 +623,9 @@ namespace PMSystem2.Api.Services
 
             if (lineId.HasValue)
             {
-                query = query.Where(p => p.LineId == lineId.Value);
+                var stations = await _masterDataService.GetStationsAsync();
+                var stationIds = stations.Where(s => s.LineId == lineId.Value).Select(s => s.Id).ToList();
+                query = query.Where(p => stationIds.Contains(p.StationId));
             }
             if (stationId.HasValue)
             {
