@@ -173,12 +173,7 @@ namespace PMSystem2.Api.Hubs
             await base.OnDisconnectedAsync(exception);
         }
 
-        public Task RegisterMachineGroup(string macAddress, int? channelId, int? lineId)
-        {
-            return RegisterMachineGroup(macAddress, channelId, lineId, null);
-        }
-
-        public async Task RegisterMachineGroup(string macAddress, int? channelId, int? lineId, int? stationId)
+        public async Task RegisterMachineGroup(string macAddress, int? channelId = null, int? lineId = null, int? stationId = null)
         {
             if (!string.IsNullOrWhiteSpace(macAddress))
             {
