@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
 using PMSystem2.Api.Models;
 using PMSystem2.Api.Services;
+using System.Text.Json.Serialization;
 
 namespace PMSystem2.Api.Controllers
 {
@@ -366,8 +367,8 @@ namespace PMSystem2.Api.Controllers
         [HttpPost("channels/heartbeat")]
         public async Task<IActionResult> Heartbeat([FromBody] HeartbeatPayload? req)
         {
-            var targetChannelId = req?.ChannelId ?? req?.Channelid;
-            var reqMac = (req?.MacAddress ?? req?.Mac_Address)?.Trim();
+            var targetChannelId = req?.EffectiveChannelId;
+            var reqMac = req?.EffectiveMacAddress?.Trim();
 
             if (targetChannelId.HasValue && targetChannelId.Value > 0)
             {
@@ -699,9 +700,20 @@ namespace PMSystem2.Api.Controllers
     public class HeartbeatPayload
     {
         public int? ChannelId { get; set; }
-        public int? Channelid { get; set; }
+
+        [JsonPropertyName("channel_id")]
+        public int? ChannelIdSnake { get; set; }
+
         public string? MacAddress { get; set; }
-        public string? Mac_Address { get; set; }
+
+        [JsonPropertyName("mac_address")]
+        public string? MacAddressSnake { get; set; }
+
+        [JsonIgnore]
+        public int? EffectiveChannelId => ChannelId ?? ChannelIdSnake;
+
+        [JsonIgnore]
+        public string? EffectiveMacAddress => MacAddress ?? MacAddressSnake;
     }
 
     public class ChannelRegisterPayload
