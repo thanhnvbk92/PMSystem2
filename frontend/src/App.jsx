@@ -10,8 +10,50 @@ import { MasterDataApi, ProductionApi } from './services/api';
 import { initSignalR } from './services/signalr';
 import * as signalR from '@microsoft/signalr';
 
+const VALID_TABS = ['dashboard', 'analytics', 'pcb-search', 'command', 'master'];
+
+const getInitialTab = () => {
+  const hash = window.location.hash.replace('#', '');
+  if (VALID_TABS.includes(hash)) {
+    return hash;
+  }
+  const savedTab = localStorage.getItem('pmsystem_active_tab');
+  if (savedTab && VALID_TABS.includes(savedTab)) {
+    return savedTab;
+  }
+  return 'dashboard';
+};
+
 export default function App() {
-  const [activeTab, setActiveTab] = useState('dashboard');
+  const [activeTab, setActiveTabState] = useState(getInitialTab);
+
+  const setActiveTab = useCallback((tab) => {
+    if (VALID_TABS.includes(tab)) {
+      setActiveTabState(tab);
+      window.location.hash = tab;
+      localStorage.setItem('pmsystem_active_tab', tab);
+    }
+  }, []);
+
+  useEffect(() => {
+    const currentTab = getInitialTab();
+    if (window.location.hash !== `#${currentTab}`) {
+      window.location.hash = currentTab;
+    }
+    localStorage.setItem('pmsystem_active_tab', currentTab);
+
+    const handleHashChange = () => {
+      const hash = window.location.hash.replace('#', '');
+      if (VALID_TABS.includes(hash)) {
+        setActiveTabState(hash);
+        localStorage.setItem('pmsystem_active_tab', hash);
+      }
+    };
+
+    window.addEventListener('hashchange', handleHashChange);
+    return () => window.removeEventListener('hashchange', handleHashChange);
+  }, []);
+
   const [signalRState, setSignalRState] = useState(signalR.HubConnectionState.Disconnected);
   const [isCollapsed, setIsCollapsed] = useState(false);
 
