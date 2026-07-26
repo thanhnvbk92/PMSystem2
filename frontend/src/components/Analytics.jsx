@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { 
   BarChart3, TrendingUp, Layers, AlertTriangle, Cpu, Clock, 
-  Sparkles, CheckCircle, ShieldCheck, Filter, RefreshCw
+  Sparkles, CheckCircle, ShieldCheck, Filter, RefreshCw, FileSpreadsheet, Download
 } from 'lucide-react';
 import { 
   AreaChart, Area, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, 
@@ -18,6 +18,8 @@ export default function Analytics({ summary, latestLogs, hourlyStats, lines, sta
   const [lineYieldData, setLineYieldData] = useState([]);
   const [defectParetoData, setDefectParetoData] = useState([]);
   const [loadingStats, setLoadingStats] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
+  const [exportWarningModal, setExportWarningModal] = useState(null);
 
   // Fetch full line yield & defect pareto from backend when filters change
   const fetchAnalyticsData = async (lineId, stationId) => {
@@ -33,6 +35,46 @@ export default function Analytics({ summary, latestLogs, hourlyStats, lines, sta
       console.error('Error loading full analytics data:', err);
     } finally {
       setLoadingStats(false);
+    }
+  };
+
+  const handleExportCsv = async () => {
+    setIsExporting(true);
+    const lineId = selectedLine ? parseInt(selectedLine) : null;
+    const stationId = selectedStation ? parseInt(selectedStation) : null;
+    try {
+      // 1. Fetch total count first
+      const count = await ProductionApi.getExportCount(lineId, stationId);
+      
+      // 2. Prompt warning modal if > 3000 rows
+      if (count > 3000) {
+        setExportWarningModal({
+          count,
+          lineId,
+          stationId
+        });
+      } else {
+        // Download all without limit
+        await ProductionApi.downloadExportCsv(null, lineId, stationId);
+      }
+    } catch (err) {
+      console.error('Lỗi xuất dữ liệu CSV:', err);
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
+  const confirmDownloadAll = async () => {
+    if (!exportWarningModal) return;
+    const { lineId, stationId } = exportWarningModal;
+    setExportWarningModal(null);
+    setIsExporting(true);
+    try {
+      await ProductionApi.downloadExportCsv(null, lineId, stationId);
+    } catch (err) {
+      console.error('Lỗi xuất dữ liệu lớn CSV trong Analytics:', err);
+    } finally {
+      setIsExporting(false);
     }
   };
 
@@ -180,6 +222,16 @@ export default function Analytics({ summary, latestLogs, hourlyStats, lines, sta
               <option key={s.id} value={s.id}>{s.name} ({s.lineName})</option>
             ))}
           </select>
+
+          <button
+            onClick={handleExportCsv}
+            disabled={isExporting}
+            className="px-3.5 py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-xs font-semibold flex items-center gap-2 transition-all shadow-md shadow-emerald-900/30 disabled:opacity-50 font-sans"
+            title="Xuất báo cáo chi tiết sản lượng & lỗi ra file CSV"
+          >
+            <FileSpreadsheet className="w-4 h-4" />
+            {isExporting ? 'Đang xuất...' : 'Xuất CSV'}
+          </button>
 
           {(selectedLine || selectedStation) && (
             <button
@@ -362,6 +414,61 @@ export default function Analytics({ summary, latestLogs, hourlyStats, lines, sta
         )}
 
       </div>
+
+      {/* Large Data Warning Modal */}
+      {exportWarningModal && (
+        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-50 flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-amber-500/40 rounded-2xl p-6 max-w-md w-full shadow-2xl space-y-4 animate-in zoom-in-95 duration-200">
+            <div className="flex items-center gap-3 text-amber-400">
+              <div className="p-3 bg-amber-500/10 rounded-xl border border-amber-500/20">
+                <AlertTriangle className="w-6 h-6" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-white">Cảnh Báo Dữ Liệu Lớn</h3>
+                <p className="text-xs text-amber-400/90 font-mono">
+                  Phát hiện {exportWarningModal.count.toLocaleString('vi-VN')} bản ghi
+                </p>
+              </div>
+            </div>
+
+            <p className="text-xs text-slate-300 leading-relaxed font-sans">
+              Hệ thống tìm thấy tổng cộng <strong className="text-amber-300 font-mono">{exportWarningModal.count.toLocaleString('vi-VN')}</strong> dòng dữ liệu sản xuất khớp với bộ lọc. 
+              Việc tải toàn bộ dữ liệu có thể tốn vài giây xử lý. Bạn có muốn tiếp tục tải hết dữ liệu không?
+            </p>
+
+            <div className="bg-slate-950/60 p-3 rounded-xl border border-white/5 text-[11px] text-slate-400 space-y-1.5 font-mono">
+              <div className="flex justify-between">
+                <span>Tổng số dòng:</span>
+                <span className="text-white font-semibold">{exportWarningModal.count.toLocaleString('vi-VN')} dòng</span>
+              </div>
+              <div className="flex justify-between">
+                <span>Dung lượng ước tính:</span>
+                <span className="text-emerald-400 font-semibold">~{(exportWarningModal.count * 0.22 / 1024).toFixed(1)} MB</span>
+              </div>
+              <div className="flex justify-between">
+                <span>Chế độ xuất:</span>
+                <span className="text-amber-300 font-semibold">Không giới hạn (Export Full)</span>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-3 pt-2">
+              <button
+                onClick={() => setExportWarningModal(null)}
+                className="px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold transition-colors font-sans"
+              >
+                Hủy bỏ
+              </button>
+              <button
+                onClick={confirmDownloadAll}
+                className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-slate-950 text-xs font-bold transition-all shadow-lg shadow-amber-500/20 flex items-center gap-2 font-sans"
+              >
+                <Download className="w-4 h-4" />
+                Vẫn Tải Tất Cả ({exportWarningModal.count.toLocaleString('vi-VN')} dòng)
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

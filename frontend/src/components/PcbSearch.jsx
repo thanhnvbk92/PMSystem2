@@ -1,16 +1,18 @@
 import React, { useState, useEffect } from 'react';
 import { 
   Search, RefreshCw, Eye, ShieldCheck, 
-  X, FileSpreadsheet
+  X, FileSpreadsheet, Download, AlertTriangle
 } from 'lucide-react';
 import { ProductionApi } from '../services/api';
 
-export default function PcbSearch({ lines, stations, onFilterChange }) {
+export default function PcbSearch({ lines, stations, channels = [], onFilterChange }) {
   const [selectedLine, setSelectedLine] = useState('');
   const [selectedStation, setSelectedStation] = useState('');
   const [resultFilter, setResultFilter] = useState('ALL'); // ALL, OK, NG
   const [searchPid, setSearchPid] = useState('');
   const [activeModalItem, setActiveModalItem] = useState(null);
+  const [isExportingServer, setIsExportingServer] = useState(false);
+  const [exportWarningModal, setExportWarningModal] = useState(null);
 
   // Server-side search results state
   const [searchResults, setSearchResults] = useState([]);
@@ -60,28 +62,141 @@ export default function PcbSearch({ lines, stations, onFilterChange }) {
     ? stations.filter(s => s.lineId === parseInt(selectedLine))
     : stations;
 
-  // Export filtered search results to CSV
+  // Export filtered search results to CSV (Local Client Export)
   const exportToCsv = () => {
     if (!searchResults || searchResults.length === 0) return;
-    const headers = ["ID", "PID Barcode", "Line Name", "Station Name", "Channel Name", "Result", "Error Code", "Inspect Time"];
-    const rows = searchResults.map(l => [
-      l.id,
-      `"${l.pid}"`,
-      `"${l.lineName}"`,
-      `"${l.stationName}"`,
-      `"${l.channelName}"`,
-      l.result,
-      `"${l.errorCode || ''}"`,
-      `"${new Date(l.inspectTime).toLocaleString('vi-VN')}"`
-    ]);
-    const csvContent = "data:text/csv;charset=utf-8,\uFEFF" + [headers.join(","), ...rows.map(e => e.join(","))].join("\n");
-    const encodedUri = encodeURI(csvContent);
+    
+    const headers = [
+      "ID",
+      "Mã PCB (PID)",
+      "Tên Lỗi (Defect Name)",
+      "Tên Channel (Máy)",
+      "Địa chỉ IP Channel",
+      "Dây Chuyền (Line)",
+      "Trạm Kiểm Tra (Station)",
+      "Ngày Test",
+      "Giờ Test",
+      "Kết quả (Result)",
+      "JobFile / Model",
+      "Chi tiết Steps Lỗi (Failed Steps)"
+    ];
+
+    const rows = searchResults.map(l => {
+      const dateObj = new Date(l.inspectTime);
+      const dateStr = !isNaN(dateObj) 
+        ? `${dateObj.getFullYear()}-${String(dateObj.getMonth() + 1).padStart(2, '0')}-${String(dateObj.getDate()).padStart(2, '0')}`
+        : '';
+      const timeStr = !isNaN(dateObj)
+        ? `${String(dateObj.getHours()).padStart(2, '0')}:${String(dateObj.getMinutes()).padStart(2, '0')}:${String(dateObj.getSeconds()).padStart(2, '0')}`
+        : '';
+
+      // Extract JobFile / Model name
+      let jobFile = "DEFAULT_JOB";
+      if (l.pid) {
+        const parts = l.pid.split(/[-_/]/).filter(Boolean);
+        if (parts.length > 1) jobFile = parts[0];
+        else jobFile = l.pid;
+      }
+
+      // Lookup channel IP
+      let channelIp = l.channelIp || '';
+      if (!channelIp && channels && channels.length > 0) {
+        const ch = channels.find(c => c.id === l.channelId || c.name === l.channelName);
+        if (ch) channelIp = ch.ipAddress || '';
+      }
+
+      // Error code
+      const errorCode = l.errorCode || (l.result === 'NG' || l.result === 'FAIL' ? 'DEFECT_UNSPECIFIED' : 'OK');
+
+      // Failed steps detail
+      let failedStepsStr = 'N/A';
+      if (l.steps && Array.isArray(l.steps)) {
+        const failed = l.steps.filter(s => s.result !== 'OK' && s.result !== 'PASS');
+        if (failed.length > 0) {
+          failedStepsStr = failed.map(s => {
+            const sName = s.stepName ?? s.step_name ?? '';
+            const sVal = s.value ?? s.val ?? 'NG';
+            const sMin = s.specMin ?? s.spec_min;
+            const sMax = s.specMax ?? s.spec_max;
+            const specStr = (sMin || sMax) ? ` [Min: ${sMin ?? '-'}, Max: ${sMax ?? '-'}]` : '';
+            return `${sName}${sName ? ': ' : ''}${sVal}${specStr}`;
+          }).join('; ');
+        } else if (l.result === 'NG' || l.result === 'FAIL') {
+          failedStepsStr = l.errorCode ? `Lỗi hệ thống (${l.errorCode})` : 'Lỗi tổng hợp';
+        }
+      }
+
+      const escape = (str) => `"${(str || '').toString().replace(/"/g, '""')}"`;
+
+      return [
+        escape(l.id),
+        escape(l.pid),
+        escape(errorCode),
+        escape(l.channelName),
+        escape(channelIp),
+        escape(l.lineName),
+        escape(l.stationName),
+        escape(dateStr),
+        escape(timeStr),
+        escape(l.result),
+        escape(jobFile),
+        escape(failedStepsStr)
+      ];
+    });
+
+    const csvContent = "\uFEFF" + [headers.join(","), ...rows.map(e => e.join(","))].join("\n");
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
-    link.setAttribute("href", encodedUri);
-    link.setAttribute("download", `PCB_Search_Export_${new Date().toISOString().slice(0,10)}.csv`);
+    link.setAttribute("href", url);
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+    link.setAttribute("download", `PMSystem_Production_Export_${timestamp}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+  };
+
+  // Export full filtered dataset directly from PostgreSQL backend (Unlimited with warning for > 3000 rows)
+  const handleServerExportCsv = async () => {
+    setIsExportingServer(true);
+    const lineId = selectedLine ? parseInt(selectedLine) : null;
+    const stationId = selectedStation ? parseInt(selectedStation) : null;
+    try {
+      // 1. Get total record count for current filter
+      const count = await ProductionApi.getExportCount(lineId, stationId, searchPid, resultFilter);
+      
+      // 2. Warn if large dataset (> 3000 rows)
+      if (count > 3000) {
+        setExportWarningModal({
+          count,
+          lineId,
+          stationId,
+          searchPid,
+          resultFilter
+        });
+      } else {
+        // Download all matching rows directly
+        await ProductionApi.downloadExportCsv(null, lineId, stationId, searchPid, resultFilter);
+      }
+    } catch (err) {
+      console.error('Lỗi xuất CSV từ server:', err);
+    } finally {
+      setIsExportingServer(false);
+    }
+  };
+
+  const confirmDownloadAll = async () => {
+    if (!exportWarningModal) return;
+    const { lineId, stationId, searchPid, resultFilter } = exportWarningModal;
+    setExportWarningModal(null);
+    setIsExportingServer(true);
+    try {
+      await ProductionApi.downloadExportCsv(null, lineId, stationId, searchPid, resultFilter);
+    } catch (err) {
+      console.error('Lỗi xuất dữ liệu lớn CSV:', err);
+    } finally {
+      setIsExportingServer(false);
+    }
   };
 
   const okCount = searchResults.filter(l => l.result === 'OK' || l.result === 'PASS').length;
@@ -168,16 +283,28 @@ export default function PcbSearch({ lines, stations, onFilterChange }) {
               </button>
             </div>
 
-            {/* Export CSV Button */}
-            <button
-              onClick={exportToCsv}
-              disabled={searchResults.length === 0}
-              className="px-3.5 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-200 border border-slate-700/80 text-xs font-semibold flex items-center gap-2 transition-all disabled:opacity-50 disabled:cursor-not-allowed font-sans"
-              title="Xuất kết quả tìm kiếm ra file CSV"
-            >
-              <FileSpreadsheet className="w-4 h-4 text-emerald-400" />
-              Xuất CSV
-            </button>
+            {/* Export CSV Buttons */}
+            <div className="flex items-center gap-2">
+              <button
+                onClick={exportToCsv}
+                disabled={searchResults.length === 0}
+                className="px-3.5 py-2.5 rounded-xl bg-emerald-950/60 hover:bg-emerald-900/80 text-emerald-300 border border-emerald-700/60 text-xs font-semibold flex items-center gap-2 transition-all disabled:opacity-50 disabled:cursor-not-allowed font-sans shadow-sm"
+                title="Xuất nhanh dữ liệu đang hiển thị ra file CSV (Bao gồm ID, Tên lỗi, IP, Máy, JobFile, Giờ test...)"
+              >
+                <FileSpreadsheet className="w-4 h-4 text-emerald-400" />
+                Xuất CSV ({searchResults.length})
+              </button>
+
+              <button
+                onClick={handleServerExportCsv}
+                disabled={isExportingServer}
+                className="px-3.5 py-2.5 rounded-xl bg-blue-950/60 hover:bg-blue-900/80 text-blue-300 border border-blue-700/60 text-xs font-semibold flex items-center gap-2 transition-all disabled:opacity-50 disabled:cursor-not-allowed font-sans shadow-sm"
+                title="Tải file báo cáo CSV đầy đủ từ Server PostgreSQL theo bộ lọc (tối đa 2.000 dòng)"
+              >
+                <Download className="w-4 h-4 text-blue-400" />
+                {isExportingServer ? 'Đang xuất...' : 'Tải CSV Server'}
+              </button>
+            </div>
 
             {/* Reset Filters */}
             {(selectedLine || selectedStation || resultFilter !== 'ALL' || searchPid) && (
@@ -317,24 +444,39 @@ export default function PcbSearch({ lines, stations, onFilterChange }) {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-800/60 font-mono">
-                      {activeModalItem.steps.map((step, idx) => (
-                        <tr key={idx} className="hover:bg-slate-900/50">
-                          <td className="p-2.5 text-center text-slate-500">{step.stepNumber || idx + 1}</td>
-                          <td className="p-2.5 text-slate-200 font-sans font-medium">{step.stepName}</td>
-                          <td className="p-2.5 text-slate-400 font-sans text-[11px]">
-                            {step.stepType ? <span className="px-1.5 py-0.5 rounded bg-slate-800 text-slate-300">{step.stepType}</span> : '-'}
-                          </td>
-                          <td className="p-2.5 text-right text-blue-400 font-bold">{step.value ?? '-'}</td>
-                          <td className="p-2.5 text-center text-slate-400 text-[11px]">
-                            {step.specMin || step.specMax ? `${step.specMin ?? '-'} ~ ${step.specMax ?? '-'}` : '-'}
-                          </td>
-                          <td className="p-2.5 text-center">
-                            <span className={step.result === 'OK' || step.result === 'PASS' ? 'badge badge-ok font-sans' : 'badge badge-ng font-sans'}>
-                              {step.result}
-                            </span>
-                          </td>
-                        </tr>
-                      ))}
+                      {activeModalItem.steps.map((step, idx) => {
+                        const isStepNg = step.result !== 'OK' && step.result !== 'PASS';
+                        const name = step.stepName ?? step.step_name ?? '';
+                        
+                        const stepType = step.stepType || step.step_type;
+                        const minVal = step.specMin ?? step.spec_min;
+                        const maxVal = step.specMax ?? step.spec_max;
+                        const hasSpec = (minVal !== null && minVal !== undefined && minVal !== '') || (maxVal !== null && maxVal !== undefined && maxVal !== '');
+                        
+                        return (
+                          <tr key={idx} className={`transition-colors ${isStepNg ? 'bg-rose-950/40 hover:bg-rose-900/50' : 'hover:bg-slate-900/50'}`}>
+                            <td className="p-2.5 text-center text-slate-500">{step.stepNumber || step.step_number || idx + 1}</td>
+                            <td className={`p-2.5 font-sans font-medium ${isStepNg ? 'text-rose-300 font-semibold flex items-center gap-1.5' : 'text-slate-200'}`}>
+                              {isStepNg && <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-pulse"></span>}
+                              {name}
+                            </td>
+                            <td className="p-2.5 text-slate-400 font-sans text-[11px]">
+                              {stepType ? <span className="px-1.5 py-0.5 rounded bg-slate-800 text-slate-300">{stepType}</span> : '-'}
+                            </td>
+                            <td className={`p-2.5 text-right font-bold ${isStepNg ? 'text-rose-400' : 'text-blue-400'}`}>
+                              {step.value ?? step.val ?? '-'}
+                            </td>
+                            <td className="p-2.5 text-center text-slate-400 text-[11px]">
+                              {hasSpec ? `${minVal ?? '-'} ~ ${maxVal ?? '-'}` : '-'}
+                            </td>
+                            <td className="p-2.5 text-center">
+                              <span className={!isStepNg ? 'badge badge-ok font-sans' : 'badge badge-ng font-sans'}>
+                                {step.result}
+                              </span>
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 ) : (
@@ -352,6 +494,61 @@ export default function PcbSearch({ lines, stations, onFilterChange }) {
                 className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white text-xs font-semibold shadow-lg shadow-blue-600/30 transition-all font-sans"
               >
                 Đóng cửa sổ
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Large Data Warning Modal */}
+      {exportWarningModal && (
+        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-50 flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-amber-500/40 rounded-2xl p-6 max-w-md w-full shadow-2xl space-y-4 animate-in zoom-in-95 duration-200">
+            <div className="flex items-center gap-3 text-amber-400">
+              <div className="p-3 bg-amber-500/10 rounded-xl border border-amber-500/20">
+                <AlertTriangle className="w-6 h-6" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-white">Cảnh Báo Dữ Liệu Lớn</h3>
+                <p className="text-xs text-amber-400/90 font-mono">
+                  Phát hiện {exportWarningModal.count.toLocaleString('vi-VN')} bản ghi
+                </p>
+              </div>
+            </div>
+
+            <p className="text-xs text-slate-300 leading-relaxed font-sans">
+              Bộ lọc tìm kiếm hiện tại chứa tổng cộng <strong className="text-amber-300 font-mono">{exportWarningModal.count.toLocaleString('vi-VN')}</strong> dòng dữ liệu kiểm tra sản xuất. 
+              Việc tải toàn bộ dữ liệu có thể tốn vài giây xử lý và khởi tạo tập tin CSV lớn.
+            </p>
+
+            <div className="bg-slate-950/60 p-3 rounded-xl border border-white/5 text-[11px] text-slate-400 space-y-1.5 font-mono">
+              <div className="flex justify-between">
+                <span>Tổng số bản ghi:</span>
+                <span className="text-white font-semibold">{exportWarningModal.count.toLocaleString('vi-VN')} dòng</span>
+              </div>
+              <div className="flex justify-between">
+                <span>Kích thước file ước tính:</span>
+                <span className="text-emerald-400 font-semibold">~{(exportWarningModal.count * 0.22 / 1024).toFixed(1)} MB</span>
+              </div>
+              <div className="flex justify-between">
+                <span>Giới hạn tải xuống:</span>
+                <span className="text-amber-300 font-semibold">Không giới hạn (Tải hết)</span>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-3 pt-2">
+              <button
+                onClick={() => setExportWarningModal(null)}
+                className="px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold transition-colors font-sans"
+              >
+                Hủy bỏ
+              </button>
+              <button
+                onClick={confirmDownloadAll}
+                className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-slate-950 text-xs font-bold transition-all shadow-lg shadow-amber-500/20 flex items-center gap-2 font-sans"
+              >
+                <Download className="w-4 h-4" />
+                Vẫn Tải Tất Cả ({exportWarningModal.count.toLocaleString('vi-VN')} dòng)
               </button>
             </div>
           </div>

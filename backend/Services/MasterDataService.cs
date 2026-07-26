@@ -35,6 +35,7 @@ namespace PMSystem2.Api.Services
     public record ChannelHierarchyInfo(
         int ChannelId,
         string ChannelName,
+        string IpAddress,
         int StationId,
         string StationName,
         int LineId,
@@ -126,6 +127,7 @@ namespace PMSystem2.Api.Services
                     _cache[ch.Id] = new ChannelHierarchyInfo(
                         ch.Id,
                         ch.Name,
+                        ch.IpAddress ?? "",
                         ch.StationId,
                         ch.Station.Name,
                         ch.Station.LineId,

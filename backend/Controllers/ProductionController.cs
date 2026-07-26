@@ -112,6 +112,41 @@ namespace PMSystem2.Api.Controllers
             return Ok(await _pcbService.GetLatestResultsAsync(limit, lineId, stationId, searchPid, resultFilter));
         }
 
+        /// <summary>
+        /// Get matching total record count for CSV export filtering.
+        /// </summary>
+        [HttpGet("export-count")]
+        public async Task<ActionResult<int>> GetExportCount(
+            [FromQuery] int? lineId = null,
+            [FromQuery] int? stationId = null,
+            [FromQuery] string? searchPid = null,
+            [FromQuery] string? resultFilter = null,
+            [FromQuery] DateTime? startDate = null,
+            [FromQuery] DateTime? endDate = null)
+        {
+            var count = await _pcbService.GetExportCountAsync(lineId, stationId, searchPid, resultFilter, startDate, endDate);
+            return Ok(count);
+        }
+
+        /// <summary>
+        /// Export filtered PCB inspection data to a formatted CSV file.
+        /// If limit is omitted or null, exports all matching records without restriction.
+        /// </summary>
+        [HttpGet("export-csv")]
+        public async Task<IActionResult> ExportCsv(
+            [FromQuery] int? limit = null,
+            [FromQuery] int? lineId = null,
+            [FromQuery] int? stationId = null,
+            [FromQuery] string? searchPid = null,
+            [FromQuery] string? resultFilter = null,
+            [FromQuery] DateTime? startDate = null,
+            [FromQuery] DateTime? endDate = null)
+        {
+            var bytes = await _pcbService.GetExportCsvAsync(limit, lineId, stationId, searchPid, resultFilter, startDate, endDate);
+            var fileName = $"PMSystem_Production_Data_{DateTime.Now:yyyyMMdd_HHmmss}.csv";
+            return File(bytes, "text/csv; charset=utf-8", fileName);
+        }
+
         [HttpGet("stats/hourly")]
         public async Task<ActionResult<List<HourlyStatDto>>> GetHourlyStats(
             [FromQuery] int hours = 24,

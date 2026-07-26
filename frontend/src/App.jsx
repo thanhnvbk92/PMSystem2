@@ -262,6 +262,7 @@ export default function App() {
               latestLogs={latestLogs}
               lines={lines}
               stations={stations}
+              channels={channels}
               onFilterChange={handleFilterChange}
             />
           )}

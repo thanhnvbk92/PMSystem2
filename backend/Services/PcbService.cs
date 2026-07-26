@@ -10,6 +10,8 @@ namespace PMSystem2.Api.Services
     {
         Task<PcbResultDto> SubmitResultAsync(SubmitPcbRequest req);
         Task<List<PcbResultDto>> GetLatestResultsAsync(int limit = 50, int? lineId = null, int? stationId = null, string? searchPid = null, string? resultFilter = null);
+        Task<int> GetExportCountAsync(int? lineId = null, int? stationId = null, string? searchPid = null, string? resultFilter = null, DateTime? startDate = null, DateTime? endDate = null);
+        Task<byte[]> GetExportCsvAsync(int? limit = null, int? lineId = null, int? stationId = null, string? searchPid = null, string? resultFilter = null, DateTime? startDate = null, DateTime? endDate = null);
         Task<List<HourlyStatDto>> GetHourlyStatsAsync(int hours = 24, int? lineId = null, int? stationId = null);
         Task<ProductionSummaryDto> GetSummaryAsync();
         Task<List<LineYieldStatDto>> GetLineYieldStatsAsync(int? lineId = null);
@@ -93,6 +95,7 @@ namespace PMSystem2.Api.Services
                     existingRecord.Id,
                     existingRecord.ChannelId,
                     hierarchy.ChannelName,
+                    hierarchy.IpAddress,
                     existingRecord.StationId,
                     hierarchy.StationName,
                     hierarchy.LineId,
@@ -161,6 +164,7 @@ namespace PMSystem2.Api.Services
                     duplicate?.Id ?? entity.Id,
                     channelId,
                     hierarchy.ChannelName,
+                    hierarchy.IpAddress,
                     hierarchy.StationId,
                     hierarchy.StationName,
                     hierarchy.LineId,
@@ -177,6 +181,7 @@ namespace PMSystem2.Api.Services
                 entity.Id,
                 entity.ChannelId,
                 hierarchy.ChannelName,
+                hierarchy.IpAddress,
                 entity.StationId,
                 hierarchy.StationName,
                 entity.LineId,
@@ -244,6 +249,7 @@ namespace PMSystem2.Api.Services
                     item.Id,
                     item.ChannelId,
                     hierarchy?.ChannelName ?? $"Channel {item.ChannelId}",
+                    hierarchy?.IpAddress ?? "",
                     item.StationId,
                     hierarchy?.StationName ?? $"Station {item.StationId}",
                     item.LineId,
@@ -265,6 +271,117 @@ namespace PMSystem2.Api.Services
             }
 
             return results;
+        }
+
+        public async Task<int> GetExportCountAsync(
+            int? lineId = null,
+            int? stationId = null,
+            string? searchPid = null,
+            string? resultFilter = null,
+            DateTime? startDate = null,
+            DateTime? endDate = null)
+        {
+            var query = _db.PcbResults.AsNoTracking().AsQueryable();
+
+            if (lineId.HasValue) query = query.Where(p => p.LineId == lineId.Value);
+            if (stationId.HasValue) query = query.Where(p => p.StationId == stationId.Value);
+            if (!string.IsNullOrWhiteSpace(searchPid))
+            {
+                var term = searchPid.Trim().ToLower();
+                query = query.Where(p => p.Pid.ToLower().Contains(term));
+            }
+            if (!string.IsNullOrWhiteSpace(resultFilter) && resultFilter != "ALL")
+            {
+                if (resultFilter == "OK") query = query.Where(p => p.Result == "OK" || p.Result == "PASS");
+                else if (resultFilter == "NG") query = query.Where(p => p.Result == "NG" || p.Result == "FAIL");
+            }
+            if (startDate.HasValue) query = query.Where(p => p.InspectTime >= startDate.Value.ToUniversalTime());
+            if (endDate.HasValue) query = query.Where(p => p.InspectTime <= endDate.Value.ToUniversalTime());
+
+            return await query.CountAsync();
+        }
+
+        public async Task<byte[]> GetExportCsvAsync(
+            int? limit = null,
+            int? lineId = null,
+            int? stationId = null,
+            string? searchPid = null,
+            string? resultFilter = null,
+            DateTime? startDate = null,
+            DateTime? endDate = null)
+        {
+            var query = _db.PcbResults.AsNoTracking().AsQueryable();
+
+            if (lineId.HasValue) query = query.Where(p => p.LineId == lineId.Value);
+            if (stationId.HasValue) query = query.Where(p => p.StationId == stationId.Value);
+            if (!string.IsNullOrWhiteSpace(searchPid))
+            {
+                var term = searchPid.Trim().ToLower();
+                query = query.Where(p => p.Pid.ToLower().Contains(term));
+            }
+            if (!string.IsNullOrWhiteSpace(resultFilter) && resultFilter != "ALL")
+            {
+                if (resultFilter == "OK") query = query.Where(p => p.Result == "OK" || p.Result == "PASS");
+                else if (resultFilter == "NG") query = query.Where(p => p.Result == "NG" || p.Result == "FAIL");
+            }
+            if (startDate.HasValue) query = query.Where(p => p.InspectTime >= startDate.Value.ToUniversalTime());
+            if (endDate.HasValue) query = query.Where(p => p.InspectTime <= endDate.Value.ToUniversalTime());
+
+            query = query.OrderByDescending(p => p.InspectTime);
+
+            if (limit.HasValue && limit.Value > 0)
+            {
+                query = query.Take(limit.Value);
+            }
+
+            var list = await query
+                .Include(p => p.TestSteps)
+                .ToListAsync();
+
+            var sb = new System.Text.StringBuilder();
+            sb.Append('\uFEFF'); // UTF-8 BOM for Excel compatibility
+
+            sb.AppendLine("\"ID\",\"Mã PCB (PID)\",\"Tên Lỗi (Defect Name)\",\"Tên Channel (Máy)\",\"Địa chỉ IP Channel\",\"Dây Chuyền (Line)\",\"Trạm (Station)\",\"Ngày Test\",\"Giờ Test\",\"Kết quả (Result)\",\"JobFile / Model\",\"Chi tiết Lỗi (Failed Steps)\"");
+
+            foreach (var item in list)
+            {
+                var hierarchy = _masterDataService.GetChannelHierarchy(item.ChannelId);
+                var inspectTimeLocal = item.InspectTime.ToLocalTime();
+                var dateStr = inspectTimeLocal.ToString("yyyy-MM-dd");
+                var timeStr = inspectTimeLocal.ToString("HH:mm:ss");
+
+                string jobFile = "DEFAULT_JOB";
+                if (!string.IsNullOrWhiteSpace(item.Pid))
+                {
+                    var parts = item.Pid.Split(new[] { '-', '_', '/' }, StringSplitOptions.RemoveEmptyEntries);
+                    if (parts.Length > 1) jobFile = parts[0];
+                    else jobFile = item.Pid;
+                }
+
+                string errorCode = item.ErrorCode ?? (item.Result == "NG" || item.Result == "FAIL" ? "DEFECT_UNSPECIFIED" : "OK");
+
+                var failedSteps = item.TestSteps
+                    .Where(t => t.Result != "OK" && t.Result != "PASS")
+                    .Select(t => {
+                        var name = t.StepName ?? "";
+                        var val = !string.IsNullOrWhiteSpace(t.Value) ? t.Value : "NG";
+                        var hasSpec = !string.IsNullOrWhiteSpace(t.SpecMin) || !string.IsNullOrWhiteSpace(t.SpecMax);
+                        var specStr = hasSpec ? $" [Min: {t.SpecMin ?? "-"}, Max: {t.SpecMax ?? "-"}]" : "";
+                        return string.IsNullOrEmpty(name) ? $"{val}{specStr}" : $"{name}: {val}{specStr}";
+                    })
+                    .ToList();
+                string failedStepsStr = failedSteps.Count > 0 ? string.Join("; ", failedSteps) : (item.Result == "NG" ? (item.ErrorCode != null ? $"Lỗi hệ thống ({item.ErrorCode})" : "Lỗi tổng hợp") : "N/A");
+
+                sb.AppendLine($"\"{item.Id}\",\"{EscapeCsv(item.Pid)}\",\"{EscapeCsv(errorCode)}\",\"{EscapeCsv(hierarchy?.ChannelName ?? $"Channel #{item.ChannelId}")}\",\"{EscapeCsv(hierarchy?.IpAddress ?? "")}\",\"{EscapeCsv(hierarchy?.LineName ?? $"Line #{item.LineId}")}\",\"{EscapeCsv(hierarchy?.StationName ?? $"Station #{item.StationId}")}\",\"{dateStr}\",\"{timeStr}\",\"{item.Result}\",\"{EscapeCsv(jobFile)}\",\"{EscapeCsv(failedStepsStr)}\"");
+            }
+
+            return System.Text.Encoding.UTF8.GetBytes(sb.ToString());
+        }
+
+        private static string EscapeCsv(string str)
+        {
+            if (string.IsNullOrEmpty(str)) return "";
+            return str.Replace("\"", "\"\"");
         }
 
         public async Task<List<HourlyStatDto>> GetHourlyStatsAsync(int hours = 24, int? lineId = null, int? stationId = null)

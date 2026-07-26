@@ -89,12 +89,60 @@ namespace PMSystem2.Api.Models
     // Ingestion Request DTOs
     public class TestStepInputDto
     {
+        [System.Text.Json.Serialization.JsonPropertyName("step_type")]
         public string? StepType { get; set; }
+
+        [System.Text.Json.Serialization.JsonPropertyName("stepType")]
+        public string? StepTypeCamel 
+        { 
+            get => StepType;
+            set { if (!string.IsNullOrWhiteSpace(value)) StepType = value; } 
+        }
+
+        [System.Text.Json.Serialization.JsonPropertyName("step_number")]
         public int StepNumber { get; set; } = 0;
+
+        [System.Text.Json.Serialization.JsonPropertyName("stepNumber")]
+        public int StepNumberCamel 
+        { 
+            get => StepNumber;
+            set { if (value != 0) StepNumber = value; } 
+        }
+
+        [System.Text.Json.Serialization.JsonPropertyName("step_name")]
         public string StepName { get; set; } = string.Empty;
+
+        [System.Text.Json.Serialization.JsonPropertyName("stepName")]
+        public string StepNameCamel 
+        { 
+            get => StepName;
+            set { if (!string.IsNullOrWhiteSpace(value)) StepName = value; } 
+        }
+
+        [System.Text.Json.Serialization.JsonPropertyName("value")]
         public string? Value { get; set; }
+
+        [System.Text.Json.Serialization.JsonPropertyName("spec_min")]
         public string? SpecMin { get; set; }
+
+        [System.Text.Json.Serialization.JsonPropertyName("specMin")]
+        public string? SpecMinCamel 
+        { 
+            get => SpecMin;
+            set { if (!string.IsNullOrWhiteSpace(value)) SpecMin = value; } 
+        }
+
+        [System.Text.Json.Serialization.JsonPropertyName("spec_max")]
         public string? SpecMax { get; set; }
+
+        [System.Text.Json.Serialization.JsonPropertyName("specMax")]
+        public string? SpecMaxCamel 
+        { 
+            get => SpecMax;
+            set { if (!string.IsNullOrWhiteSpace(value)) SpecMax = value; } 
+        }
+
+        [System.Text.Json.Serialization.JsonPropertyName("result")]
         public string Result { get; set; } = "OK";
     }
 
@@ -126,6 +174,7 @@ namespace PMSystem2.Api.Models
         Guid Id,
         int ChannelId,
         string ChannelName,
+        string ChannelIp,
         int StationId,
         string StationName,
         int LineId,

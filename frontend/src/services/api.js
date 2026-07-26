@@ -46,6 +46,39 @@ export const ProductionApi = {
   getDefectPareto: (lineId = null, stationId = null) =>
     api.get('/production/stats/defect-pareto', { params: { lineId, stationId } }).then(res => res.data),
   submitPcb: (data) => api.post('/production/submit', data).then(res => res.data),
+  getExportCount: (lineId = null, stationId = null, searchPid = null, resultFilter = null) =>
+    api.get('/production/export-count', { params: { lineId, stationId, searchPid, resultFilter } }).then(res => res.data),
+  getExportCsvUrl: (limit = null, lineId = null, stationId = null, searchPid = null, resultFilter = null) => {
+    const params = new URLSearchParams();
+    if (limit) params.append('limit', limit);
+    if (lineId) params.append('lineId', lineId);
+    if (stationId) params.append('stationId', stationId);
+    if (searchPid) params.append('searchPid', searchPid);
+    if (resultFilter) params.append('resultFilter', resultFilter);
+    return `${API_BASE_URL}/production/export-csv?${params.toString()}`;
+  },
+  downloadExportCsv: (limit = null, lineId = null, stationId = null, searchPid = null, resultFilter = null) => {
+    const params = {};
+    if (limit) params.limit = limit;
+    if (lineId) params.lineId = lineId;
+    if (stationId) params.stationId = stationId;
+    if (searchPid) params.searchPid = searchPid;
+    if (resultFilter) params.resultFilter = resultFilter;
+
+    return api.get('/production/export-csv', {
+      params,
+      responseType: 'blob'
+    }).then(res => {
+      const url = window.URL.createObjectURL(new Blob([res.data], { type: 'text/csv;charset=utf-8;' }));
+      const link = document.createElement('a');
+      link.href = url;
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+      link.setAttribute('download', `PMSystem_Production_Report_${timestamp}.csv`);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    });
+  },
 };
 
 export const CommandApi = {

@@ -2,7 +2,7 @@
 
 > **Dự án**: PMSystem2 - System Monitoring & PCB Quality Control System  
 > **Phiên bản hiện tại**: 2.0 (Chuyển đổi từ Python/ClickHouse sang .NET 8 / PostgreSQL + TimescaleDB)  
-> **Cập nhật gần nhất**: 25/07/2026
+> **Cập nhật gần nhất**: 26/07/2026
 
 ---
 
@@ -83,5 +83,10 @@ Nếu bạn là AI Coding Assistant bắt đầu phiên làm việc mới, hãy 
    * Unique Index `UX_pcb_results_station_pid_time_result` trên 4 cột `(StationId, Pid, InspectTime, Result)`.
    * `PcbService.cs` tự động kiểm tra mốc thời gian kiểm tra thực tế trong log file (`inspect_time`) trước khi lưu, đảm bảo nếu 1 log file bị gửi lặp lại 2 lần thì bản ghi thứ 2 sẽ bị bỏ qua an toàn mà không làm phình DB hay sai lệch FPY.
 
-6. **Kế hoạch tiếp theo**: Xem file [`03_Detailed_Progress_and_Handover.md`](./03_Detailed_Progress_and_Handover.md) để biết các công việc cần làm tiếp.
+6. **Hiển thị Chi tiết Step NG / FAIL & Xuất CSV Không Giới Hạn**:
+   * `TestStepInputDto` hỗ trợ kép thuộc tính `snake_case` / `camelCase` cho `step_name`/`stepName`, `spec_min`/`specMin`, `spec_max`/`specMax`.
+   * UI `PcbSearch.jsx` hiển thị chính xác tên step nguyên bản từ CSDL và highlight màu đỏ cho các hàng NG.
+   * Chức năng Xuất CSV cho phép tải 100% bản ghi không bị giới hạn 2,000 dòng, hiển thị Modal xác nhận cảnh báo khi bộ dữ liệu xuất > 3,000 bản ghi.
+
+7. **Kế hoạch tiếp theo**: Xem file [`03_Detailed_Progress_and_Handover.md`](./03_Detailed_Progress_and_Handover.md) để biết các công việc cần làm tiếp.
 

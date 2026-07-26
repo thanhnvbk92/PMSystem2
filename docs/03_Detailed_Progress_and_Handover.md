@@ -1,7 +1,7 @@
 # 03. Tiến Độ Chi Tiết & Bàn Giao (Progress & Handover Log)
 
 > **Tài liệu**: Báo cáo Tiến độ Chi tiết & Hướng dẫn Bàn giao AI  
-> **Cập nhật ngày**: 25/07/2026
+> **Cập nhật ngày**: 26/07/2026
 
 ---
 
@@ -17,8 +17,9 @@
 | **Chống trùng lặp Dữ liệu PCB (Deduplication)** | **100%** | Ràng buộc DB Unique Index + Service level pre-check thời gian kiểm tra |
 | **Tích hợp Station Yield API** | **100%** | Endpoint `/api/v1/production/stats/station-yield` |
 | **Loại bỏ Hardcoded Fallback UI** | **100%** | Biểu đồ & KPI Card trên `Dashboard.jsx` lấy 100% dữ liệu DB |
-| **Trang Điều Khiển Máy Từ Xa (Command Center)** | **100%** | Gửi lệnh tập trung theo Line, Station, Channel riêng lẻ qua SignalR |
-| **Nạp dữ liệu sản xuất quy mô lớn** | **Chờ chạy lệnh** | Cần chạy script migrate từ server ClickHouse cũ (`192.168.100.10`) |
+| **Trang Điều Khiển Máy Từ Xa (Command Center)** | **100%** | Gửi lệnh tập trung theo Tree View Line/Station, tích hợp thông tin IP/MAC |
+| **Hiển thị Chi tiết Step NG / FAIL & Dual Case JSON** | **100%** | Hỗ trợ camelCase/snake_case, hiển thị đúng stepName, Min/Max và highlight màu đỏ |
+| **Xuất CSV Dữ Liệu Sản Xuất Không Giới Hạn** | **100%** | Bỏ giới hạn 2,000 dòng, cảnh báo Modal xác nhận khi xuất >3,000 bản ghi |
 
 ---
 
@@ -77,6 +78,32 @@
     * Hỗ trợ 3 mẫu lệnh chính: **Đổi Model sản xuất** (kèm các Preset chip chọn nhanh), **Khởi động lại App Backup Log** (chỉnh Delay Ms), và **Lệnh Tùy Chỉnh (JSON Payload)**.
     * Tích hợp nhật ký thực thi phát lệnh (Command Execution Log Console) hiển thị thời gian, lệnh, thiết bị đích và phản hồi thời gian thực từ SignalR.
   * **Sidebar Navigation**: Thêm mục menu **"Điều Khiển Máy"** (Command Center) với icon `Terminal` phân lớp `REMOTE CONTROL`.
+
+### 2.8 Tối ưu hóa Xuất CSV Dữ liệu Sản xuất Không Giới Hạn (Unlimited CSV Export & Large Data Warning)
+* **Yêu cầu người dùng**: Bỏ giới hạn tối đa 2,000 dòng khi xuất dữ liệu CSV, tải hết toàn bộ bản ghi tìm kiếm được để phục vụ phân tích lỗi. Nếu dữ liệu quá lớn, hiển thị cảnh báo cho người dùng quyết định.
+* **Cách đã xử lý**:
+  * **Backend (`PcbController.cs` & `PcbService.cs`)**:
+    * Bổ sung API `GET /api/production/export-count` đếm số lượng bản ghi thỏa mãn điều kiện lọc.
+    * Cập nhật `GetExportCsvAsync` cho phép truyền `limit = null` để tải 100% dữ liệu phù hợp.
+  * **Frontend (`PcbSearch.jsx` & `Analytics.jsx`)**:
+    * Thêm Modal cảnh báo dữ liệu lớn (`Large Data Export Warning Modal`) khi tổng số bản ghi vượt mốc 3,000 dòng.
+    * Hiển thị số lượng dòng thực tế và cho phép người dùng xác nhận **"Vẫn Tải Xuống"** hoặc **"Hủy Bỏ"**.
+
+### 2.9 Khắc phục hiển thị Tên Bước NG / FAIL & Dual Case JSON (`step_name` / `stepName`)
+* **Vấn đề cũ**: Khi xem chi tiết bo mạch lỗi (`NG`), một số bước không hiển thị Tên bước (`stepName`) và giới hạn Min/Max do lệch chuẩn đặt tên thuộc tính giữa Collector (`snake_case`) và Frontend (`camelCase`).
+* **Cách đã xử lý**:
+  * **Backend (`ProductionData.cs`)**: Thêm kép thuộc tính `[JsonPropertyName]` cho `TestStepInputDto` hỗ trợ tự động deserialize cả `step_name` / `stepName`, `spec_min` / `specMin`, `spec_max` / `specMax`.
+  * **Frontend (`PcbSearch.jsx`)**:
+    * Cập nhật Modal đọc song song cả `stepName` và `step_name`, `specMin` và `spec_min`, `specMax` và `spec_max`.
+    * Giữ nguyên giá trị tên bước nguyên bản từ CSDL mà không tự chèn tên giả lập.
+    * Nổi bật các bước bị lỗi (`NG`/`FAIL`) bằng màu nền đỏ nhạt (`bg-rose-950/40`), chữ đỏ (`text-rose-300`) và dấu chấm nhấp nháy đỏ để dễ dàng nhận biết.
+  * **File Báo cáo CSV**: Cập nhật hàm format xuất bước lỗi dạng `TênBước: GiáTrị [Min: X, Max: Y]`.
+
+### 2.10 Tối ưu Tree View Command Center & Điều hướng Trang (Route Persistence)
+* **Cách đã xử lý**:
+  * Bổ sung Combobox lọc Dây chuyền / Trạm kiểm tra để giới hạn gốc hiển thị Tree View thiết bị.
+  * Nhúng thông tin Tên Channel, Địa chỉ IP, Trạng thái Kết nối và Trạng thái Nhận lệnh trực tiếp trong Tree View mà không bị ẩn panel.
+  * Cập nhật `Sidebar.jsx` & `App.jsx` giữ nguyên tab trang hiện tại khi người dùng nhấn Refresh trình duyệt (tránh bị nhảy về Dashboard).
 
 ---
 
