@@ -1,6 +1,7 @@
 import axios from 'axios';
 
-const API_BASE_URL = 'http://localhost:5000/api/v1';
+const API_HOST = typeof window !== 'undefined' ? window.location.hostname : 'localhost';
+const API_BASE_URL = `http://${API_HOST}:5000/api/v1`;
 
 export const api = axios.create({
   baseURL: API_BASE_URL,
@@ -59,8 +60,8 @@ export const MasterDataApi = {
 
 export const ProductionApi = {
   getSummary: () => api.get('/production/summary').then(res => res.data),
-  getLatest: (limit = 100, lineId = null, stationId = null, searchPid = null, resultFilter = null) => 
-    api.get('/production/latest', { params: { limit, lineId, stationId, searchPid, resultFilter } }).then(res => res.data),
+  getLatest: (limit = 100, lineId = null, stationId = null, searchPid = null, resultFilter = null, startDate = null, endDate = null) => 
+    api.get('/production/latest', { params: { limit, lineId, stationId, searchPid, resultFilter, startDate, endDate } }).then(res => res.data),
   getHourlyStats: (hours = 24, lineId = null, stationId = null) => 
     api.get('/production/stats/hourly', { params: { hours, lineId, stationId } }).then(res => res.data),
   getLineYieldStats: (lineId = null) =>
@@ -70,24 +71,28 @@ export const ProductionApi = {
   getDefectPareto: (lineId = null, stationId = null) =>
     api.get('/production/stats/defect-pareto', { params: { lineId, stationId } }).then(res => res.data),
   submitPcb: (data) => api.post('/production/submit', data).then(res => res.data),
-  getExportCount: (lineId = null, stationId = null, searchPid = null, resultFilter = null) =>
-    api.get('/production/export-count', { params: { lineId, stationId, searchPid, resultFilter } }).then(res => res.data),
-  getExportCsvUrl: (limit = null, lineId = null, stationId = null, searchPid = null, resultFilter = null) => {
+  getExportCount: (lineId = null, stationId = null, searchPid = null, resultFilter = null, startDate = null, endDate = null) =>
+    api.get('/production/export-count', { params: { lineId, stationId, searchPid, resultFilter, startDate, endDate } }).then(res => res.data),
+  getExportCsvUrl: (limit = null, lineId = null, stationId = null, searchPid = null, resultFilter = null, startDate = null, endDate = null) => {
     const params = new URLSearchParams();
     if (limit) params.append('limit', limit);
     if (lineId) params.append('lineId', lineId);
     if (stationId) params.append('stationId', stationId);
     if (searchPid) params.append('searchPid', searchPid);
     if (resultFilter) params.append('resultFilter', resultFilter);
+    if (startDate) params.append('startDate', startDate);
+    if (endDate) params.append('endDate', endDate);
     return `${API_BASE_URL}/production/export-csv?${params.toString()}`;
   },
-  downloadExportCsv: (limit = null, lineId = null, stationId = null, searchPid = null, resultFilter = null) => {
+  downloadExportCsv: (limit = null, lineId = null, stationId = null, searchPid = null, resultFilter = null, startDate = null, endDate = null) => {
     const params = {};
     if (limit) params.limit = limit;
     if (lineId) params.lineId = lineId;
     if (stationId) params.stationId = stationId;
     if (searchPid) params.searchPid = searchPid;
     if (resultFilter) params.resultFilter = resultFilter;
+    if (startDate) params.startDate = startDate;
+    if (endDate) params.endDate = endDate;
 
     return api.get('/production/export-csv', {
       params,

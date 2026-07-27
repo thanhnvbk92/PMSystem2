@@ -401,12 +401,20 @@ namespace PMSystem2.Api.Controllers
                         }
                         else
                         {
-                            await _masterDataService.UpdateChannelAsync(ch.Id, new UpdateChannelRequest(ch.StationId, ch.Name, IpAddress: ch.IpAddress, MacAddress: ch.MacAddress, Status: "online"));
+                            if (!string.Equals(ch.Status, "online", StringComparison.OrdinalIgnoreCase))
+                            {
+                                await _masterDataService.UpdateChannelAsync(ch.Id, new UpdateChannelRequest(ch.StationId, ch.Name, IpAddress: ch.IpAddress, MacAddress: ch.MacAddress, Status: "online"));
+                                await NotifyMasterDataChangedAsync("channels");
+                            }
                         }
                     }
                     else
                     {
-                        await _masterDataService.UpdateChannelAsync(ch.Id, new UpdateChannelRequest(ch.StationId, ch.Name, IpAddress: ch.IpAddress, MacAddress: ch.MacAddress, Status: "online"));
+                        if (!string.Equals(ch.Status, "online", StringComparison.OrdinalIgnoreCase))
+                        {
+                            await _masterDataService.UpdateChannelAsync(ch.Id, new UpdateChannelRequest(ch.StationId, ch.Name, IpAddress: ch.IpAddress, MacAddress: ch.MacAddress, Status: "online"));
+                            await NotifyMasterDataChangedAsync("channels");
+                        }
                     }
                 }
             }

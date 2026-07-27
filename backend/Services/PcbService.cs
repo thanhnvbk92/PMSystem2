@@ -9,7 +9,8 @@ namespace PMSystem2.Api.Services
     public interface IPcbService
     {
         Task<PcbResultDto> SubmitResultAsync(SubmitPcbRequest req);
-        Task<List<PcbResultDto>> GetLatestResultsAsync(int limit = 50, int? lineId = null, int? stationId = null, string? searchPid = null, string? resultFilter = null);
+        Task<List<PcbResultDto>> SubmitBatchAsync(List<SubmitPcbRequest> requests);
+        Task<List<PcbResultDto>> GetLatestResultsAsync(int limit = 50, int? lineId = null, int? stationId = null, string? searchPid = null, string? resultFilter = null, DateTime? startDate = null, DateTime? endDate = null);
         Task<int> GetExportCountAsync(int? lineId = null, int? stationId = null, string? searchPid = null, string? resultFilter = null, DateTime? startDate = null, DateTime? endDate = null);
         Task<byte[]> GetExportCsvAsync(int? limit = null, int? lineId = null, int? stationId = null, string? searchPid = null, string? resultFilter = null, DateTime? startDate = null, DateTime? endDate = null);
         Task<List<HourlyStatDto>> GetHourlyStatsAsync(int hours = 24, int? lineId = null, int? stationId = null);
@@ -75,7 +76,7 @@ namespace PMSystem2.Api.Services
 
             var normalizedResult = req.Result.ToUpperInvariant();
             var rawInspectTime = req.InspectTime ?? req.StartTime ?? DateTime.UtcNow;
-            var inspectTime = DateTime.SpecifyKind(rawInspectTime, DateTimeKind.Utc);
+            var inspectTime = EnsureUtc(rawInspectTime);
 
             // Calculate ErrorCode: First NG step name if NG/FAIL, else null if OK
             string? computedErrorCode = null;
@@ -154,8 +155,8 @@ namespace PMSystem2.Api.Services
                 ModelId = req.ModelId,
                 Fid = req.Fid,
                 PcbaPartNo = req.PcbaPartNo,
-                StartTime = req.StartTime ?? inspectTime,
-                EndTime = req.EndTime,
+                StartTime = req.StartTime.HasValue ? EnsureUtc(req.StartTime.Value) : inspectTime,
+                EndTime = EnsureUtc(req.EndTime),
                 TestTime = req.TestTime,
                 FilePath = req.FilePath,
                 Result = normalizedResult,
@@ -260,12 +261,195 @@ namespace PMSystem2.Api.Services
             return dto;
         }
 
+        public async Task<List<PcbResultDto>> SubmitBatchAsync(List<SubmitPcbRequest> requests)
+        {
+            if (requests == null || requests.Count == 0)
+                return new List<PcbResultDto>();
+
+            var resultDtos = new List<PcbResultDto>();
+            var newEntities = new List<PcbResult>();
+
+            foreach (var req in requests)
+            {
+                int channelId = req.ChannelId;
+                var hierarchy = _masterDataService.GetChannelHierarchy(channelId);
+                if (hierarchy == null)
+                {
+                    await _masterDataService.RefreshCacheAsync();
+                    hierarchy = _masterDataService.GetChannelHierarchy(channelId);
+                }
+
+                if (hierarchy == null)
+                {
+                    var channels = await _masterDataService.GetChannelsAsync();
+                    var fallbackChannel = channels.FirstOrDefault();
+                    if (fallbackChannel != null)
+                    {
+                        channelId = fallbackChannel.Id;
+                        hierarchy = _masterDataService.GetChannelHierarchy(channelId);
+                    }
+                }
+
+                if (hierarchy == null) continue;
+
+                var normalizedResult = req.Result.ToUpperInvariant();
+                var rawInspectTime = req.InspectTime ?? req.StartTime ?? DateTime.UtcNow;
+                var inspectTime = EnsureUtc(rawInspectTime);
+
+                string? computedErrorCode = null;
+                if (normalizedResult == "NG" || normalizedResult == "FAIL")
+                {
+                    var firstNgStep = req.Steps?.FirstOrDefault(s =>
+                        !string.Equals(s.Result, "OK", StringComparison.OrdinalIgnoreCase) &&
+                        !string.Equals(s.Result, "PASS", StringComparison.OrdinalIgnoreCase));
+
+                    if (firstNgStep != null)
+                    {
+                        computedErrorCode = !string.IsNullOrWhiteSpace(firstNgStep.StepName)
+                            ? firstNgStep.StepName
+                            : (!string.IsNullOrWhiteSpace(firstNgStep.Value) ? firstNgStep.Value : "DEFECT_UNSPECIFIED");
+                    }
+                    else
+                    {
+                        computedErrorCode = !string.IsNullOrWhiteSpace(req.ErrorCode) ? req.ErrorCode : "DEFECT_UNSPECIFIED";
+                    }
+                }
+
+                var entity = new PcbResult
+                {
+                    ChannelId = channelId,
+                    StationId = hierarchy.StationId,
+                    Pid = req.Pid,
+                    JobFile = req.JobFile,
+                    ModelId = req.ModelId,
+                    Fid = req.Fid,
+                    PcbaPartNo = req.PcbaPartNo,
+                    StartTime = req.StartTime.HasValue ? EnsureUtc(req.StartTime.Value) : inspectTime,
+                    EndTime = EnsureUtc(req.EndTime),
+                    TestTime = req.TestTime,
+                    FilePath = req.FilePath,
+                    Result = normalizedResult,
+                    ErrorCode = computedErrorCode,
+                    GmesStatus = req.GmesStatus,
+                    InspectTime = inspectTime,
+                    CreatedAt = DateTime.UtcNow
+                };
+
+                if (req.Steps != null && req.Steps.Count > 0)
+                {
+                    foreach (var s in req.Steps)
+                    {
+                        entity.TestSteps.Add(new TestStep
+                        {
+                            StepType = s.StepType,
+                            StepNumber = s.StepNumber,
+                            StepName = s.StepName,
+                            Result = s.Result.ToUpperInvariant(),
+                            Value = s.Value,
+                            SpecMin = s.SpecMin,
+                            SpecMax = s.SpecMax
+                        });
+                    }
+                }
+
+                newEntities.Add(entity);
+            }
+
+            if (newEntities.Count > 0)
+            {
+                try
+                {
+                    _db.PcbResults.AddRange(newEntities);
+                    await _db.SaveChangesAsync();
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "[BATCH SUBMIT] Bulk save encountered issue, falling back to individual insert");
+                    foreach (var entity in newEntities)
+                    {
+                        _db.Entry(entity).State = EntityState.Detached;
+                    }
+                    newEntities.Clear();
+                    foreach (var req in requests)
+                    {
+                        try
+                        {
+                            var dto = await SubmitResultAsync(req);
+                            resultDtos.Add(dto);
+                        }
+                        catch { }
+                    }
+                    return resultDtos;
+                }
+
+                foreach (var entity in newEntities)
+                {
+                    var hierarchy = _masterDataService.GetChannelHierarchy(entity.ChannelId);
+                    var dto = new PcbResultDto(
+                        entity.Id,
+                        entity.ChannelId,
+                        hierarchy?.ChannelName ?? "Unknown",
+                        hierarchy?.IpAddress ?? "127.0.0.1",
+                        entity.StationId,
+                        hierarchy?.StationName ?? "Unknown",
+                        hierarchy?.LineId ?? 1,
+                        hierarchy?.LineName ?? "Unknown",
+                        entity.Pid,
+                        entity.Result,
+                        entity.ErrorCode,
+                        entity.GmesStatus,
+                        entity.InspectTime,
+                        entity.CreatedAt,
+                        entity.JobFile,
+                        entity.ModelId,
+                        null,
+                        entity.Fid,
+                        entity.PcbaPartNo,
+                        entity.StartTime,
+                        entity.EndTime,
+                        entity.TestTime,
+                        entity.FilePath,
+                        entity.TestSteps.Select(t => new TestStepInputDto
+                        {
+                            StepType = t.StepType,
+                            StepNumber = t.StepNumber,
+                            StepName = t.StepName,
+                            Result = t.Result,
+                            Value = t.Value,
+                            SpecMin = t.SpecMin,
+                            SpecMax = t.SpecMax
+                        }).ToList()
+                    );
+                    resultDtos.Add(dto);
+                }
+
+                var latestDto = resultDtos.LastOrDefault();
+                if (latestDto != null)
+                {
+                    try
+                    {
+                        await _hubContext.Clients.All.ReceivePcbResult(latestDto);
+                        await _hubContext.Clients.Group($"Line_{latestDto.LineId}").ReceivePcbResult(latestDto);
+                        await _hubContext.Clients.Group($"Station_{latestDto.StationId}").ReceivePcbResult(latestDto);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "Failed to broadcast SignalR notification for batch submit");
+                    }
+                }
+            }
+
+            return resultDtos;
+        }
+
         public async Task<List<PcbResultDto>> GetLatestResultsAsync(
             int limit = 50, 
             int? lineId = null, 
             int? stationId = null,
             string? searchPid = null,
-            string? resultFilter = null)
+            string? resultFilter = null,
+            DateTime? startDate = null,
+            DateTime? endDate = null)
         {
             var query = _db.PcbResults.AsNoTracking().AsQueryable();
 
@@ -295,6 +479,14 @@ namespace PMSystem2.Api.Services
                     query = query.Where(p => p.Result == "NG" || p.Result == "FAIL");
                 }
             }
+            if (startDate.HasValue)
+            {
+                query = query.Where(p => p.InspectTime >= startDate.Value.ToUniversalTime());
+            }
+            if (endDate.HasValue)
+            {
+                query = query.Where(p => p.InspectTime <= endDate.Value.ToUniversalTime());
+            }
 
             var list = await query
                 .OrderByDescending(p => p.InspectTime)
@@ -309,12 +501,12 @@ namespace PMSystem2.Api.Services
                 results.Add(new PcbResultDto(
                     item.Id,
                     item.ChannelId,
-                    hierarchy?.ChannelName ?? $"Channel {item.ChannelId}",
+                    hierarchy?.ChannelName ?? (item.ChannelId > 0 ? $"Channel #{item.ChannelId}" : "Unassigned Channel"),
                     hierarchy?.IpAddress ?? "",
                     item.StationId,
-                    hierarchy?.StationName ?? $"Station {item.StationId}",
+                    hierarchy?.StationName ?? (item.StationId > 0 ? $"Station #{item.StationId}" : "Unassigned Station"),
                     hierarchy?.LineId ?? 0,
-                    hierarchy?.LineName ?? $"Line {hierarchy?.LineId}",
+                    hierarchy?.LineName ?? (hierarchy?.LineId > 0 ? $"Line #{hierarchy.LineId}" : "Unassigned Line"),
                     item.Pid,
                     item.Result,
                     item.ErrorCode,
@@ -455,7 +647,11 @@ namespace PMSystem2.Api.Services
                     .ToList();
                 string failedStepsStr = failedSteps.Count > 0 ? string.Join("; ", failedSteps) : (item.Result == "NG" ? (item.ErrorCode != null ? $"Lỗi hệ thống ({item.ErrorCode})" : "Lỗi tổng hợp") : "N/A");
 
-                sb.AppendLine($"\"{item.Id}\",\"{EscapeCsv(item.Pid)}\",\"{EscapeCsv(errorCode)}\",\"{EscapeCsv(hierarchy?.ChannelName ?? $"Channel #{item.ChannelId}")}\",\"{EscapeCsv(hierarchy?.IpAddress ?? "")}\",\"{EscapeCsv(hierarchy?.LineName ?? $"Line #{hierarchy?.LineId}")}\",\"{EscapeCsv(hierarchy?.StationName ?? $"Station #{item.StationId}")}\",\"{dateStr}\",\"{timeStr}\",\"{item.Result}\",\"{EscapeCsv(jobFile)}\",\"{EscapeCsv(failedStepsStr)}\"");
+                var channelName = hierarchy?.ChannelName ?? (item.ChannelId > 0 ? $"Channel #{item.ChannelId}" : "Unassigned Channel");
+                var lineName = hierarchy?.LineName ?? (hierarchy?.LineId > 0 ? $"Line #{hierarchy.LineId}" : "Unassigned Line");
+                var stationName = hierarchy?.StationName ?? (item.StationId > 0 ? $"Station #{item.StationId}" : "Unassigned Station");
+
+                sb.AppendLine($"\"{item.Id}\",\"{EscapeCsv(item.Pid)}\",\"{EscapeCsv(errorCode)}\",\"{EscapeCsv(channelName)}\",\"{EscapeCsv(hierarchy?.IpAddress ?? "")}\",\"{EscapeCsv(lineName)}\",\"{EscapeCsv(stationName)}\",\"{dateStr}\",\"{timeStr}\",\"{item.Result}\",\"{EscapeCsv(jobFile)}\",\"{EscapeCsv(failedStepsStr)}\"");
             }
 
             return System.Text.Encoding.UTF8.GetBytes(sb.ToString());
@@ -650,6 +846,19 @@ namespace PMSystem2.Api.Services
                 g.Count,
                 Math.Round((double)g.Count / totalNg * 100.0, 2)
             )).ToList();
+        }
+
+        private static DateTime EnsureUtc(DateTime dt)
+        {
+            if (dt.Kind == DateTimeKind.Unspecified)
+                return DateTime.SpecifyKind(dt, DateTimeKind.Utc);
+            return dt.ToUniversalTime();
+        }
+
+        private static DateTime? EnsureUtc(DateTime? dt)
+        {
+            if (!dt.HasValue) return null;
+            return EnsureUtc(dt.Value);
         }
     }
 }

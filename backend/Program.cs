@@ -3,6 +3,9 @@ using PMSystem2.Api.Data;
 using PMSystem2.Api.Hubs;
 using PMSystem2.Api.Services;
 
+// Enable Npgsql legacy timestamp behavior to allow DateTime with Kind=Unspecified
+AppContext.SetSwitch("Npgsql.EnableLegacyTimestampBehavior", true);
+
 var builder = WebApplication.CreateBuilder(args);
 
 // Bind Kestrel to listen on all network interfaces (LAN & Localhost) on port 5000
@@ -74,6 +77,7 @@ using (var scope = app.Services.CreateScope())
         // Ensure all missing ClickHouse master data tables and columns exist in PostgreSQL
         try
         {
+            db.Database.SetCommandTimeout(60);
             await db.Database.ExecuteSqlRawAsync(@"
                 CREATE TABLE IF NOT EXISTS model_groups (
                     id SERIAL PRIMARY KEY,

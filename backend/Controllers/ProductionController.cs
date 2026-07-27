@@ -51,40 +51,9 @@ namespace PMSystem2.Api.Controllers
                 });
             }
 
-            int successCount = 0;
-            int failedCount = 0;
-            var details = new List<object>();
-
-            foreach (var req in requests)
-            {
-                try
-                {
-                    var result = await _pcbService.SubmitResultAsync(req);
-                    successCount++;
-                    details.Add(new
-                    {
-                        pid = req.Pid,
-                        start_time = DateTime.UtcNow.ToString("o"),
-                        status = "success",
-                        inserted_pcb = 1,
-                        inserted_steps = req.Steps?.Count ?? 0,
-                        error = (string?)null
-                    });
-                }
-                catch (Exception ex)
-                {
-                    failedCount++;
-                    details.Add(new
-                    {
-                        pid = req.Pid,
-                        start_time = DateTime.UtcNow.ToString("o"),
-                        status = "failed",
-                        inserted_pcb = 0,
-                        inserted_steps = 0,
-                        error = ex.Message
-                    });
-                }
-            }
+            var results = await _pcbService.SubmitBatchAsync(requests);
+            int successCount = results.Count;
+            int failedCount = requests.Count - successCount;
 
             return Ok(new
             {
@@ -97,7 +66,15 @@ namespace PMSystem2.Api.Controllers
                     failed = failedCount,
                     skipped = 0
                 },
-                details = details
+                details = results.Select(r => new
+                {
+                    pid = r.Pid,
+                    start_time = DateTime.UtcNow.ToString("o"),
+                    status = "success",
+                    inserted_pcb = 1,
+                    inserted_steps = r.Steps?.Count ?? 0,
+                    error = (string?)null
+                }).ToList()
             });
         }
 
@@ -107,9 +84,11 @@ namespace PMSystem2.Api.Controllers
             [FromQuery] int? lineId = null,
             [FromQuery] int? stationId = null,
             [FromQuery] string? searchPid = null,
-            [FromQuery] string? resultFilter = null)
+            [FromQuery] string? resultFilter = null,
+            [FromQuery] DateTime? startDate = null,
+            [FromQuery] DateTime? endDate = null)
         {
-            return Ok(await _pcbService.GetLatestResultsAsync(limit, lineId, stationId, searchPid, resultFilter));
+            return Ok(await _pcbService.GetLatestResultsAsync(limit, lineId, stationId, searchPid, resultFilter, startDate, endDate));
         }
 
         /// <summary>

@@ -1,6 +1,7 @@
 import * as signalR from '@microsoft/signalr';
 
-const HUB_URL = 'http://localhost:5000/hubs/production';
+const SIGNALR_HOST = typeof window !== 'undefined' ? window.location.hostname : 'localhost';
+const HUB_URL = `http://${SIGNALR_HOST}:5000/hubs/production`;
 
 let connection = null;
 

@@ -109,13 +109,13 @@ export default function Sidebar({
             <div className="flex flex-col truncate">
               <div className="flex items-center gap-1.5">
                 <span className="font-extrabold tracking-wider font-display text-lg bg-clip-text text-transparent bg-gradient-to-r from-white via-slate-100 to-blue-200">
-                  PMSystem2
+                  FCT System
                 </span>
                 <span className="text-[9px] px-1.5 py-0.2 rounded bg-blue-500/20 text-blue-300 font-mono font-bold">
                   v2.0
                 </span>
               </div>
-              <span className="text-[10px] text-slate-400 truncate">SMT Assembly Telemetry</span>
+              <span className="text-[10px] text-slate-400 truncate">SMT Assembly & Telemetry</span>
             </div>
           )}
         </div>

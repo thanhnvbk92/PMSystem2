@@ -310,7 +310,7 @@ export default function App() {
         {/* Footer */}
         <footer className="mt-12 py-6 border-t border-white/5 text-center text-xs text-slate-500 flex flex-col sm:flex-row items-center justify-between gap-4 font-mono">
           <div>
-            PMSystem2 Industrial SMT Telemetry System &copy; 2026. Built with .NET 8, SignalR, & TimescaleDB.
+            FCT System Industrial SMT Telemetry System &copy; 2026. Built with .NET 8, SignalR, & TimescaleDB.
           </div>
           <div className="flex items-center gap-4 text-[11px]">
             <span className="flex items-center gap-1.5">

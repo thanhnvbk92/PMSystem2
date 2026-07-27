@@ -148,18 +148,18 @@ namespace PMSystem2.Api.Services
             _cache.Clear();
             foreach (var ch in channels)
             {
-                if (ch.Station?.Line != null)
-                {
-                    _cache[ch.Id] = new ChannelHierarchyInfo(
-                        ch.Id,
-                        ch.Name,
-                        ch.IpAddress ?? "",
-                        ch.StationId,
-                        ch.Station.Name,
-                        ch.Station.LineId,
-                        ch.Station.Line.Name
-                    );
-                }
+                var station = ch.Station;
+                var line = station?.Line;
+
+                _cache[ch.Id] = new ChannelHierarchyInfo(
+                    ch.Id,
+                    ch.Name,
+                    ch.IpAddress ?? "",
+                    ch.StationId,
+                    station?.Name ?? (ch.StationId > 0 ? $"Station #{ch.StationId}" : "Unassigned Station"),
+                    station?.LineId ?? 0,
+                    line?.Name ?? (station?.LineId > 0 ? $"Line #{station.LineId}" : "Unassigned Line")
+                );
             }
 
             _logger.LogInformation("MasterDataService in-memory cache refreshed with {Count} channels", _cache.Count);
