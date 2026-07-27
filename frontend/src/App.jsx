@@ -77,6 +77,8 @@ export default function App() {
   // Active filters
   const [activeLineId, setActiveLineId] = useState(null);
   const [activeStationId, setActiveStationId] = useState(null);
+  const [activeStartDate, setActiveStartDate] = useState(null);
+  const [activeEndDate, setActiveEndDate] = useState(null);
 
   // Error state
   const [dbError, setDbError] = useState(null);
@@ -118,9 +120,9 @@ export default function App() {
   const loadProductionData = useCallback(async () => {
     try {
       const [sum, latest, hourly] = await Promise.all([
-        ProductionApi.getSummary(),
-        ProductionApi.getLatest(100, activeLineId, activeStationId),
-        ProductionApi.getHourlyStats(24, activeLineId, activeStationId),
+        ProductionApi.getSummary(activeLineId, activeStationId, activeStartDate, activeEndDate),
+        ProductionApi.getLatest(100, activeLineId, activeStationId, null, null, activeStartDate, activeEndDate),
+        ProductionApi.getHourlyStats(24, activeLineId, activeStationId, activeStartDate, activeEndDate),
       ]);
       setSummary(sum);
       setLatestLogs(latest || []);
@@ -128,7 +130,7 @@ export default function App() {
     } catch (err) {
       console.error('Failed to load Production Data:', err);
     }
-  }, [activeLineId, activeStationId]);
+  }, [activeLineId, activeStationId, activeStartDate, activeEndDate]);
 
   // Handle incoming real-time PCB Result via SignalR Hub
   const handlePcbResultReceived = useCallback((newResult) => {
@@ -191,9 +193,11 @@ export default function App() {
     );
   }, [loadProductionData, handlePcbResultReceived, handleStatsReceived]);
 
-  const handleFilterChange = (lineId, stationId) => {
+  const handleFilterChange = (lineId, stationId, startDate = null, endDate = null) => {
     setActiveLineId(lineId);
     setActiveStationId(stationId);
+    if (startDate !== undefined) setActiveStartDate(startDate);
+    if (endDate !== undefined) setActiveEndDate(endDate);
   };
 
   return (
@@ -256,6 +260,8 @@ export default function App() {
               hourlyStats={hourlyStats}
               lines={lines}
               stations={stations}
+              startDate={activeStartDate}
+              endDate={activeEndDate}
               onFilterChange={handleFilterChange}
               newRecordIds={newRecordIds}
             />
@@ -268,6 +274,8 @@ export default function App() {
               hourlyStats={hourlyStats}
               lines={lines}
               stations={stations}
+              startDate={activeStartDate}
+              endDate={activeEndDate}
               onFilterChange={handleFilterChange}
             />
           )}

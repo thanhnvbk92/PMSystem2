@@ -19,9 +19,10 @@
 | **Loại bỏ Hardcoded Fallback UI** | **100%** | Biểu đồ & KPI Card trên `Dashboard.jsx` lấy 100% dữ liệu DB |
 | **Trang Điều Khiển Máy Từ Xa (Command Center)** | **100%** | Gửi lệnh tập trung theo Tree View Line/Station, tích hợp thông tin IP/MAC |
 | **Hiển thị Chi tiết Step NG / FAIL & Dual Case JSON** | **100%** | Hỗ trợ camelCase/snake_case, hiển thị đúng stepName, Min/Max và highlight màu đỏ |
-| **Xuất CSV Dữ Liệu Sản Xuất Không Giới Hạn** | **100%** | Bỏ giới hạn 3,000 dòng, cảnh báo Modal xác nhận khi xuất >3,000 bản ghi |
-| **Cập nhật & Đồng bộ ERD Database vào SRS Docs** | **100%** | Vẽ lại sơ đồ Mermaid ERD chuẩn 11 bảng CSDL và HTML interactive ERD |
-| **Chuẩn hóa CSDL pcb_results & Bỏ trùng lặp LineId/BuyerId** | **100%** | Lược bỏ các trường dư thừa (`line_id`, `buyer_id`), truy xuất phân cấp qua `channel_id` |
+| **Tối ưu hóa Tốc độ Tra cứu PCB Search** | **100%** | Giảm thời gian API từ 5.4s xuống ~290ms, DB query từ 5.2s xuống 21-67ms qua B-Tree Pattern Index & loại bỏ Include(TestSteps) |
+| **Bổ sung Tên Line cho Station trên Đồ Thị Dashboard** | **100%** | Đồ thị Top 10 Station thấp nhất & Bản đồ rủi ro hiển thị dạng `StationName (LineName)` |
+| **Cấu hình Cổng 3000 & Tiêu đề Web UI** | **100%** | Đổi cổng chạy frontend sang `3000`, tiêu đề ứng dụng đổi thành `FCT System` |
+| **Dọn dẹp Backend Console Logging** | **100%** | Bỏ bớt các log console rác ở backend dịch vụ PcbService & Controllers |
 
 ---
 
@@ -138,6 +139,20 @@
     * **Bảng `stations`**: Thêm cột `process_info` (`string?`) lưu trữ cấu hình quy trình trạm kiểm tra trong cả Entity C# (`Station`), DTOs (`StationDto`, `CreateStationRequest`, `UpdateStationRequest`), `MasterDataService` và ERD.
     * **Bảng `pcb_results`**: Bổ sung `gmes_status` (`string?` - trạng thái đồng bộ GMES) và `created_at` (`timestamp` - thời điểm ghi nhận dữ liệu) trong C# entity (`PcbResult`), DTOs, `PcbService` và ERD.
     * **Xác nhận kiểu dữ liệu `start_time` & `inspect_time`**: Lưu dưới dạng `timestamp` (bao gồm cả Ngày + Giờ UTC đầy đủ).
+
+### 2.13 Tối ưu Tốc độ Tra cứu PCB Search & Hiển thị Tên Line trên Đồ Thị Dashboard
+* **Tối ưu hóa Tốc độ Tra cứu PCB (PCB Search Performance Tuning)**:
+  * **Loại bỏ Eager Loading Cartesian Product**: Bỏ `.Include(p => p.TestSteps)` khỏi query danh sách kết quả `GetLatestResultsAsync` giúp ngăn chặn việc join hàng chục triệu dòng dữ liệu `test_steps`. Các bước kiểm tra chỉ được load khi xem Modal chi tiết.
+  * **Thuật toán Tìm kiếm 2 Tầng (Two-Tier PID Search)**:
+    1. **Tầng 1 (Prefix Match - B-Tree)**: Sử dụng `EF.Functions.Like(p.Pid, $"{term}%")` tận dụng index `idx_pcb_results_pid_pattern` (`varchar_pattern_ops`) cho tốc độ DB query chỉ **21ms - 67ms**.
+    2. **Tầng 2 (Substring Fallback - GIN Trigram)**: Sử dụng `EF.Functions.ILike(p.Pid, $"%{term}%")` kết hợp GIN Trigram index `idx_pcb_results_pid_trgm` khi không tìm thấy kết quả ở tiền tố.
+  * **Tạo chỉ mục CSDL**: Thực thi `CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_pcb_results_pid_pattern ON pcb_results (pid varchar_pattern_ops, inspect_time DESC);`.
+  * **Kết quả**: Thời gian phản hồi trang Tra cứu PCB giảm từ **5,393ms (5.4s)** xuống **~290ms (~0.29s)** (nhanh gấp ~18.5 lần).
+* **Bổ sung Tên Line vào Đồ thị Station Yield (Top 10 Thấp Nhất)**:
+  * Cập nhật `Dashboard.jsx`: Đồ thị *"Sản Lượng & Tỉ Lệ Pass Theo Station (Top 10 Thấp Nhất)"* và Bản đồ rủi ro hiển thị nhãn dạng `[Tên Station] ([Tên Line])` (ví dụ `Station 1 (Line 1)`).
+  * Tăng chiều cao nhãn XAxis (`height={45}`) đảm bảo chữ không bị che mờ hay đè lên nhau.
+* **Cấu hình Cổng 3000 & Tiêu đề Web UI**: Đổi cổng chạy frontend từ 5173 sang cổng `3000`, đổi tiêu đề ứng dụng web thành `FCT System`.
+* **Dọn dẹp Backend Logging**: Loại bỏ bớt các câu lệnh `Console.WriteLine` rác ở backend để làm sạch môi trường log production.
 
 ---
 

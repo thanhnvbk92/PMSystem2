@@ -13,11 +13,11 @@ namespace PMSystem2.Api.Services
         Task<List<PcbResultDto>> GetLatestResultsAsync(int limit = 50, int? lineId = null, int? stationId = null, string? searchPid = null, string? resultFilter = null, DateTime? startDate = null, DateTime? endDate = null);
         Task<int> GetExportCountAsync(int? lineId = null, int? stationId = null, string? searchPid = null, string? resultFilter = null, DateTime? startDate = null, DateTime? endDate = null);
         Task<byte[]> GetExportCsvAsync(int? limit = null, int? lineId = null, int? stationId = null, string? searchPid = null, string? resultFilter = null, DateTime? startDate = null, DateTime? endDate = null);
-        Task<List<HourlyStatDto>> GetHourlyStatsAsync(int hours = 24, int? lineId = null, int? stationId = null);
-        Task<ProductionSummaryDto> GetSummaryAsync();
-        Task<List<LineYieldStatDto>> GetLineYieldStatsAsync(int? lineId = null);
-        Task<List<StationYieldStatDto>> GetStationYieldStatsAsync(int? lineId = null);
-        Task<List<DefectParetoStatDto>> GetDefectParetoAsync(int? lineId = null, int? stationId = null);
+        Task<List<HourlyStatDto>> GetHourlyStatsAsync(int hours = 24, int? lineId = null, int? stationId = null, DateTime? startDate = null, DateTime? endDate = null);
+        Task<ProductionSummaryDto> GetSummaryAsync(int? lineId = null, int? stationId = null, DateTime? startDate = null, DateTime? endDate = null);
+        Task<List<LineYieldStatDto>> GetLineYieldStatsAsync(int? lineId = null, DateTime? startDate = null, DateTime? endDate = null);
+        Task<List<StationYieldStatDto>> GetStationYieldStatsAsync(int? lineId = null, DateTime? startDate = null, DateTime? endDate = null);
+        Task<List<DefectParetoStatDto>> GetDefectParetoAsync(int? lineId = null, int? stationId = null, DateTime? startDate = null, DateTime? endDate = null);
     }
 
     public class PcbService : IPcbService
@@ -463,11 +463,6 @@ namespace PMSystem2.Api.Services
             {
                 query = query.Where(p => p.StationId == stationId.Value);
             }
-            if (!string.IsNullOrWhiteSpace(searchPid))
-            {
-                var term = searchPid.Trim().ToLower();
-                query = query.Where(p => p.Pid.ToLower().Contains(term));
-            }
             if (!string.IsNullOrWhiteSpace(resultFilter) && resultFilter != "ALL")
             {
                 if (resultFilter == "OK")
@@ -488,11 +483,38 @@ namespace PMSystem2.Api.Services
                 query = query.Where(p => p.InspectTime <= endDate.Value.ToUniversalTime());
             }
 
-            var list = await query
-                .OrderByDescending(p => p.InspectTime)
-                .Take(limit)
-                .Include(p => p.TestSteps)
-                .ToListAsync();
+            List<PcbResult> list;
+            if (!string.IsNullOrWhiteSpace(searchPid))
+            {
+                var term = searchPid.Trim();
+                // 1. Try fast prefix search first (e.g., term%) to hit idx_pcb_results_pid_pattern index (<10ms)
+                var prefixQuery = query.Where(p => EF.Functions.Like(p.Pid, $"{term}%") || EF.Functions.Like(p.Pid, $"{term.ToUpper()}%"));
+                var prefixList = await prefixQuery
+                    .OrderByDescending(p => p.InspectTime)
+                    .Take(limit)
+                    .ToListAsync();
+
+                if (prefixList.Count > 0)
+                {
+                    list = prefixList;
+                }
+                else
+                {
+                    // 2. Fallback to GIN trigram substring search (%term%) if no prefix matches
+                    list = await query
+                        .Where(p => EF.Functions.ILike(p.Pid, $"%{term}%"))
+                        .OrderByDescending(p => p.InspectTime)
+                        .Take(limit)
+                        .ToListAsync();
+                }
+            }
+            else
+            {
+                list = await query
+                    .OrderByDescending(p => p.InspectTime)
+                    .Take(limit)
+                    .ToListAsync();
+            }
 
             var results = new List<PcbResultDto>();
             foreach (var item in list)
@@ -522,7 +544,7 @@ namespace PMSystem2.Api.Services
                     item.EndTime,
                     item.TestTime,
                     item.FilePath,
-                    item.TestSteps.OrderBy(t => t.StepNumber).Select(t => new TestStepInputDto {
+                    item.TestSteps != null ? item.TestSteps.OrderBy(t => t.StepNumber).Select(t => new TestStepInputDto {
                         StepType = t.StepType,
                         StepNumber = t.StepNumber,
                         StepName = t.StepName,
@@ -530,7 +552,7 @@ namespace PMSystem2.Api.Services
                         Value = t.Value,
                         SpecMin = t.SpecMin,
                         SpecMax = t.SpecMax
-                    }).ToList()
+                    }).ToList() : new List<TestStepInputDto>()
                 ));
             }
 
@@ -556,8 +578,8 @@ namespace PMSystem2.Api.Services
             if (stationId.HasValue) query = query.Where(p => p.StationId == stationId.Value);
             if (!string.IsNullOrWhiteSpace(searchPid))
             {
-                var term = searchPid.Trim().ToLower();
-                query = query.Where(p => p.Pid.ToLower().Contains(term));
+                var term = searchPid.Trim();
+                query = query.Where(p => EF.Functions.ILike(p.Pid, $"%{term}%"));
             }
             if (!string.IsNullOrWhiteSpace(resultFilter) && resultFilter != "ALL")
             {
@@ -590,8 +612,8 @@ namespace PMSystem2.Api.Services
             if (stationId.HasValue) query = query.Where(p => p.StationId == stationId.Value);
             if (!string.IsNullOrWhiteSpace(searchPid))
             {
-                var term = searchPid.Trim().ToLower();
-                query = query.Where(p => p.Pid.ToLower().Contains(term));
+                var term = searchPid.Trim();
+                query = query.Where(p => EF.Functions.ILike(p.Pid, $"%{term}%"));
             }
             if (!string.IsNullOrWhiteSpace(resultFilter) && resultFilter != "ALL")
             {
@@ -663,9 +685,14 @@ namespace PMSystem2.Api.Services
             return str.Replace("\"", "\"\"");
         }
 
-        public async Task<List<HourlyStatDto>> GetHourlyStatsAsync(int hours = 24, int? lineId = null, int? stationId = null)
+        public async Task<List<HourlyStatDto>> GetHourlyStatsAsync(
+            int hours = 24, 
+            int? lineId = null, 
+            int? stationId = null,
+            DateTime? startDate = null,
+            DateTime? endDate = null)
         {
-            var query = _db.PcbResults.AsNoTracking();
+            var query = _db.PcbResults.AsNoTracking().AsQueryable();
 
             if (lineId.HasValue)
             {
@@ -678,47 +705,101 @@ namespace PMSystem2.Api.Services
                 query = query.Where(p => p.StationId == stationId.Value);
             }
 
-            var cutoff = DateTime.UtcNow.AddHours(-hours);
-            query = query.Where(p => p.InspectTime >= cutoff);
+            if (startDate.HasValue)
+            {
+                var utcStart = EnsureUtc(startDate.Value);
+                query = query.Where(p => p.InspectTime >= utcStart);
+            }
+            else if (hours > 0)
+            {
+                var cutoff = DateTime.UtcNow.AddHours(-hours);
+                query = query.Where(p => p.InspectTime >= cutoff);
+            }
 
-            var list = await query
-                .OrderByDescending(p => p.InspectTime)
-                .ToListAsync();
+            if (endDate.HasValue)
+            {
+                var utcEnd = EnsureUtc(endDate.Value);
+                query = query.Where(p => p.InspectTime <= utcEnd);
+            }
 
-            var grouped = list
+            var grouped = await query
                 .GroupBy(p => new {
-                    Date = p.InspectTime.Date,
+                    Year = p.InspectTime.Year,
+                    Month = p.InspectTime.Month,
+                    Day = p.InspectTime.Day,
                     Hour = p.InspectTime.Hour
                 })
-                .Select(g => {
-                    var total = g.Count();
-                    var ok = g.Count(x => x.Result == "OK" || x.Result == "PASS");
-                    var ng = g.Count(x => x.Result == "NG" || x.Result == "FAIL");
-                    return new HourlyStatDto(
-                        DateTime.SpecifyKind(g.Key.Date.AddHours(g.Key.Hour), DateTimeKind.Utc),
-                        lineId ?? 0,
-                        stationId ?? 0,
-                        total,
-                        ok,
-                        ng,
-                        total > 0 ? Math.Round((double)ok / total * 100.0, 2) : 0.0
-                    );
+                .Select(g => new {
+                    g.Key.Year,
+                    g.Key.Month,
+                    g.Key.Day,
+                    g.Key.Hour,
+                    Total = g.Count(),
+                    Ok = g.Count(x => x.Result == "OK" || x.Result == "PASS"),
+                    Ng = g.Count(x => x.Result == "NG" || x.Result == "FAIL")
                 })
-                .OrderBy(g => g.Bucket)
-                .ToList();
+                .OrderBy(g => g.Year).ThenBy(g => g.Month).ThenBy(g => g.Day).ThenBy(g => g.Hour)
+                .ToListAsync();
 
-            return grouped;
+            return grouped.Select(g => {
+                var dt = new DateTime(g.Year, g.Month, g.Day, g.Hour, 0, 0, DateTimeKind.Utc);
+                return new HourlyStatDto(
+                    dt,
+                    lineId ?? 0,
+                    stationId ?? 0,
+                    g.Total,
+                    g.Ok,
+                    g.Ng,
+                    g.Total > 0 ? Math.Round((double)g.Ok / g.Total * 100.0, 2) : 0.0
+                );
+            }).ToList();
         }
 
-        public async Task<ProductionSummaryDto> GetSummaryAsync()
+        public async Task<ProductionSummaryDto> GetSummaryAsync(
+            int? lineId = null,
+            int? stationId = null,
+            DateTime? startDate = null,
+            DateTime? endDate = null)
         {
-            var totalInspected = await _db.PcbResults.CountAsync();
-            var totalOk = await _db.PcbResults.CountAsync(p => p.Result == "OK" || p.Result == "PASS");
-            var totalNg = await _db.PcbResults.CountAsync(p => p.Result == "NG" || p.Result == "FAIL");
+            var query = _db.PcbResults.AsNoTracking().AsQueryable();
+
+            if (lineId.HasValue)
+            {
+                var stations = await _masterDataService.GetStationsAsync();
+                var stationIds = stations.Where(s => s.LineId == lineId.Value).Select(s => s.Id).ToList();
+                query = query.Where(p => stationIds.Contains(p.StationId));
+            }
+            if (stationId.HasValue)
+            {
+                query = query.Where(p => p.StationId == stationId.Value);
+            }
+            if (startDate.HasValue)
+            {
+                var utcStart = EnsureUtc(startDate.Value);
+                query = query.Where(p => p.InspectTime >= utcStart);
+            }
+            if (endDate.HasValue)
+            {
+                var utcEnd = EnsureUtc(endDate.Value);
+                query = query.Where(p => p.InspectTime <= utcEnd);
+            }
+
+            var stats = await query
+                .GroupBy(x => 1)
+                .Select(g => new {
+                    Total = g.Count(),
+                    Ok = g.Count(x => x.Result == "OK" || x.Result == "PASS"),
+                    Ng = g.Count(x => x.Result == "NG" || x.Result == "FAIL")
+                })
+                .FirstOrDefaultAsync();
+
+            int totalInspected = stats?.Total ?? 0;
+            int totalOk = stats?.Ok ?? 0;
+            int totalNg = stats?.Ng ?? 0;
 
             var yieldRate = totalInspected > 0 ? Math.Round((double)totalOk / totalInspected * 100.0, 2) : 0.0;
             var activeChannels = (await _masterDataService.GetChannelsAsync()).Count(c => c.Status == "online");
-            var recentHourly = await GetHourlyStatsAsync(12);
+            var recentHourly = await GetHourlyStatsAsync(24, lineId, stationId, startDate, endDate);
 
             return new ProductionSummaryDto(
                 totalInspected,
@@ -730,7 +811,10 @@ namespace PMSystem2.Api.Services
             );
         }
 
-        public async Task<List<LineYieldStatDto>> GetLineYieldStatsAsync(int? lineId = null)
+        public async Task<List<LineYieldStatDto>> GetLineYieldStatsAsync(
+            int? lineId = null,
+            DateTime? startDate = null,
+            DateTime? endDate = null)
         {
             var stations = await _masterDataService.GetStationsAsync();
             var lines = await _masterDataService.GetLinesAsync();
@@ -740,6 +824,16 @@ namespace PMSystem2.Api.Services
             {
                 var lineStationIds = stations.Where(s => s.LineId == lineId.Value).Select(s => s.Id).ToList();
                 query = query.Where(p => lineStationIds.Contains(p.StationId));
+            }
+            if (startDate.HasValue)
+            {
+                var utcStart = EnsureUtc(startDate.Value);
+                query = query.Where(p => p.InspectTime >= utcStart);
+            }
+            if (endDate.HasValue)
+            {
+                var utcEnd = EnsureUtc(endDate.Value);
+                query = query.Where(p => p.InspectTime <= utcEnd);
             }
 
             var stationStats = await query
@@ -776,7 +870,10 @@ namespace PMSystem2.Api.Services
             return result.OrderByDescending(r => r.Total).ToList();
         }
 
-        public async Task<List<StationYieldStatDto>> GetStationYieldStatsAsync(int? lineId = null)
+        public async Task<List<StationYieldStatDto>> GetStationYieldStatsAsync(
+            int? lineId = null,
+            DateTime? startDate = null,
+            DateTime? endDate = null)
         {
             var stations = await _masterDataService.GetStationsAsync();
             var lines = await _masterDataService.GetLinesAsync();
@@ -786,6 +883,16 @@ namespace PMSystem2.Api.Services
             {
                 var lineStationIds = stations.Where(s => s.LineId == lineId.Value).Select(s => s.Id).ToList();
                 query = query.Where(p => lineStationIds.Contains(p.StationId));
+            }
+            if (startDate.HasValue)
+            {
+                var utcStart = EnsureUtc(startDate.Value);
+                query = query.Where(p => p.InspectTime >= utcStart);
+            }
+            if (endDate.HasValue)
+            {
+                var utcEnd = EnsureUtc(endDate.Value);
+                query = query.Where(p => p.InspectTime <= utcEnd);
             }
 
             var grouped = await query
@@ -812,7 +919,11 @@ namespace PMSystem2.Api.Services
             return result.OrderBy(r => r.YieldRate).ToList();
         }
 
-        public async Task<List<DefectParetoStatDto>> GetDefectParetoAsync(int? lineId = null, int? stationId = null)
+        public async Task<List<DefectParetoStatDto>> GetDefectParetoAsync(
+            int? lineId = null, 
+            int? stationId = null,
+            DateTime? startDate = null,
+            DateTime? endDate = null)
         {
             var query = _db.PcbResults.AsNoTracking()
                 .Where(p => p.Result == "NG" || p.Result == "FAIL");
@@ -826,6 +937,16 @@ namespace PMSystem2.Api.Services
             if (stationId.HasValue)
             {
                 query = query.Where(p => p.StationId == stationId.Value);
+            }
+            if (startDate.HasValue)
+            {
+                var utcStart = EnsureUtc(startDate.Value);
+                query = query.Where(p => p.InspectTime >= utcStart);
+            }
+            if (endDate.HasValue)
+            {
+                var utcEnd = EnsureUtc(endDate.Value);
+                query = query.Where(p => p.InspectTime <= utcEnd);
             }
 
             var totalNg = await query.CountAsync();

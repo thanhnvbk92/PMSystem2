@@ -9,7 +9,7 @@ import {
 } from 'recharts';
 import { ProductionApi } from '../services/api';
 
-export default function Analytics({ summary, latestLogs, hourlyStats, lines, stations, onFilterChange }) {
+export default function Analytics({ summary, latestLogs, hourlyStats, lines, stations, startDate, endDate, onFilterChange }) {
   const [selectedLine, setSelectedLine] = useState('');
   const [selectedStation, setSelectedStation] = useState('');
   const [activeTab, setActiveTab] = useState('hourly'); // 'hourly', 'line_matrix', 'defects', 'station_health'
@@ -22,12 +22,12 @@ export default function Analytics({ summary, latestLogs, hourlyStats, lines, sta
   const [exportWarningModal, setExportWarningModal] = useState(null);
 
   // Fetch full line yield & defect pareto from backend when filters change
-  const fetchAnalyticsData = async (lineId, stationId) => {
+  const fetchAnalyticsData = async (lineId, stationId, sDate, eDate) => {
     setLoadingStats(true);
     try {
       const [yieldStats, paretoStats] = await Promise.all([
-        ProductionApi.getLineYieldStats(lineId),
-        ProductionApi.getDefectPareto(lineId, stationId)
+        ProductionApi.getLineYieldStats(lineId, sDate || startDate, eDate || endDate),
+        ProductionApi.getDefectPareto(lineId, stationId, sDate || startDate, eDate || endDate)
       ]);
       setLineYieldData(yieldStats || []);
       setDefectParetoData(paretoStats || []);
@@ -44,7 +44,7 @@ export default function Analytics({ summary, latestLogs, hourlyStats, lines, sta
     const stationId = selectedStation ? parseInt(selectedStation) : null;
     try {
       // 1. Fetch total count first
-      const count = await ProductionApi.getExportCount(lineId, stationId);
+      const count = await ProductionApi.getExportCount(lineId, stationId, null, null, startDate, endDate);
       
       // 2. Prompt warning modal if > 3000 rows
       if (count > 3000) {
@@ -55,7 +55,7 @@ export default function Analytics({ summary, latestLogs, hourlyStats, lines, sta
         });
       } else {
         // Download all without limit
-        await ProductionApi.downloadExportCsv(null, lineId, stationId);
+        await ProductionApi.downloadExportCsv(null, lineId, stationId, null, null, startDate, endDate);
       }
     } catch (err) {
       console.error('Lỗi xuất dữ liệu CSV:', err);
@@ -70,7 +70,7 @@ export default function Analytics({ summary, latestLogs, hourlyStats, lines, sta
     setExportWarningModal(null);
     setIsExporting(true);
     try {
-      await ProductionApi.downloadExportCsv(null, lineId, stationId);
+      await ProductionApi.downloadExportCsv(null, lineId, stationId, null, null, startDate, endDate);
     } catch (err) {
       console.error('Lỗi xuất dữ liệu lớn CSV trong Analytics:', err);
     } finally {
@@ -81,26 +81,26 @@ export default function Analytics({ summary, latestLogs, hourlyStats, lines, sta
   useEffect(() => {
     const lineId = selectedLine ? parseInt(selectedLine) : null;
     const stationId = selectedStation ? parseInt(selectedStation) : null;
-    fetchAnalyticsData(lineId, stationId);
-  }, [selectedLine, selectedStation]);
+    fetchAnalyticsData(lineId, stationId, startDate, endDate);
+  }, [selectedLine, selectedStation, startDate, endDate]);
 
   const handleLineChange = (e) => {
     const val = e.target.value;
     setSelectedLine(val);
     setSelectedStation('');
-    onFilterChange(val ? parseInt(val) : null, null);
+    onFilterChange(val ? parseInt(val) : null, null, startDate, endDate);
   };
 
   const handleStationChange = (e) => {
     const val = e.target.value;
     setSelectedStation(val);
-    onFilterChange(selectedLine ? parseInt(selectedLine) : null, val ? parseInt(val) : null);
+    onFilterChange(selectedLine ? parseInt(selectedLine) : null, val ? parseInt(val) : null, startDate, endDate);
   };
 
   const resetFilters = () => {
     setSelectedLine('');
     setSelectedStation('');
-    onFilterChange(null, null);
+    onFilterChange(null, null, null, null);
   };
 
   const filteredStations = selectedLine 

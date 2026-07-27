@@ -59,17 +59,18 @@ export const MasterDataApi = {
 };
 
 export const ProductionApi = {
-  getSummary: () => api.get('/production/summary').then(res => res.data),
+  getSummary: (lineId = null, stationId = null, startDate = null, endDate = null) => 
+    api.get('/production/summary', { params: { lineId, stationId, startDate, endDate } }).then(res => res.data),
   getLatest: (limit = 100, lineId = null, stationId = null, searchPid = null, resultFilter = null, startDate = null, endDate = null) => 
     api.get('/production/latest', { params: { limit, lineId, stationId, searchPid, resultFilter, startDate, endDate } }).then(res => res.data),
-  getHourlyStats: (hours = 24, lineId = null, stationId = null) => 
-    api.get('/production/stats/hourly', { params: { hours, lineId, stationId } }).then(res => res.data),
-  getLineYieldStats: (lineId = null) =>
-    api.get('/production/stats/line-yield', { params: { lineId } }).then(res => res.data),
-  getStationYieldStats: (lineId = null) =>
-    api.get('/production/stats/station-yield', { params: { lineId } }).then(res => res.data),
-  getDefectPareto: (lineId = null, stationId = null) =>
-    api.get('/production/stats/defect-pareto', { params: { lineId, stationId } }).then(res => res.data),
+  getHourlyStats: (hours = 24, lineId = null, stationId = null, startDate = null, endDate = null) => 
+    api.get('/production/stats/hourly', { params: { hours, lineId, stationId, startDate, endDate } }).then(res => res.data),
+  getLineYieldStats: (lineId = null, startDate = null, endDate = null) =>
+    api.get('/production/stats/line-yield', { params: { lineId, startDate, endDate } }).then(res => res.data),
+  getStationYieldStats: (lineId = null, startDate = null, endDate = null) =>
+    api.get('/production/stats/station-yield', { params: { lineId, startDate, endDate } }).then(res => res.data),
+  getDefectPareto: (lineId = null, stationId = null, startDate = null, endDate = null) =>
+    api.get('/production/stats/defect-pareto', { params: { lineId, stationId, startDate, endDate } }).then(res => res.data),
   submitPcb: (data) => api.post('/production/submit', data).then(res => res.data),
   getExportCount: (lineId = null, stationId = null, searchPid = null, resultFilter = null, startDate = null, endDate = null) =>
     api.get('/production/export-count', { params: { lineId, stationId, searchPid, resultFilter, startDate, endDate } }).then(res => res.data),

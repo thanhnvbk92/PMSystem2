@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   Search, RefreshCw, Eye, ShieldCheck, 
-  X, FileSpreadsheet, Download, AlertTriangle, Calendar
+  X, FileSpreadsheet, Download, AlertTriangle, Calendar, Clock
 } from 'lucide-react';
 import { ProductionApi } from '../services/api';
 
@@ -16,17 +16,24 @@ export default function PcbSearch({ lines, stations, channels = [], onFilterChan
   const [isExportingServer, setIsExportingServer] = useState(false);
   const [exportWarningModal, setExportWarningModal] = useState(null);
 
-  // Server-side search results state
+  // Server-side search results state & search duration timer
   const [searchResults, setSearchResults] = useState([]);
   const [isSearching, setIsSearching] = useState(false);
+  const [searchExecutionTime, setSearchExecutionTime] = useState(null);
 
-  // Execute server-side search across full PostgreSQL database
+  const startDateInputRef = useRef(null);
+  const endDateInputRef = useRef(null);
+
+  // Execute server-side search across full PostgreSQL database with execution timer
   const executeSearch = async (lineId, stationId, pid, filter, start, end) => {
     setIsSearching(true);
+    const startTime = performance.now();
     try {
       const formattedStart = start ? new Date(start).toISOString() : null;
       const formattedEnd = end ? new Date(end).toISOString() : null;
       const data = await ProductionApi.getLatest(500, lineId, stationId, pid, filter, formattedStart, formattedEnd);
+      const endTime = performance.now();
+      setSearchExecutionTime((endTime - startTime).toFixed(1));
       setSearchResults(data || []);
     } catch (err) {
       console.error('Error executing PCB search:', err);
@@ -35,11 +42,16 @@ export default function PcbSearch({ lines, stations, channels = [], onFilterChan
     }
   };
 
-  useEffect(() => {
+  const handleManualSearch = () => {
     const lineId = selectedLine ? parseInt(selectedLine) : null;
     const stationId = selectedStation ? parseInt(selectedStation) : null;
     executeSearch(lineId, stationId, searchPid, resultFilter, startDate, endDate);
-  }, [selectedLine, selectedStation, searchPid, resultFilter, startDate, endDate]);
+  };
+
+  // Run search on initial component mount
+  useEffect(() => {
+    handleManualSearch();
+  }, []);
 
   const handleLineChange = (e) => {
     const val = e.target.value;
@@ -261,24 +273,38 @@ export default function PcbSearch({ lines, stations, channels = [], onFilterChan
       <div className="glass-panel p-6 w-full space-y-4">
         <div className="flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-4">
           
-          {/* PID Barcode Search Input */}
-          <div className="relative flex-1 min-w-[280px]">
-            <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
-            <input
-              type="text"
-              placeholder="Nhập mã vạch PCB (PID Barcode, ví dụ: PCB-9020...)..."
-              value={searchPid}
-              onChange={(e) => setSearchPid(e.target.value)}
-              className="w-full bg-slate-950/90 border border-slate-700/80 rounded-xl pl-10 pr-4 py-2.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 font-mono shadow-inner"
-            />
-            {searchPid && (
-              <button 
-                onClick={() => setSearchPid('')}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-white"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            )}
+          {/* PID Barcode Search Input & Search Button */}
+          <div className="flex items-center gap-2 flex-1 min-w-[320px]">
+            <div className="relative flex-1">
+              <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+              <input
+                type="text"
+                placeholder="Nhập mã vạch PCB (PID Barcode)... (Nhấn Enter hoặc bấm Tìm kiếm)"
+                value={searchPid}
+                onChange={(e) => setSearchPid(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && handleManualSearch()}
+                className="w-full bg-slate-950/90 border border-slate-700/80 rounded-xl pl-10 pr-8 py-2.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 font-mono shadow-inner"
+              />
+              {searchPid && (
+                <button 
+                  onClick={() => setSearchPid('')}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-white"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              )}
+            </div>
+
+            {/* Dedicated Search Action Button */}
+            <button
+              onClick={handleManualSearch}
+              disabled={isSearching}
+              className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white text-xs font-bold flex items-center gap-2 transition-all shadow-lg shadow-blue-600/30 font-sans disabled:opacity-50 whitespace-nowrap active:scale-95"
+              title="Bấm để kích hoạt tìm kiếm PCB trong cơ sở dữ liệu"
+            >
+              {isSearching ? <RefreshCw className="w-4 h-4 animate-spin text-white" /> : <Search className="w-4 h-4 text-white" />}
+              <span>Tìm kiếm</span>
+            </button>
           </div>
 
           <div className="flex flex-wrap items-center gap-3">
@@ -341,7 +367,7 @@ export default function PcbSearch({ lines, stations, channels = [], onFilterChan
                 onClick={exportToCsv}
                 disabled={searchResults.length === 0}
                 className="px-3.5 py-2.5 rounded-xl bg-emerald-950/60 hover:bg-emerald-900/80 text-emerald-300 border border-emerald-700/60 text-xs font-semibold flex items-center gap-2 transition-all disabled:opacity-50 disabled:cursor-not-allowed font-sans shadow-sm"
-                title="Xuất nhanh dữ liệu đang hiển thị ra file CSV (Bao gồm ID, Tên lỗi, IP, Máy, JobFile, Giờ test...)"
+                title="Xuất nhanh dữ liệu đang hiển thị ra file CSV"
               >
                 <FileSpreadsheet className="w-4 h-4 text-emerald-400" />
                 Xuất CSV ({searchResults.length})
@@ -351,7 +377,7 @@ export default function PcbSearch({ lines, stations, channels = [], onFilterChan
                 onClick={handleServerExportCsv}
                 disabled={isExportingServer}
                 className="px-3.5 py-2.5 rounded-xl bg-blue-950/60 hover:bg-blue-900/80 text-blue-300 border border-blue-700/60 text-xs font-semibold flex items-center gap-2 transition-all disabled:opacity-50 disabled:cursor-not-allowed font-sans shadow-sm"
-                title="Tải file báo cáo CSV đầy đủ từ Server PostgreSQL theo bộ lọc (tối đa 2.000 dòng)"
+                title="Tải file báo cáo CSV đầy đủ từ Server PostgreSQL"
               >
                 <Download className="w-4 h-4 text-blue-400" />
                 {isExportingServer ? 'Đang xuất...' : 'Tải CSV Server'}
@@ -371,7 +397,7 @@ export default function PcbSearch({ lines, stations, channels = [], onFilterChan
           </div>
         </div>
 
-        {/* DATE & TIME RANGE FILTER ROW */}
+        {/* DATE & TIME RANGE FILTER ROW WITH POPUP PICKER */}
         <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-slate-800/80">
           <div className="flex flex-wrap items-center gap-3">
             <div className="flex items-center gap-1.5 text-xs text-slate-400 font-sans font-medium">
@@ -379,26 +405,38 @@ export default function PcbSearch({ lines, stations, channels = [], onFilterChan
               <span>Khoảng thời gian:</span>
             </div>
 
-            {/* Start DateTime */}
-            <div className="flex items-center gap-1.5 bg-slate-950/90 border border-slate-700/80 rounded-xl px-3 py-1.5 text-xs text-white">
+            {/* Start DateTime Input Picker */}
+            <div 
+              onClick={() => startDateInputRef.current?.showPicker && startDateInputRef.current.showPicker()}
+              className="flex items-center gap-2 bg-slate-950/90 hover:bg-slate-900 border border-slate-700/80 rounded-xl px-3 py-1.5 text-xs text-white cursor-pointer transition-colors group"
+            >
               <span className="text-slate-400 text-[11px] font-sans">Từ:</span>
               <input
+                ref={startDateInputRef}
                 type="datetime-local"
                 value={startDate}
                 onChange={(e) => setStartDate(e.target.value)}
-                className="bg-transparent text-xs text-white focus:outline-none font-mono cursor-pointer"
+                onClick={(e) => e.target.showPicker && e.target.showPicker()}
+                className="bg-transparent text-xs text-white focus:outline-none font-mono cursor-pointer [color-scheme:dark]"
               />
+              <Calendar className="w-3.5 h-3.5 text-slate-500 group-hover:text-blue-400 transition-colors" />
             </div>
 
-            {/* End DateTime */}
-            <div className="flex items-center gap-1.5 bg-slate-950/90 border border-slate-700/80 rounded-xl px-3 py-1.5 text-xs text-white">
+            {/* End DateTime Input Picker */}
+            <div 
+              onClick={() => endDateInputRef.current?.showPicker && endDateInputRef.current.showPicker()}
+              className="flex items-center gap-2 bg-slate-950/90 hover:bg-slate-900 border border-slate-700/80 rounded-xl px-3 py-1.5 text-xs text-white cursor-pointer transition-colors group"
+            >
               <span className="text-slate-400 text-[11px] font-sans">Đến:</span>
               <input
+                ref={endDateInputRef}
                 type="datetime-local"
                 value={endDate}
                 onChange={(e) => setEndDate(e.target.value)}
-                className="bg-transparent text-xs text-white focus:outline-none font-mono cursor-pointer"
+                onClick={(e) => e.target.showPicker && e.target.showPicker()}
+                className="bg-transparent text-xs text-white focus:outline-none font-mono cursor-pointer [color-scheme:dark]"
               />
+              <Calendar className="w-3.5 h-3.5 text-slate-500 group-hover:text-blue-400 transition-colors" />
             </div>
 
             {/* Quick Presets */}
@@ -437,8 +475,8 @@ export default function PcbSearch({ lines, stations, channels = [], onFilterChan
           </div>
         </div>
 
-        {/* Quick Result Summary Badges */}
-        <div className="flex items-center justify-between text-xs font-mono pt-2 border-t border-slate-800/80">
+        {/* Quick Result Summary Badges & Search Duration Counter */}
+        <div className="flex flex-wrap items-center justify-between text-xs font-mono pt-2 border-t border-slate-800/80 gap-3">
           <div className="flex items-center gap-4">
             <span className="text-slate-400 font-sans">
               Kết quả từ CSDL PostgreSQL: <strong className="text-white font-mono">{searchResults.length}</strong> bản ghi {isSearching && <span className="text-blue-400 animate-pulse font-sans">(Đang truy vấn...)</span>}
@@ -446,6 +484,15 @@ export default function PcbSearch({ lines, stations, channels = [], onFilterChan
             <span className="text-emerald-400 font-semibold font-sans">● OK: {okCount}</span>
             <span className="text-rose-400 font-semibold font-sans">● NG: {ngCount}</span>
           </div>
+
+          {/* Search Timer Badge */}
+          {searchExecutionTime !== null && (
+            <div className="flex items-center gap-1.5 px-3 py-1 rounded-xl bg-blue-950/60 border border-blue-800/60 text-blue-300 text-xs font-mono shadow-sm" title="Thời gian xử lý truy vấn dữ liệu từ PostgreSQL Server">
+              <Clock className="w-3.5 h-3.5 text-blue-400" />
+              <span className="font-sans text-slate-400">Thời gian tìm kiếm:</span>
+              <strong className="text-white font-mono">{searchExecutionTime} ms</strong>
+            </div>
+          )}
         </div>
       </div>
 

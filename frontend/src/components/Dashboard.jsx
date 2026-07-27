@@ -19,6 +19,8 @@ export default function Dashboard({
   hourlyStats = [],
   lines = [],
   stations = [],
+  startDate,
+  endDate,
   onFilterChange
 }) {
   const [selectedTimeRange, setSelectedTimeRange] = useState('24h');
@@ -28,14 +30,33 @@ export default function Dashboard({
   const [stationYieldData, setStationYieldData] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
 
+  // Helper to get ISO date range based on quick range string
+  const calculateDateRange = (timeRangeKey) => {
+    if (!timeRangeKey || timeRangeKey === 'all') return { sDate: null, eDate: null };
+    const now = new Date();
+    let sDate = new Date();
+    if (timeRangeKey === ' shift' || timeRangeKey === '8h') {
+      sDate.setHours(now.getHours() - 8);
+    } else if (timeRangeKey === '24h' || timeRangeKey === 'today') {
+      sDate.setHours(now.getHours() - 24);
+    } else if (timeRangeKey === '7d' || timeRangeKey === 'week') {
+      sDate.setDate(now.getDate() - 7);
+    } else if (timeRangeKey === '30d' || timeRangeKey === 'month') {
+      sDate.setDate(now.getDate() - 30);
+    } else {
+      return { sDate: null, eDate: null };
+    }
+    return { sDate: sDate.toISOString(), eDate: now.toISOString() };
+  };
+
   // Load backend stats for Pareto, Line Yields & Station Yields
-  const fetchBackendData = async (lineId) => {
+  const fetchBackendData = async (lineId, sDate, eDate) => {
     setIsLoading(true);
     try {
       const [pareto, lineYields, stationYields] = await Promise.all([
-        ProductionApi.getDefectPareto(lineId || null, null),
-        ProductionApi.getLineYieldStats(lineId || null),
-        ProductionApi.getStationYieldStats(lineId || null)
+        ProductionApi.getDefectPareto(lineId || null, null, sDate || startDate, eDate || endDate),
+        ProductionApi.getLineYieldStats(lineId || null, sDate || startDate, eDate || endDate),
+        ProductionApi.getStationYieldStats(lineId || null, sDate || startDate, eDate || endDate)
       ]);
       setDefectParetoData(pareto || []);
       setLineYieldData(lineYields || []);
@@ -49,14 +70,23 @@ export default function Dashboard({
 
   useEffect(() => {
     const lId = selectedLineId ? parseInt(selectedLineId) : null;
-    fetchBackendData(lId);
-  }, [selectedLineId]);
+    fetchBackendData(lId, startDate, endDate);
+  }, [selectedLineId, startDate, endDate]);
+
+  const handleTimeRangeChange = (rangeKey) => {
+    setSelectedTimeRange(rangeKey);
+    const { sDate, eDate } = calculateDateRange(rangeKey);
+    const lId = selectedLineId ? parseInt(selectedLineId) : null;
+    if (onFilterChange) {
+      onFilterChange(lId, null, sDate, eDate);
+    }
+  };
 
   const handleLineSelect = (e) => {
     const val = e.target.value;
     setSelectedLineId(val);
     if (onFilterChange) {
-      onFilterChange(val ? parseInt(val) : null, null);
+      onFilterChange(val ? parseInt(val) : null, null, startDate, endDate);
     }
   };
 
@@ -163,8 +193,13 @@ export default function Dashboard({
     const raw = (stationYieldData && stationYieldData.length > 0) ? stationYieldData.map(s => {
       const total = s.total;
       const passRate = parseFloat(s.yieldRate.toFixed(1));
+      const stName = s.stationName || `Station ${s.stationId}`;
+      const lineName = s.lineName || (s.lineId ? `Line ${s.lineId}` : '');
+      const displayName = lineName ? `${stName} (${lineName})` : stName;
       return {
-        stationName: s.stationName || `Station ${s.stationId}`,
+        stationName: displayName,
+        rawStationName: stName,
+        lineName: lineName,
         Total: total,
         OK: s.ok,
         NG: s.ng,
@@ -179,8 +214,11 @@ export default function Dashboard({
   const stationRiskData = (stationYieldData && stationYieldData.length > 0) ? stationYieldData.map(s => {
     const risk = s.yieldRate >= 95 ? 'Low Risk' : (s.yieldRate >= 90 ? 'Medium Risk' : 'High Risk');
     const color = s.yieldRate >= 95 ? '#10b981' : (s.yieldRate >= 90 ? '#f59e0b' : '#3b82f6');
+    const stName = s.stationName || `Station ${s.stationId}`;
+    const lineName = s.lineName || (s.lineId ? `Line ${s.lineId}` : '');
+    const displayName = lineName ? `${stName} (${lineName})` : stName;
     return {
-      name: s.stationName,
+      name: displayName,
       x: s.total,
       y: s.ng,
       z: s.total,
@@ -201,7 +239,7 @@ export default function Dashboard({
             <span className="text-slate-400">Thời gian:</span>
             <select
               value={selectedTimeRange}
-              onChange={(e) => setSelectedTimeRange(e.target.value)}
+              onChange={(e) => handleTimeRangeChange(e.target.value)}
               className="bg-transparent text-white font-medium focus:outline-none cursor-pointer"
             >
               <option value="24h" className="bg-slate-900">24 giờ qua</option>
@@ -433,7 +471,7 @@ export default function Dashboard({
                     interval={0}
                     angle={-35}
                     textAnchor="end"
-                    height={35}
+                    height={45}
                   />
                   <YAxis yAxisId="left" stroke="#64748b" fontSize={10} tickLine={false} />
                   <YAxis yAxisId="right" orientation="right" stroke="#fb7185" fontSize={10} tickLine={false} unit="%" domain={[80, 100]} />

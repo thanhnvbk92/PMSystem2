@@ -130,35 +130,49 @@ namespace PMSystem2.Api.Controllers
         public async Task<ActionResult<List<HourlyStatDto>>> GetHourlyStats(
             [FromQuery] int hours = 24,
             [FromQuery] int? lineId = null,
-            [FromQuery] int? stationId = null)
+            [FromQuery] int? stationId = null,
+            [FromQuery] DateTime? startDate = null,
+            [FromQuery] DateTime? endDate = null)
         {
-            return Ok(await _pcbService.GetHourlyStatsAsync(hours, lineId, stationId));
+            return Ok(await _pcbService.GetHourlyStatsAsync(hours, lineId, stationId, startDate, endDate));
         }
 
         [HttpGet("stats/line-yield")]
-        public async Task<ActionResult<List<LineYieldStatDto>>> GetLineYieldStats([FromQuery] int? lineId = null)
+        public async Task<ActionResult<List<LineYieldStatDto>>> GetLineYieldStats(
+            [FromQuery] int? lineId = null,
+            [FromQuery] DateTime? startDate = null,
+            [FromQuery] DateTime? endDate = null)
         {
-            return Ok(await _pcbService.GetLineYieldStatsAsync(lineId));
+            return Ok(await _pcbService.GetLineYieldStatsAsync(lineId, startDate, endDate));
         }
 
         [HttpGet("stats/station-yield")]
-        public async Task<ActionResult<List<StationYieldStatDto>>> GetStationYieldStats([FromQuery] int? lineId = null)
+        public async Task<ActionResult<List<StationYieldStatDto>>> GetStationYieldStats(
+            [FromQuery] int? lineId = null,
+            [FromQuery] DateTime? startDate = null,
+            [FromQuery] DateTime? endDate = null)
         {
-            return Ok(await _pcbService.GetStationYieldStatsAsync(lineId));
+            return Ok(await _pcbService.GetStationYieldStatsAsync(lineId, startDate, endDate));
         }
 
         [HttpGet("stats/defect-pareto")]
         public async Task<ActionResult<List<DefectParetoStatDto>>> GetDefectPareto(
             [FromQuery] int? lineId = null,
-            [FromQuery] int? stationId = null)
+            [FromQuery] int? stationId = null,
+            [FromQuery] DateTime? startDate = null,
+            [FromQuery] DateTime? endDate = null)
         {
-            return Ok(await _pcbService.GetDefectParetoAsync(lineId, stationId));
+            return Ok(await _pcbService.GetDefectParetoAsync(lineId, stationId, startDate, endDate));
         }
 
         [HttpGet("summary")]
-        public async Task<ActionResult<ProductionSummaryDto>> GetSummary()
+        public async Task<ActionResult<ProductionSummaryDto>> GetSummary(
+            [FromQuery] int? lineId = null,
+            [FromQuery] int? stationId = null,
+            [FromQuery] DateTime? startDate = null,
+            [FromQuery] DateTime? endDate = null)
         {
-            return Ok(await _pcbService.GetSummaryAsync());
+            return Ok(await _pcbService.GetSummaryAsync(lineId, stationId, startDate, endDate));
         }
     }
 }
