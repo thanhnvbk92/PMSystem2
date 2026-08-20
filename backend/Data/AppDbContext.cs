@@ -20,6 +20,12 @@ namespace PMSystem2.Api.Data
         public DbSet<Device> Devices => Set<Device>();
         public DbSet<PcbResult> PcbResults => Set<PcbResult>();
         public DbSet<TestStep> TestSteps => Set<TestStep>();
+        public DbSet<CpkStepCatalog> CpkStepCatalog => Set<CpkStepCatalog>();
+        public DbSet<CpkResultCache> CpkResultCache => Set<CpkResultCache>();
+        public DbSet<RawCpk> RawCpk => Set<RawCpk>();
+        public DbSet<CpkResultHistory> CpkResultHistory => Set<CpkResultHistory>();
+        public DbSet<Improvement> Improvements => Set<Improvement>();
+        public DbSet<ImprovementAction> ImprovementActions => Set<ImprovementAction>();
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
@@ -94,6 +100,28 @@ namespace PMSystem2.Api.Data
                 .HasIndex(p => new { p.StationId, p.Pid, p.InspectTime, p.Result })
                 .IsUnique()
                 .HasDatabaseName("UX_pcb_results_station_pid_time_result");
+
+            modelBuilder.Entity<CpkStepCatalog>()
+                .HasIndex(s => new { s.StationId, s.JobFile, s.StepNumber, s.StepName })
+                .IsUnique()
+                .HasDatabaseName("UX_cpk_step_catalog_station_job_number_name");
+
+            modelBuilder.Entity<CpkResultCache>()
+                .HasIndex(c => new { c.ChannelId, c.JobFile, c.StepNumber, c.StepName, c.FromDate })
+                .IsUnique()
+                .HasDatabaseName("UX_cpk_result_cache_key");
+
+            modelBuilder.Entity<RawCpk>()
+                .HasIndex(r => new { r.CalculationDate, r.ChannelId, r.JobFile, r.StepNumber, r.StepName });
+
+            modelBuilder.Entity<CpkResultHistory>()
+                .HasIndex(r => new { r.CalculationDate, r.ChannelId, r.JobFile, r.StepNumber, r.StepName })
+                .IsUnique().HasDatabaseName("UX_cpk_result_history_daily");
+
+            modelBuilder.Entity<Improvement>().HasIndex(i => i.Code).IsUnique();
+            modelBuilder.Entity<ImprovementAction>()
+                .HasOne(a => a.Improvement).WithMany(i => i.Actions)
+                .HasForeignKey(a => a.ImprovementId).OnDelete(DeleteBehavior.Cascade);
         }
     }
 }

@@ -78,6 +78,39 @@ namespace PMSystem2.Api.Controllers
             });
         }
 
+        [HttpGet("cpk/steps")]
+        public async Task<ActionResult<List<CpkStepOptionDto>>> GetCpkSteps([FromQuery] int channelId)
+        {
+            if (channelId <= 0) return BadRequest(new { error = "channelId is required" });
+            return Ok(await _pcbService.GetCpkStepsAsync(channelId));
+        }
+
+        [HttpGet("cpk/station-steps")]
+        public async Task<ActionResult<List<CpkStepOptionDto>>> GetStationCpkSteps([FromQuery] int stationId)
+        {
+            if (stationId <= 0) return BadRequest(new { error = "stationId is required" });
+            return Ok(await _pcbService.GetStationCpkStepsAsync(stationId));
+        }
+
+        [HttpGet("cpk")]
+        public async Task<ActionResult<CpkAnalysisDto>> GetCpk(
+            [FromQuery] int channelId,
+            [FromQuery] int stepNumber,
+            [FromQuery] string stepName,
+            [FromQuery] string? jobFile = null,
+            [FromQuery] int limit = 50)
+        {
+            if (channelId <= 0 || string.IsNullOrWhiteSpace(stepName))
+                return BadRequest(new { error = "channelId and stepName are required" });
+            return Ok(await _pcbService.GetCpkAnalysisAsync(channelId, stepNumber, stepName, jobFile, limit));
+        }
+
+        [HttpGet("cpk/overview")]
+        public async Task<ActionResult<List<CpkCacheOverviewDto>>> GetCpkOverview()
+        {
+            return Ok(await _pcbService.GetCpkOverviewAsync());
+        }
+
         [HttpGet("latest")]
         public async Task<ActionResult<List<PcbResultDto>>> GetLatest(
             [FromQuery] int limit = 100,
@@ -174,6 +207,19 @@ namespace PMSystem2.Api.Controllers
         {
             return Ok(await _pcbService.GetSummaryAsync(lineId, stationId, startDate, endDate));
         }
+
+        [HttpGet("stats/bi-matrix")]
+        public async Task<ActionResult<BiAnalyticsMatrixDto>> GetBiMatrix(
+            [FromQuery] int? lineId = null,
+            [FromQuery] int? stationId = null,
+            [FromQuery] int? channelId = null,
+            [FromQuery] string? errorCode = null,
+            [FromQuery] string? jobFile = null,
+            [FromQuery] DateTime? startDate = null,
+            [FromQuery] DateTime? endDate = null,
+            [FromQuery] int hours = 24)
+        {
+            return Ok(await _pcbService.GetBiMatrixAsync(lineId, stationId, channelId, errorCode, jobFile, startDate, endDate, hours));
+        }
     }
 }
-

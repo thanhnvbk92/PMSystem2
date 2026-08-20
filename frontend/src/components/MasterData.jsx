@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import {
   Database, Plus, RefreshCw, Layers, Cpu, Radio, Building2, Pencil, Trash2, X, Search, Filter,
-  AlertTriangle, GitMerge, Box, Tag, Sliders, HardDrive, ArrowUpDown, ArrowUp, ArrowDown
+  AlertTriangle, GitMerge, Box, Tag, Sliders, HardDrive, ArrowUpDown, ArrowUp, ArrowDown, Gauge, Save
 } from 'lucide-react';
-import { MasterDataApi } from '../services/api';
+import { MasterDataApi, ProductionApi } from '../services/api';
 
 // --- Custom Hook for Multi-column Sort & Filtering ---
 function useTableSortAndFilter(data, initialSortKey = 'id', initialSortDir = 'asc') {
@@ -164,6 +164,41 @@ function TableToolbar({ tableState, totalCount, title }) {
   );
 }
 
+function CpkRuleRow({ station, onSave, saving }) {
+  const [steps, setSteps] = useState([]);
+  const [jobFile, setJobFile] = useState(station.cpkJobFile || '');
+  const [stepValue, setStepValue] = useState(station.cpkStepName ? `${station.cpkStepNumber}|${station.cpkStepName}` : '');
+  const [loadingSteps, setLoadingSteps] = useState(true);
+
+  useEffect(() => {
+    ProductionApi.getStationCpkSteps(station.id).then(setSteps).catch(() => setSteps([])).finally(() => setLoadingSteps(false));
+  }, [station.id]);
+  useEffect(() => {
+    setJobFile(station.cpkJobFile || '');
+    setStepValue(station.cpkStepName ? `${station.cpkStepNumber}|${station.cpkStepName}` : '');
+  }, [station.cpkStepNumber, station.cpkStepName, station.cpkJobFile]);
+
+  const jobFiles = useMemo(() => [...new Set(steps.map(s => s.jobFile || ''))].sort((a, b) => a.localeCompare(b, undefined, { numeric: true })), [steps]);
+  const filteredSteps = useMemo(() => steps.filter(s => (s.jobFile || '') === jobFile), [steps, jobFile]);
+
+  const save = () => {
+    const selected = filteredSteps.find(s => `${s.stepNumber}|${s.stepName}` === stepValue);
+    onSave(station.id, { ...station, cpkStepNumber: selected?.stepNumber ?? null, cpkStepName: selected?.stepName ?? '', cpkJobFile: selected?.jobFile ?? '' });
+  };
+  return <div className="grid md:grid-cols-[minmax(180px,1fr)_minmax(220px,1.2fr)_minmax(260px,1.5fr)_120px] gap-3 items-center p-4 rounded-xl border border-white/10 bg-slate-950/50">
+    <div><div className="font-bold text-sm">#{station.id} {station.name}</div><div className="text-[11px] text-slate-500">{station.lineName}</div></div>
+    <select value={jobFile} disabled={loadingSteps || saving} onChange={e => { setJobFile(e.target.value); setStepValue(''); }} className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2.5 text-xs text-white disabled:opacity-50">
+      <option value="">{loadingSteps ? '-- Đang tải Job File --' : '-- Chọn Job File --'}</option>
+      {jobFiles.filter(Boolean).map(item => <option key={item} value={item}>{item}</option>)}
+    </select>
+    <select value={stepValue} disabled={!jobFile || loadingSteps || saving} onChange={e => setStepValue(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2.5 text-xs text-white disabled:opacity-50">
+      <option value="">-- Chọn Step CPK --</option>
+      {filteredSteps.map(s => <option key={`${s.stepNumber}|${s.stepName}`} value={`${s.stepNumber}|${s.stepName}`}>#{s.stepNumber} - {s.stepName}</option>)}
+    </select>
+    <button onClick={save} disabled={saving || loadingSteps || !jobFile || !stepValue} className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-fuchsia-600 hover:bg-fuchsia-500 disabled:opacity-50 text-white text-xs font-bold"><Save className="w-3.5 h-3.5"/>Lưu</button>
+  </div>;
+}
+
 export default function MasterData({
   buyers = [],
   modelGroups = [],
@@ -231,6 +266,7 @@ export default function MasterData({
   const [editModal, setEditModal] = useState(null);
   const [loading, setLoading] = useState(false);
 
+
   // --- HANDLERS ---
   const handleAction = async (actionFn) => {
     setLoading(true);
@@ -272,12 +308,12 @@ export default function MasterData({
 
   // STATION
   const handleCreateStation = (e) => { e.preventDefault(); if (!stationForm.name || !stationForm.lineId) return; handleAction(async () => { await MasterDataApi.createStation({ lineId: parseInt(stationForm.lineId), modelGroupId: stationForm.modelGroupId ? parseInt(stationForm.modelGroupId) : null, stationTypeId: stationForm.stationTypeId ? parseInt(stationForm.stationTypeId) : null, name: stationForm.name, remark: stationForm.remark }); setStationForm({ lineId: '', modelGroupId: '', stationTypeId: '', name: '', remark: '' }); }); };
-  const handleUpdateStation = (id, data) => handleAction(async () => { await MasterDataApi.updateStation(id, { lineId: parseInt(data.lineId), modelGroupId: data.modelGroupId ? parseInt(data.modelGroupId) : null, stationTypeId: data.stationTypeId ? parseInt(data.stationTypeId) : null, name: data.name, remark: data.remark }); });
+  const handleUpdateStation = (id, data) => handleAction(async () => { await MasterDataApi.updateStation(id, { lineId: parseInt(data.lineId), modelGroupId: data.modelGroupId ? parseInt(data.modelGroupId) : null, stationTypeId: data.stationTypeId ? parseInt(data.stationTypeId) : null, name: data.name, processInfo: data.processInfo, remark: data.remark, cpkStepNumber: data.cpkStepNumber ? parseInt(data.cpkStepNumber) : null, cpkStepName: data.cpkStepName || '', cpkJobFile: data.cpkJobFile || '' }); });
   const handleDeleteStation = (id, name) => { if (window.confirm(`Xóa Station "${name}"?`)) handleAction(async () => { await MasterDataApi.deleteStation(id); }); };
 
   // CHANNEL
   const handleCreateChannel = (e) => { e.preventDefault(); if (!channelForm.name || !channelForm.stationId) return; handleAction(async () => { await MasterDataApi.createChannel({ stationId: parseInt(channelForm.stationId), name: channelForm.name, machinePartNo: channelForm.machinePartNo, gmesName: channelForm.gmesName, ipAddress: channelForm.ipAddress, macAddress: channelForm.macAddress }); setChannelForm({ lineId: '', stationId: '', name: '', machinePartNo: '', gmesName: '', ipAddress: '', macAddress: '' }); }); };
-  const handleUpdateChannel = (id, data) => handleAction(async () => { await MasterDataApi.updateChannel(id, { stationId: parseInt(data.stationId), name: data.name, machinePartNo: data.machinePartNo, gmesName: data.gmesName, ipAddress: data.ipAddress, macAddress: data.macAddress, status: data.status }); });
+  const handleUpdateChannel = (id, data) => handleAction(async () => { await MasterDataApi.updateChannel(id, { stationId: parseInt(data.stationId), name: data.name, machinePartNo: data.machinePartNo, gmesName: data.gmesName, ipAddress: data.ipAddress, macAddress: data.macAddress, status: data.status, remark: data.remark }); });
   const handleDeleteChannel = (id, name) => { if (window.confirm(`Xóa Channel "${name}"?`)) handleAction(async () => { await MasterDataApi.deleteChannel(id); }); };
 
   // DEVICE TYPE
@@ -318,6 +354,7 @@ export default function MasterData({
         {[
           { id: 'lines', label: 'Production Lines', icon: Layers, count: localLines.length },
           { id: 'stations', label: 'Stations', icon: Cpu, count: localStations.length },
+          { id: 'cpk-rules', label: 'CPK Rules', icon: Gauge, count: localStations.filter(s => s.cpkStepName).length },
           { id: 'channels', label: 'Channels', icon: Radio, count: localChannels.length, conflict: ipConflicts.length },
           { id: 'model-groups', label: 'Model Groups', icon: Box, count: localModelGroups.length },
           { id: 'models', label: 'Models', icon: Tag, count: localModels.length },
@@ -980,6 +1017,24 @@ export default function MasterData({
         </div>
       )}
 
+      {/* CPK RULES - Station-level configuration */}
+      {activeSubTab === 'cpk-rules' && (
+        <div className="space-y-6">
+          <div className="glass-panel p-6 border border-fuchsia-500/20 rounded-2xl">
+            <div className="flex items-center gap-3 mb-2"><Gauge className="w-5 h-5 text-fuchsia-400"/><h3 className="text-base font-bold">Cấu hình Step CPK theo Station</h3></div>
+            <p className="text-xs text-slate-400">Mỗi Station chọn một Step. Quy tắc này áp dụng chung cho toàn bộ Channel thuộc Station.</p>
+          </div>
+          {localLines.map(line => {
+            const lineStations = localStations.filter(s => String(s.lineId) === String(line.id));
+            if (!lineStations.length) return null;
+            return <section key={line.id} className="glass-panel p-5 border border-white/10 rounded-2xl space-y-3">
+              <div className="flex items-center gap-3 pb-2 border-b border-white/10"><Layers className="w-4 h-4 text-blue-400"/><h4 className="font-bold">{line.name}</h4><span className="text-[11px] text-slate-500">{lineStations.length} Station</span></div>
+              {lineStations.map(station => <CpkRuleRow key={station.id} station={station} saving={loading} onSave={handleUpdateStation}/>) }
+            </section>;
+          })}
+        </div>
+      )}
+
       {/* 7. DEVICE TYPES */}
       {activeSubTab === 'device-types' && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -1297,9 +1352,27 @@ export default function MasterData({
               {editModal.entityType === 'channel' && (
                 <>
                   <div>
+                    <label className="block text-xs font-semibold text-slate-300 mb-1 uppercase tracking-wider">Chọn Chuyền (Line)</label>
+                    <select
+                      required
+                      value={editModal.item.lineId || ''}
+                      onChange={e => setEditModal({
+                        ...editModal,
+                        item: { ...editModal.item, lineId: e.target.value, stationId: '' }
+                      })}
+                      className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-blue-500"
+                    >
+                      <option value="">-- Chọn Line --</option>
+                      {localLines.map(line => <option key={line.id} value={line.id}>{line.name}</option>)}
+                    </select>
+                  </div>
+                  <div>
                     <label className="block text-xs font-semibold text-slate-300 mb-1 uppercase tracking-wider">Chọn Trạm (Station)</label>
-                    <select required value={editModal.item.stationId || ''} onChange={e => setEditModal({ ...editModal, item: { ...editModal.item, stationId: e.target.value } })} className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-blue-500">
-                      {localStations.map(s => <option key={s.id} value={s.id}>{s.name} ({s.lineName})</option>)}
+                    <select required disabled={!editModal.item.lineId} value={editModal.item.stationId || ''} onChange={e => setEditModal({ ...editModal, item: { ...editModal.item, stationId: e.target.value } })} className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-blue-500 disabled:opacity-50 disabled:cursor-not-allowed">
+                      <option value="">-- Chọn Station --</option>
+                      {localStations
+                        .filter(s => String(s.lineId) === String(editModal.item.lineId))
+                        .map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
                     </select>
                   </div>
                   <div>

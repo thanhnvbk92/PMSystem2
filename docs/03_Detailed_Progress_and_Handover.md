@@ -181,3 +181,52 @@ docs/
 ├── 02_Development_Plan_and_Architecture.md       # Kiến trúc bộ nhớ đệm, SignalR & Roadmap
 └── 03_Detailed_Progress_and_Handover.md         # Báo cáo tiến độ chi tiết & Bàn giao AI
 ```
+
+---
+
+## 5. Cập nhật hệ thống ngày 20/08/2026
+
+### 5.1 Theo dõi cải tiến giảm lỗi FCT
+
+- Bổ sung trang **Cải Tiến Giảm Lỗi**, sử dụng trực tiếp dữ liệu `pcb_results` để đo hiệu quả.
+- Hiển thị Top 5 lỗi theo tuần hoặc tháng, kèm Line và Station có số lỗi lớn nhất để chọn đúng mục tiêu cải tiến.
+- Mỗi cải tiến lưu phạm vi mã lỗi, Line, Station, kỳ đo trước/sau, mục tiêu giảm lỗi, người phụ trách, mô tả vấn đề và nguyên nhân gốc.
+- Theo dõi danh sách hành động, người phụ trách, hạn hoàn thành, trạng thái và số hành động quá hạn.
+- Cho phép sửa toàn bộ nội dung cải tiến, ngoại trừ mã lỗi FCT, Line và Station đã chọn ban đầu.
+- API tạo/cập nhật trả kết quả ngay sau khi lưu; truy vấn đo dữ liệu được thực hiện ở bước tải chi tiết để tránh modal bị treo khi dữ liệu FCT lớn.
+
+### 5.2 Biểu đồ hiệu quả cải tiến
+
+- Mỗi cải tiến có biểu đồ trend tỷ lệ lỗi: `Số PCB có mã lỗi / Tổng PCB trong phạm vi × 100%`.
+- Cho phép chọn khoảng **Từ ngày – Đến ngày**, giới hạn tối đa 730 ngày mỗi truy vấn.
+- Hỗ trợ tổng hợp theo ngày, tuần và tháng. Tỷ lệ kỳ được tính từ tổng lỗi/tổng sản lượng, không lấy trung bình tỷ lệ ngày.
+- Nhãn thời gian: ngày ở dạng `dd/MM`, tuần ở dạng `W1, W2, ...`, tháng ở dạng `Jan, Feb, ...`.
+- Hiển thị mốc bắt đầu theo dõi, hành động đã hoàn thành và hạn hành động trực tiếp trên biểu đồ.
+
+### 5.3 Dashboard, Analytics và hiệu năng
+
+- Dashboard khi chọn hôm nay chỉ hiển thị các mốc giờ trong ngày hiện tại.
+- Analytics hỗ trợ chọn thời gian thực tế, click cột thời gian để lọc toàn bộ biểu đồ theo khoảng đã chọn và hiển thị tên Job File đầy đủ qua tooltip.
+- Khi lọc mã lỗi, đường tỷ lệ trên các biểu đồ thể hiện **tỷ lệ lỗi trên tổng sản lượng**, thay cho Pass Rate.
+- Bổ sung thời gian tải từng nhóm dữ liệu trên giao diện để nhận diện truy vấn chậm.
+- Tối ưu truy vấn BI/Analytics và bổ sung covering index `idx_pcb_results_analytics_cover` cho dữ liệu FCT lớn.
+- Giảm kích thước connection pool PostgreSQL; log trước đó từng ghi nhận lỗi `53300: too many clients already`.
+
+### 5.4 SignalR và xử lý dữ liệu thời gian thực
+
+- Bổ sung cơ chế tự kết nối lại SignalR và cập nhật aggregate theo batch để Dashboard tiếp tục nhảy số real-time.
+- Các khoảng thời gian tương lai từ timestamp máy được loại khỏi truy vấn 24 giờ gần nhất.
+- Đồng bộ CPK catalog được tách/tối ưu để hạn chế timeout và cạnh tranh connection với Dashboard/Analytics.
+
+### 5.5 Kiểm tra đã thực hiện
+
+- `dotnet build --no-restore -c Release`: thành công, không có warning/error.
+- `npm run build`: thành công.
+- `npm run lint`: chạy thành công; còn một số cảnh báo unused import và React hook đã tồn tại ở các component cũ.
+- API trend đã được kiểm tra thực tế theo ngày, tuần và tháng trên PostgreSQL.
+
+### 5.6 Cấu hình kết nối an toàn
+
+- Repository không lưu mật khẩu PostgreSQL thật trong `backend/appsettings.json`.
+- Trên máy chạy backend, cấu hình chuỗi kết nối bằng biến môi trường `ConnectionStrings__DefaultConnection`.
+- Các giới hạn connection pool được áp dụng bằng code trong `Program.cs`, kể cả khi chuỗi kết nối được cấp qua biến môi trường.

@@ -118,6 +118,114 @@ namespace PMSystem2.Api.Models
         public PcbResult? PcbResult { get; set; }
     }
 
+    [Table("cpk_step_catalog")]
+    public class CpkStepCatalog
+    {
+        [Key]
+        [Column("id")]
+        public long Id { get; set; }
+
+        [Column("station_id")]
+        public int StationId { get; set; }
+
+        [Column("step_number")]
+        public int StepNumber { get; set; }
+
+        [Required, MaxLength(100)]
+        [Column("step_name")]
+        public string StepName { get; set; } = string.Empty;
+
+        [MaxLength(50)]
+        [Column("step_type")]
+        public string? StepType { get; set; }
+
+        [MaxLength(100)]
+        [Column("job_file")]
+        public string JobFile { get; set; } = string.Empty;
+
+        [Column("updated_at")]
+        public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
+    }
+
+    [Table("cpk_result_cache")]
+    public class CpkResultCache
+    {
+        [Key, Column("id")]
+        public long Id { get; set; }
+        [Column("channel_id")]
+        public int ChannelId { get; set; }
+        [MaxLength(100), Column("job_file")]
+        public string JobFile { get; set; } = string.Empty;
+        [Column("step_number")]
+        public int StepNumber { get; set; }
+        [MaxLength(100), Column("step_name")]
+        public string StepName { get; set; } = string.Empty;
+        [Column("from_date")]
+        public DateTime FromDate { get; set; }
+        [Column("sample_count")]
+        public int SampleCount { get; set; }
+        [Column("spec_min")]
+        public double? SpecMin { get; set; }
+        [Column("spec_max")]
+        public double? SpecMax { get; set; }
+        [Column("mean")]
+        public double? Mean { get; set; }
+        [Column("standard_deviation")]
+        public double? StandardDeviation { get; set; }
+        [Column("cpl")]
+        public double? Cpl { get; set; }
+        [Column("cpu")]
+        public double? Cpu { get; set; }
+        [Column("cpk")]
+        public double? Cpk { get; set; }
+        [Column("points_json", TypeName = "jsonb")]
+        public string PointsJson { get; set; } = "[]";
+        [Column("calculated_at")]
+        public DateTime CalculatedAt { get; set; } = DateTime.UtcNow;
+    }
+
+    [Table("raw_cpk")]
+    public class RawCpk
+    {
+        [Key, Column("id")] public long Id { get; set; }
+        [Column("calculation_date")] public DateOnly CalculationDate { get; set; }
+        [Column("station_id")] public int StationId { get; set; }
+        [Column("channel_id")] public int ChannelId { get; set; }
+        [MaxLength(100), Column("job_file")] public string JobFile { get; set; } = string.Empty;
+        [Column("step_number")] public int StepNumber { get; set; }
+        [MaxLength(100), Column("step_name")] public string StepName { get; set; } = string.Empty;
+        [MaxLength(100), Column("pid")] public string? Pid { get; set; }
+        [Column("value")] public double Value { get; set; }
+        [Column("spec_min")] public double SpecMin { get; set; }
+        [Column("spec_max")] public double SpecMax { get; set; }
+        [Column("inspect_time")] public DateTime InspectTime { get; set; }
+        [Column("refreshed_at")] public DateTime RefreshedAt { get; set; } = DateTime.UtcNow;
+    }
+
+    [Table("cpk_result_history")]
+    public class CpkResultHistory
+    {
+        [Key, Column("id")] public long Id { get; set; }
+        [Column("calculation_date")] public DateOnly CalculationDate { get; set; }
+        [Column("station_id")] public int StationId { get; set; }
+        [Column("channel_id")] public int ChannelId { get; set; }
+        [MaxLength(100), Column("job_file")] public string JobFile { get; set; } = string.Empty;
+        [Column("step_number")] public int StepNumber { get; set; }
+        [MaxLength(100), Column("step_name")] public string StepName { get; set; } = string.Empty;
+        [Column("period_start")] public DateTime PeriodStart { get; set; }
+        [Column("period_end")] public DateTime PeriodEnd { get; set; }
+        [Column("sample_count")] public int SampleCount { get; set; }
+        [Column("spec_min")] public double? SpecMin { get; set; }
+        [Column("spec_max")] public double? SpecMax { get; set; }
+        [Column("mean")] public double? Mean { get; set; }
+        [Column("standard_deviation")] public double? StandardDeviation { get; set; }
+        [Column("cpl")] public double? Cpl { get; set; }
+        [Column("cpu")] public double? Cpu { get; set; }
+        [Column("cpk")] public double? Cpk { get; set; }
+        [MaxLength(30), Column("status")] public string Status { get; set; } = "INSUFFICIENT_DATA";
+        [Column("calculated_at")] public DateTime CalculatedAt { get; set; } = DateTime.UtcNow;
+    }
+
     // Ingestion Request DTOs
     public class TestStepInputDto
     {
@@ -304,6 +412,66 @@ namespace PMSystem2.Api.Models
         long Ng,
         double YieldRate
     );
+
+    public record ChannelYieldStatDto(
+        int ChannelId,
+        string ChannelName,
+        string IpAddress,
+        int StationId,
+        string StationName,
+        int LineId,
+        string LineName,
+        long Total,
+        long Ok,
+        long Ng,
+        double YieldRate
+    );
+
+    public record JobFileYieldStatDto(
+        string JobFile,
+        long Total,
+        long Ok,
+        long Ng,
+        double YieldRate
+    );
+
+    public record BiAnalyticsMatrixDto(
+        long TotalInspected,
+        long TotalOk,
+        long TotalNg,
+        double OverallYieldRate,
+        List<HourlyStatDto> TimeTrend,
+        List<LineYieldStatDto> LineStats,
+        List<StationYieldStatDto> StationStats,
+        List<ChannelYieldStatDto> MachineStats,
+        List<DefectParetoStatDto> DefectStats,
+        List<JobFileYieldStatDto> JobFileStats
+    );
+
+    public record CpkStepOptionDto(int StepNumber, string StepName, string? StepType, string JobFile);
+
+    public record CpkPointDto(string Pid, DateTime InspectTime, double Value);
+
+    public record CpkAnalysisDto(
+        int ChannelId,
+        int StepNumber,
+        string StepName,
+        DateTime FromDate,
+        int SampleCount,
+        double? SpecMin,
+        double? SpecMax,
+        double? Mean,
+        double? StandardDeviation,
+        double? Cpl,
+        double? Cpu,
+        double? Cpk,
+        List<CpkPointDto> Points
+    );
+
+    public record CpkCacheOverviewDto(
+        int ChannelId, string JobFile, int StepNumber, string StepName,
+        int SampleCount, double? SpecMin, double? SpecMax, double? Mean,
+        double? StandardDeviation, double? Cpl, double? Cpu, double? Cpk,
+        DateTime CalculatedAt
+    );
 }
-
-

@@ -1,8 +1,11 @@
 using Microsoft.AspNetCore.SignalR;
+using System.Collections.Concurrent;
 using System.Text.Json.Serialization;
 
 namespace PMSystem2.Api.Hubs
 {
+    public record CommandClientConnection(string ConnectionId, string? MacAddress, int? ChannelId, DateTime ConnectedAt);
+
     public class CommandEnvelope
     {
         [JsonPropertyName("command_id")]
@@ -91,6 +94,7 @@ namespace PMSystem2.Api.Hubs
     {
         Task ReceiveCommand(CommandEnvelope command);
         Task ChangeModel(string modelName);
+        Task UpdateApp(bool force, string? updateXmlPath);
         Task RestartApp(int delayMs);
         Task ExecuteCommandAction(string action, object? data);
         Task NotifyMasterDataUpdated(string entityType);
@@ -98,6 +102,23 @@ namespace PMSystem2.Api.Hubs
 
     public class CommandHub : Hub<ICommandClient>
     {
+        private static readonly ConcurrentDictionary<string, CommandClientConnection> Connections = new();
+        private static readonly ConcurrentDictionary<string, CommandReport> CommandReports = new();
+
+        public static IReadOnlyList<CommandClientConnection> GetConnectedClients() => Connections.Values.ToList();
+        public static CommandReport? GetCommandReport(string commandId) =>
+            CommandReports.TryGetValue(commandId, out var report) ? report : null;
+
+        public static List<string> GetConnectionIds(IEnumerable<int> channelIds)
+        {
+            var ids = channelIds.Where(id => id > 0).ToHashSet();
+            return Connections.Values
+                .Where(client => client.ChannelId.HasValue && ids.Contains(client.ChannelId.Value))
+                .Select(client => client.ConnectionId)
+                .Distinct()
+                .ToList();
+        }
+
         private readonly IHubContext<ProductionHub, IProductionClient> _productionHubContext;
         private readonly ILogger<CommandHub> _logger;
 
@@ -114,6 +135,15 @@ namespace PMSystem2.Api.Hubs
             var channelIdStr = httpContext?.Request.Query["channel_id"].ToString();
             var stationIdStr = httpContext?.Request.Query["station_id"].ToString();
             var lineIdStr = httpContext?.Request.Query["line_id"].ToString();
+
+            int? connectedChannelId = int.TryParse(channelIdStr, out var parsedChannelId) && parsedChannelId > 0
+                ? parsedChannelId
+                : null;
+            Connections[Context.ConnectionId] = new CommandClientConnection(
+                Context.ConnectionId,
+                string.IsNullOrWhiteSpace(macAddress) ? null : macAddress,
+                connectedChannelId,
+                DateTime.UtcNow);
 
             _logger.LogInformation("[CommandHub] Client connected: ConnectionId={ConnectionId}, MAC={Mac}, ChannelId={ChannelId}",
                 Context.ConnectionId, macAddress, channelIdStr);
@@ -155,6 +185,7 @@ namespace PMSystem2.Api.Hubs
 
         public override async Task OnDisconnectedAsync(Exception? exception)
         {
+            Connections.TryRemove(Context.ConnectionId, out _);
             var httpContext = Context.GetHttpContext();
             var macAddress = httpContext?.Request.Query["mac_address"].ToString();
             var channelIdStr = httpContext?.Request.Query["channel_id"].ToString();
@@ -175,6 +206,11 @@ namespace PMSystem2.Api.Hubs
 
         public async Task RegisterMachineGroup(string macAddress, int? channelId = null, int? lineId = null, int? stationId = null)
         {
+            Connections[Context.ConnectionId] = new CommandClientConnection(
+                Context.ConnectionId,
+                string.IsNullOrWhiteSpace(macAddress) ? null : macAddress,
+                channelId is > 0 ? channelId : null,
+                DateTime.UtcNow);
             if (!string.IsNullOrWhiteSpace(macAddress))
             {
                 var macGroup = $"MAC_{macAddress.Replace(":", "").Replace("-", "").ToUpperInvariant()}";
@@ -199,11 +235,17 @@ namespace PMSystem2.Api.Hubs
             _logger.LogInformation("[CommandHub] Machine registered groups for ConnectionId={ConnectionId}", Context.ConnectionId);
         }
 
-        public Task ReportCommandStatus(CommandReport report)
+        public async Task ReportCommandStatus(CommandReport report)
         {
+            if (!string.IsNullOrWhiteSpace(report.CommandId))
+            {
+                CommandReports[report.CommandId] = report;
+            }
             _logger.LogInformation("[CommandHub] Status report received for Command={CommandId}: Status={Status}, Progress={Progress}%, Error={Error}",
                 report.CommandId, report.Status, report.Progress, report.Error);
-            return Task.CompletedTask;
+
+            // Forward command status report to Web Dashboard via ProductionHub
+            await _productionHubContext.Clients.All.ReceiveCommandStatus(report);
         }
 
         public async Task SendMachineAlert(MachineAlertDto alert)

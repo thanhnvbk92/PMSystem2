@@ -372,8 +372,9 @@ namespace PMSystem2.Api.Controllers
 
             if (targetChannelId.HasValue && targetChannelId.Value > 0)
             {
-                var channels = await _masterDataService.GetChannelsAsync();
-                var ch = channels.FirstOrDefault(c => c.Id == targetChannelId.Value);
+                // Heartbeat is a high-frequency endpoint. Query only the target
+                // Channel instead of loading the complete Channel hierarchy.
+                var ch = await _masterDataService.GetChannelAsync(targetChannelId.Value);
                 if (ch != null)
                 {
                     if (!string.IsNullOrWhiteSpace(reqMac))
@@ -430,11 +431,7 @@ namespace PMSystem2.Api.Controllers
         {
             if (string.IsNullOrWhiteSpace(macAddress)) return Ok(new { exists = false });
 
-            var channels = await _masterDataService.GetChannelsAsync();
-            var ch = channels.FirstOrDefault(c => 
-                (c.MacAddress != null && !string.IsNullOrWhiteSpace(macAddress) && c.MacAddress.Equals(macAddress, StringComparison.OrdinalIgnoreCase)) ||
-                (c.IpAddress != null && !string.IsNullOrWhiteSpace(macAddress) && c.IpAddress.Equals(macAddress, StringComparison.OrdinalIgnoreCase)) ||
-                (c.Name != null && !string.IsNullOrWhiteSpace(macAddress) && c.Name.Contains(macAddress, StringComparison.OrdinalIgnoreCase)));
+            var ch = await _masterDataService.FindChannelAsync(macAddress);
 
             if (ch != null)
             {
@@ -479,12 +476,9 @@ namespace PMSystem2.Api.Controllers
                 targetIp = string.IsNullOrWhiteSpace(targetIp) ? "127.0.0.1" : targetIp.Trim();
                 var targetMac = (req.MacAddress ?? req.Mac_Address)?.Trim();
 
-                var existingChannels = await _masterDataService.GetChannelsAsync();
-
                 if (targetIp != "127.0.0.1")
                 {
-                    var matchedChannel = existingChannels.FirstOrDefault(c => 
-                        c.IpAddress != null && c.IpAddress.Equals(targetIp, StringComparison.OrdinalIgnoreCase));
+                    var matchedChannel = await _masterDataService.FindChannelAsync(targetIp);
 
                     if (matchedChannel != null)
                     {

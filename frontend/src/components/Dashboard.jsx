@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { memo, useState, useEffect, useMemo, useRef } from 'react';
 import {
   Activity, CheckCircle, XCircle, TrendingUp, Radio,
   Sparkles, ShieldCheck, Clock, BarChart3,
@@ -8,59 +8,101 @@ import {
 } from 'lucide-react';
 import {
   AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer,
-  CartesianGrid, BarChart, Bar, LineChart, Line, PieChart, Pie, Cell,
-  Legend, ScatterChart, Scatter, ZAxis, ComposedChart
+  CartesianGrid, Bar, Line, PieChart, Pie, Cell, ComposedChart
 } from 'recharts';
 import { ProductionApi } from '../services/api';
 
-export default function Dashboard({
+const FrozenChart = memo(
+  function FrozenChart({ children }) { return children; },
+  (previous, next) => previous.version === next.version
+);
+
+const compactNumberFormatter = new Intl.NumberFormat('vi-VN', {
+  notation: 'compact',
+  maximumFractionDigits: 1,
+});
+
+function Dashboard({
   summary,
-  latestLogs,
   hourlyStats = [],
   lines = [],
   stations = [],
   startDate,
   endDate,
-  onFilterChange
+  onFilterChange,
+  productionLoadInfo
 }) {
-  const [selectedTimeRange, setSelectedTimeRange] = useState('24h');
+  const [selectedTimeRange, setSelectedTimeRange] = useState('today');
   const [selectedLineId, setSelectedLineId] = useState('');
-  const [defectParetoData, setDefectParetoData] = useState([]);
   const [lineYieldData, setLineYieldData] = useState([]);
   const [stationYieldData, setStationYieldData] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [chartLoadInfo, setChartLoadInfo] = useState({ durationMs: null, requests: {} });
+  const latestHourlyStatsRef = useRef(hourlyStats);
+  const latestSummaryRef = useRef(summary);
+  const forceNextChartUpdateRef = useRef(true);
+  const [chartHourlyStats, setChartHourlyStats] = useState(hourlyStats);
+  const [chartSummary, setChartSummary] = useState(summary);
+
+  useEffect(() => {
+    latestSummaryRef.current = summary;
+  }, [summary]);
+
+  useEffect(() => {
+    latestHourlyStatsRef.current = hourlyStats;
+    if (forceNextChartUpdateRef.current && hourlyStats !== chartHourlyStats) {
+      setChartHourlyStats(hourlyStats);
+      setChartSummary(latestSummaryRef.current);
+      forceNextChartUpdateRef.current = false;
+    }
+  }, [hourlyStats, chartHourlyStats]);
 
   // Helper to get ISO date range based on quick range string
   const calculateDateRange = (timeRangeKey) => {
     if (!timeRangeKey || timeRangeKey === 'all') return { sDate: null, eDate: null };
     const now = new Date();
-    let sDate = new Date();
-    if (timeRangeKey === ' shift' || timeRangeKey === '8h') {
-      sDate.setHours(now.getHours() - 8);
-    } else if (timeRangeKey === '24h' || timeRangeKey === 'today') {
-      sDate.setHours(now.getHours() - 24);
-    } else if (timeRangeKey === '7d' || timeRangeKey === 'week') {
-      sDate.setDate(now.getDate() - 7);
-    } else if (timeRangeKey === '30d' || timeRangeKey === 'month') {
-      sDate.setDate(now.getDate() - 30);
+    let sDate;
+    if (timeRangeKey === 'today') {
+      sDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    } else if (timeRangeKey === 'week') {
+      const daysSinceMonday = (now.getDay() + 6) % 7;
+      sDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() - daysSinceMonday);
+    } else if (timeRangeKey === 'month') {
+      sDate = new Date(now.getFullYear(), now.getMonth(), 1);
+    } else if (timeRangeKey === 'year') {
+      sDate = new Date(now.getFullYear(), 0, 1);
     } else {
       return { sDate: null, eDate: null };
     }
     return { sDate: sDate.toISOString(), eDate: now.toISOString() };
   };
 
-  // Load backend stats for Pareto, Line Yields & Station Yields
+  // Load backend stats used by the remaining line and station charts.
   const fetchBackendData = async (lineId, sDate, eDate) => {
     setIsLoading(true);
+    const loadStarted = performance.now();
     try {
-      const [pareto, lineYields, stationYields] = await Promise.all([
-        ProductionApi.getDefectPareto(lineId || null, null, sDate || startDate, eDate || endDate),
-        ProductionApi.getLineYieldStats(lineId || null, sDate || startDate, eDate || endDate),
-        ProductionApi.getStationYieldStats(lineId || null, sDate || startDate, eDate || endDate)
+      const timed = async (name, request) => { const started = performance.now(); const data = await request(); return { name, data, durationMs: performance.now() - started }; };
+      const results = await Promise.all([
+        timed('station', () => ProductionApi.getStationYieldStats(lineId || null, sDate || startDate, eDate || endDate))
       ]);
-      setDefectParetoData(pareto || []);
+      const byName = Object.fromEntries(results.map(x => [x.name, x]));
+      const stationYields = byName.station.data;
+      const lineMap = new Map();
+      (stationYields || []).forEach(station => {
+        const key = station.lineId || 0;
+        const current = lineMap.get(key) || { lineId: key, lineName: station.lineName || `Line ${key}`, total: 0, ok: 0, ng: 0 };
+        current.total += station.total || 0;
+        current.ok += station.ok || 0;
+        current.ng += station.ng || 0;
+        lineMap.set(key, current);
+      });
+      const lineYields = [...lineMap.values()].map(line => ({ ...line,
+        yieldRate: line.total > 0 ? line.ok / line.total * 100 : 0 }));
       setLineYieldData(lineYields || []);
       setStationYieldData(stationYields || []);
+      setChartLoadInfo({ durationMs: performance.now() - loadStarted,
+        requests: Object.fromEntries(results.map(x => [x.name, x.durationMs])) });
     } catch (err) {
       console.error('Failed to fetch dashboard data:', err);
     } finally {
@@ -73,7 +115,17 @@ export default function Dashboard({
     fetchBackendData(lId, startDate, endDate);
   }, [selectedLineId, startDate, endDate]);
 
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      setChartHourlyStats(latestHourlyStatsRef.current);
+      setChartSummary(latestSummaryRef.current);
+      fetchBackendData(selectedLineId ? parseInt(selectedLineId) : null, startDate, endDate);
+    }, 5 * 60 * 1000);
+    return () => window.clearInterval(timer);
+  }, [selectedLineId, startDate, endDate]);
+
   const handleTimeRangeChange = (rangeKey) => {
+    forceNextChartUpdateRef.current = true;
     setSelectedTimeRange(rangeKey);
     const { sDate, eDate } = calculateDateRange(rangeKey);
     const lId = selectedLineId ? parseInt(selectedLineId) : null;
@@ -82,7 +134,15 @@ export default function Dashboard({
     }
   };
 
+  useEffect(() => {
+    if (startDate || endDate || !onFilterChange) return;
+    const { sDate, eDate } = calculateDateRange('today');
+    const lId = selectedLineId ? parseInt(selectedLineId) : null;
+    onFilterChange(lId, null, sDate, eDate);
+  }, []);
+
   const handleLineSelect = (e) => {
+    forceNextChartUpdateRef.current = true;
     const val = e.target.value;
     setSelectedLineId(val);
     if (onFilterChange) {
@@ -99,41 +159,49 @@ export default function Dashboard({
     : (totalInspected > 0 ? (totalOk / totalInspected) * 100 : 0);
   const passPct = totalInspected > 0 ? ((totalOk / totalInspected) * 100).toFixed(1) : '0.0';
   const defectPct = totalInspected > 0 ? ((totalNg / totalInspected) * 100).toFixed(1) : '0.0';
+  const chartYieldRate = chartSummary?.overallYieldRate ?? yieldRate;
 
   // 1. Time-series data formatted automatically per selectedTimeRange
   const getTimeSeriesData = () => {
-    if (!hourlyStats || hourlyStats.length === 0) return [];
+    if (!chartHourlyStats || chartHourlyStats.length === 0) return [];
 
-    const hourlyMap = {};
-    hourlyStats.forEach(stat => {
-      let timeLabel = '';
-      if (typeof stat.bucket === 'string' && stat.bucket.length > 5) {
-        const d = new Date(stat.bucket);
-        if (!isNaN(d.getTime())) {
-          timeLabel = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-        }
-      } else if (stat.bucket) {
-        timeLabel = stat.bucket.toString();
+    const periodMap = new Map();
+    chartHourlyStats.forEach(stat => {
+      const date = new Date(stat.bucket);
+      if (Number.isNaN(date.getTime())) return;
+      if (selectedTimeRange === 'today') {
+        const now = new Date();
+        if (date.getFullYear() !== now.getFullYear()
+          || date.getMonth() !== now.getMonth()
+          || date.getDate() !== now.getDate()) return;
       }
-
-      if (timeLabel) {
-        if (!hourlyMap[timeLabel]) {
-          hourlyMap[timeLabel] = { ok: 0, ng: 0, total: 0 };
-        }
-        hourlyMap[timeLabel].ok += (stat.okCount || 0);
-        hourlyMap[timeLabel].ng += (stat.ngCount || 0);
-        hourlyMap[timeLabel].total += (stat.total || ((stat.okCount || 0) + (stat.ngCount || 0)));
+      let key;
+      let label;
+      if (selectedTimeRange === 'today') {
+        key = new Date(date.getFullYear(), date.getMonth(), date.getDate(), date.getHours()).getTime();
+        label = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      } else if (selectedTimeRange === 'year') {
+        key = new Date(date.getFullYear(), date.getMonth(), 1).getTime();
+        label = `T${date.getMonth() + 1}`;
+      } else {
+        key = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+        label = date.toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit' });
       }
+      if (!periodMap.has(key)) periodMap.set(key, { label, ok: 0, ng: 0, total: 0 });
+      const bucket = periodMap.get(key);
+      bucket.ok += stat.okCount || 0;
+      bucket.ng += stat.ngCount || 0;
+      bucket.total += stat.totalCount || stat.total || ((stat.okCount || 0) + (stat.ngCount || 0));
     });
 
-    const formatted = Object.keys(hourlyMap).map(timeKey => {
-      const ok = hourlyMap[timeKey].ok;
-      const ng = hourlyMap[timeKey].ng;
-      const total = hourlyMap[timeKey].total;
+    const formatted = [...periodMap.entries()].sort((a, b) => a[0] - b[0]).map(([, period]) => {
+      const ok = period.ok;
+      const ng = period.ng;
+      const total = period.total;
       const yieldRate = total > 0 ? parseFloat(((ok / total) * 100).toFixed(1)) : 0;
       const defectRate = total > 0 ? parseFloat(((ng / total) * 100).toFixed(2)) : 0;
       return {
-        time: timeKey,
+        time: period.label,
         OK: ok,
         NG: ng,
         Total: total,
@@ -147,25 +215,11 @@ export default function Dashboard({
 
   const timeSeriesData = getTimeSeriesData();
 
-  // 2. Defect Category / Cost Breakdown Data
-  const defectCategories = (defectParetoData && defectParetoData.length > 0) ? defectParetoData.map(d => ({
-    name: d.code || 'Lỗi chưa xác định',
-    count: d.count,
-    cost: `$${(d.count * 12).toLocaleString()}`
-  })) : [];
-
   // 3. Quality Compliance Score Donut Data
-  const donutData = [
-    { name: 'Đạt Chuẩn (Pass)', value: parseFloat(yieldRate.toFixed(1)), color: '#8b5cf6' },
-    { name: 'Phát Sinh Lỗi (Defect)', value: parseFloat((100 - yieldRate).toFixed(1)), color: '#334155' }
-  ];
-
-  // 4. Line Performance Breakdown Data
-  const linePerformanceData = (lineYieldData && lineYieldData.length > 0) ? lineYieldData.map(l => ({
-    lineName: l.lineName,
-    Pass: parseFloat(l.yieldRate.toFixed(1)),
-    Defect: parseFloat((100 - l.yieldRate).toFixed(1))
-  })) : [];
+  const donutData = useMemo(() => [
+    { name: 'Đạt Chuẩn (Pass)', value: parseFloat(chartYieldRate.toFixed(1)), color: '#8b5cf6' },
+    { name: 'Phát Sinh Lỗi (Defect)', value: parseFloat((100 - chartYieldRate).toFixed(1)), color: '#334155' }
+  ], [chartYieldRate]);
 
   // 4b. Line Production Volume & Pass Rate Data (Sorted Ascending)
   const lineVolumePassData = (() => {
@@ -210,23 +264,6 @@ export default function Dashboard({
     return [...raw].sort((a, b) => a.Yield - b.Yield).slice(0, 10);
   })();
 
-  // 5. Workplace / Station Risk Areas Matrix (Real Data)
-  const stationRiskData = (stationYieldData && stationYieldData.length > 0) ? stationYieldData.map(s => {
-    const risk = s.yieldRate >= 95 ? 'Low Risk' : (s.yieldRate >= 90 ? 'Medium Risk' : 'High Risk');
-    const color = s.yieldRate >= 95 ? '#10b981' : (s.yieldRate >= 90 ? '#f59e0b' : '#3b82f6');
-    const stName = s.stationName || `Station ${s.stationId}`;
-    const lineName = s.lineName || (s.lineId ? `Line ${s.lineId}` : '');
-    const displayName = lineName ? `${stName} (${lineName})` : stName;
-    return {
-      name: displayName,
-      x: s.total,
-      y: s.ng,
-      z: s.total,
-      risk: risk,
-      color: color
-    };
-  }) : [];
-
   return (
     <div className="space-y-7 w-full animate-in fade-in duration-300 font-sans pb-8">
 
@@ -242,9 +279,10 @@ export default function Dashboard({
               onChange={(e) => handleTimeRangeChange(e.target.value)}
               className="bg-transparent text-white font-medium focus:outline-none cursor-pointer"
             >
-              <option value="24h" className="bg-slate-900">24 giờ qua</option>
-              <option value="7d" className="bg-slate-900">7 ngày qua</option>
-              <option value="30d" className="bg-slate-900">Tháng này</option>
+              <option value="today" className="bg-slate-900">Hôm nay</option>
+              <option value="week" className="bg-slate-900">Tuần này</option>
+              <option value="month" className="bg-slate-900">Tháng này</option>
+              <option value="year" className="bg-slate-900">Năm nay</option>
             </select>
           </div>
 
@@ -261,12 +299,20 @@ export default function Dashboard({
           </select>
 
           <button
-            onClick={() => fetchBackendData(selectedLineId ? parseInt(selectedLineId) : null)}
+            onClick={() => {
+              setChartHourlyStats(latestHourlyStatsRef.current);
+              setChartSummary(latestSummaryRef.current);
+              fetchBackendData(selectedLineId ? parseInt(selectedLineId) : null, startDate, endDate);
+            }}
             className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors"
             title="Tải lại dữ liệu"
           >
             <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin text-purple-400' : ''}`} />
           </button>
+        </div>
+        <div className="flex flex-wrap items-center gap-2 text-[10px] font-mono">
+          <LoadTimeBadge loading={productionLoadInfo?.loading} label="Tổng quan" value={productionLoadInfo?.durationMs} details={productionLoadInfo?.requests} />
+          <LoadTimeBadge loading={isLoading} label="Line/Station" value={chartLoadInfo.durationMs} details={chartLoadInfo.requests} />
         </div>
       </div>
 
@@ -283,7 +329,7 @@ export default function Dashboard({
             <span className="text-xs font-semibold text-slate-400 font-display">Tổng Sản Lượng Kiểm Tra</span>
             <div className="mt-3">
               <span className="text-3xl font-extrabold text-white font-mono tracking-tight">
-                {totalInspected >= 1000 ? (totalInspected / 1000).toFixed(1) + 'k' : totalInspected.toLocaleString()}
+                {compactNumberFormatter.format(totalInspected)}
               </span>
               <div className="flex items-center gap-2 mt-2 text-[11px] font-mono">
                 <span className="text-emerald-400 font-semibold">Tự động</span>
@@ -338,16 +384,36 @@ export default function Dashboard({
             <div className="absolute bottom-0 left-0 right-0 h-1 bg-indigo-500"></div>
           </div>
 
-          {/* Card 5: Quality Inspection Funnel (Incident Types Pyramid representation) */}
-          <div className="glass-panel p-4 flex flex-col justify-between space-y-2">
-            <span className="text-xs font-semibold text-slate-400 font-display text-center">Inspection Hierarchy</span>
-
-            <div className="space-y-1.5 pt-1">
-              <div className="w-full bg-purple-500/90 py-1 text-center rounded text-[10px] font-bold text-white shadow">
-                Pass OK ({passPct}%)
-              </div>
-              <div className="w-[85%] mx-auto bg-indigo-500/80 py-1 text-center rounded text-[10px] font-bold text-white shadow">
-                Fail NG ({defectPct}%)
+          {/* Card 5: Quality Compliance Score */}
+          <div className="glass-panel p-4 flex flex-col justify-between">
+            <span className="text-xs font-semibold text-slate-400 font-display text-center">
+              Chỉ Số Tuân Thủ Chất Lượng
+            </span>
+            <div className="h-24 w-full relative flex items-center justify-center">
+              <FrozenChart version={chartSummary}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie
+                      data={donutData}
+                      cx="50%"
+                      cy="50%"
+                      innerRadius={28}
+                      outerRadius={40}
+                      startAngle={90}
+                      endAngle={-270}
+                      dataKey="value"
+                    >
+                      {donutData.map((entry, index) => (
+                        <Cell key={`cell-${index}`} fill={entry.color} stroke="none" />
+                      ))}
+                    </Pie>
+                  </PieChart>
+                </ResponsiveContainer>
+              </FrozenChart>
+              <div className="absolute inset-0 flex items-center justify-center">
+                <span className="text-xl font-extrabold text-purple-300 font-mono tracking-tight">
+                  {chartYieldRate.toFixed(0)}%
+                </span>
               </div>
             </div>
           </div>
@@ -376,6 +442,7 @@ export default function Dashboard({
             </div>
 
             <div className="h-56 w-full pt-2">
+              <FrozenChart version={chartHourlyStats}>
               <ResponsiveContainer width="100%" height="100%">
                 <ComposedChart data={timeSeriesData} margin={{ top: 10, right: 10, left: -20, bottom: 15 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
@@ -387,7 +454,7 @@ export default function Dashboard({
                     angle={-35}
                     textAnchor="end"
                     height={35}
-                    interval={selectedTimeRange === '24h' ? 1 : 0}
+                    interval={selectedTimeRange === 'today' ? 1 : 0}
                   />
                   <YAxis yAxisId="left" stroke="#64748b" fontSize={10} tickLine={false} />
                   <YAxis yAxisId="right" orientation="right" stroke="#34d399" fontSize={10} tickLine={false} unit="%" domain={[80, 100]} />
@@ -402,6 +469,7 @@ export default function Dashboard({
                   <Line yAxisId="right" type="monotone" dataKey="Yield" name="Tỉ lệ Pass (%)" stroke="#34d399" strokeWidth={2.5} dot={{ r: 3, fill: '#34d399' }} />
                 </ComposedChart>
               </ResponsiveContainer>
+              </FrozenChart>
             </div>
           </div>
 
@@ -418,6 +486,7 @@ export default function Dashboard({
             </div>
 
             <div className="h-56 w-full pt-2">
+              <FrozenChart version={lineYieldData}>
               <ResponsiveContainer width="100%" height="100%">
                 <ComposedChart data={lineVolumePassData} margin={{ top: 10, right: 10, left: -15, bottom: 15 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
@@ -444,6 +513,7 @@ export default function Dashboard({
                   <Line yAxisId="right" type="monotone" dataKey="Yield" name="Tỉ lệ Pass (%)" stroke="#c084fc" strokeWidth={2.5} dot={{ r: 4, fill: '#c084fc' }} />
                 </ComposedChart>
               </ResponsiveContainer>
+              </FrozenChart>
             </div>
           </div>
 
@@ -460,6 +530,7 @@ export default function Dashboard({
             </div>
 
             <div className="h-56 w-full pt-2">
+              <FrozenChart version={stationYieldData}>
               <ResponsiveContainer width="100%" height="100%">
                 <ComposedChart data={stationVolumePassData} margin={{ top: 10, right: 10, left: -15, bottom: 15 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
@@ -486,113 +557,7 @@ export default function Dashboard({
                   <Line yAxisId="right" type="monotone" dataKey="Yield" name="Tỉ lệ Pass (%)" stroke="#fb7185" strokeWidth={2.5} dot={{ r: 4, fill: '#fb7185' }} />
                 </ComposedChart>
               </ResponsiveContainer>
-            </div>
-          </div>
-
-        </div>
-      </div>
-
-      {/* SECTION 3: SAFETY TRAININGS AND COMPLIANCE (3 CHARTS ROW) */}
-      <div className="space-y-3">
-        <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400 font-display">
-          Safety Trainings, Quality &amp; Compliance
-        </h3>
-
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
-
-          {/* Chart 1: Compliance Score Donut Chart */}
-          <div className="glass-panel p-5 space-y-3 flex flex-col justify-between">
-            <h4 className="text-xs font-bold text-white uppercase tracking-wider font-display text-center">
-              Chỉ Số Tuân Thủ Chất Lượng (Compliance Score)
-            </h4>
-
-            <div className="h-52 w-full relative flex items-center justify-center">
-              <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                  <Pie
-                    data={donutData}
-                    cx="50%"
-                    cy="50%"
-                    innerRadius={60}
-                    outerRadius={80}
-                    startAngle={90}
-                    endAngle={-270}
-                    dataKey="value"
-                  >
-                    {donutData.map((entry, index) => (
-                      <Cell key={`cell-${index}`} fill={entry.color} stroke="none" />
-                    ))}
-                  </Pie>
-                </PieChart>
-              </ResponsiveContainer>
-
-              {/* Centered Donut Percentage */}
-              <div className="absolute inset-0 flex flex-col items-center justify-center">
-                <span className="text-3xl font-extrabold text-purple-300 font-mono tracking-tight">
-                  {yieldRate.toFixed(0)}%
-                </span>
-                <span className="text-[10px] text-slate-400 font-sans uppercase">Score</span>
-              </div>
-            </div>
-          </div>
-
-          {/* Chart 2: Safety Training Participation / Line-by-Line Quality Performance */}
-          <div className="glass-panel p-5 space-y-3">
-            <div className="flex justify-between items-center">
-              <h4 className="text-xs font-bold text-white uppercase tracking-wider font-display">
-                Hiệu Suất Chất Lượng Theo Dây Chuyền
-              </h4>
-              <div className="flex items-center gap-2 text-[10px] font-mono">
-                <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-400"></span> Pass</span>
-                <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-slate-600"></span> Defect</span>
-              </div>
-            </div>
-
-            <div className="h-52 w-full pt-1">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={linePerformanceData} layout="vertical" margin={{ top: 5, right: 10, left: 10, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
-                  <XAxis type="number" stroke="#64748b" fontSize={10} tickLine={false} domain={[80, 100]} />
-                  <YAxis type="category" dataKey="lineName" stroke="#64748b" fontSize={10} tickLine={false} width={60} />
-                  <Tooltip contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '12px', fontSize: '11px' }} />
-                  <Bar dataKey="Pass" fill="#34d399" stackId="a" radius={[0, 4, 4, 0]} />
-                  <Bar dataKey="Defect" fill="#475569" stackId="a" radius={[0, 4, 4, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          </div>
-
-          {/* Chart 3: Workplace Risk Areas Matrix (Scatter plot) */}
-          <div className="glass-panel p-5 space-y-3">
-            <div className="flex justify-between items-center">
-              <h4 className="text-xs font-bold text-white uppercase tracking-wider font-display">
-                Bản Đồ Rủi Ro Các Trạm (Workplace Risk Areas)
-              </h4>
-              <div className="flex items-center gap-2 text-[9px] font-mono">
-                <span className="text-emerald-400">Low</span>
-                <span className="text-amber-400">Medium</span>
-                <span className="text-blue-400">High Risk</span>
-              </div>
-            </div>
-
-            <div className="h-52 w-full pt-1">
-              <ResponsiveContainer width="100%" height="100%">
-                <ScatterChart margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
-                  <XAxis type="number" dataKey="x" name="Tần suất Lỗi" stroke="#64748b" fontSize={10} tickLine={false} />
-                  <YAxis type="number" dataKey="y" name="Mức Độ Rủi Ro" stroke="#64748b" fontSize={10} tickLine={false} />
-                  <ZAxis type="number" dataKey="z" range={[60, 300]} name="Sản lượng ảnh hưởng" />
-                  <Tooltip
-                    cursor={{ strokeDasharray: '3 3' }}
-                    contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '12px', fontSize: '11px' }}
-                  />
-                  <Scatter data={stationRiskData} fill="#8884d8">
-                    {stationRiskData.map((entry, index) => (
-                      <Cell key={`cell-${index}`} fill={entry.color} />
-                    ))}
-                  </Scatter>
-                </ScatterChart>
-              </ResponsiveContainer>
+              </FrozenChart>
             </div>
           </div>
 
@@ -602,3 +567,13 @@ export default function Dashboard({
     </div>
   );
 }
+
+function LoadTimeBadge({ loading, label, value, details = {} }) {
+  const detailText = Object.entries(details).map(([key, ms]) => `${key}: ${(ms / 1000).toFixed(2)}s`).join(' · ');
+  return <span title={detailText || undefined} className={`rounded-lg border px-2.5 py-1.5 ${loading ? 'border-amber-500/30 bg-amber-500/10 text-amber-300' : 'border-slate-700 bg-slate-900/70 text-slate-400'}`}>
+    <Clock className={`mr-1 inline h-3 w-3 ${loading ? 'animate-pulse' : ''}`} />
+    {label}: {loading ? 'đang tải...' : value == null ? '—' : `${(value / 1000).toFixed(2)}s`}
+  </span>;
+}
+
+export default memo(Dashboard);

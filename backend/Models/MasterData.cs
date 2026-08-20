@@ -144,6 +144,17 @@ namespace PMSystem2.Api.Models
         [Column("process_info")]
         public string? ProcessInfo { get; set; }
 
+        [Column("cpk_step_number")]
+        public int? CpkStepNumber { get; set; }
+
+        [MaxLength(100)]
+        [Column("cpk_step_name")]
+        public string? CpkStepName { get; set; }
+
+        [MaxLength(100)]
+        [Column("cpk_job_file")]
+        public string? CpkJobFile { get; set; }
+
         [Column("remark")]
         public string? Remark { get; set; }
 
@@ -192,6 +203,13 @@ namespace PMSystem2.Api.Models
         [MaxLength(100)]
         [Column("gmes_name")]
         public string? GmesName { get; set; }
+
+        [Column("cpk_step_number")]
+        public int? CpkStepNumber { get; set; }
+
+        [MaxLength(100)]
+        [Column("cpk_step_name")]
+        public string? CpkStepName { get; set; }
 
         [MaxLength(20)]
         [Column("status")]
@@ -289,8 +307,8 @@ namespace PMSystem2.Api.Models
     public record ModelItemDto(int Id, int? ModelGroupId, string? ModelGroupName, string Name, string? Remark);
     public record StationTypeDto(int Id, string Name, string? Remark);
     public record LineDto(int Id, string Name, string? Remark);
-    public record StationDto(int Id, int LineId, string LineName, int? ModelGroupId, string? ModelGroupName, int? StationTypeId, string? StationTypeName, string Name, string? ProcessInfo, string? Remark);
-    public record ChannelDto(int Id, int StationId, string StationName, int LineId, string LineName, string Name, string? MachinePartNo, string? IpAddress, string? MacAddress, string? GmesName, string Status, string? Remark);
+    public record StationDto(int Id, int LineId, string LineName, int? ModelGroupId, string? ModelGroupName, int? StationTypeId, string? StationTypeName, string Name, string? ProcessInfo, string? Remark, int? CpkStepNumber, string? CpkStepName, string? CpkJobFile);
+    public record ChannelDto(int Id, int StationId, string StationName, int LineId, string LineName, string Name, string? MachinePartNo, string? IpAddress, string? MacAddress, string? GmesName, string Status, string? Remark, int? CpkStepNumber, string? CpkStepName);
     public record DeviceTypeDto(int Id, string Name, string? Remark);
     public record DeviceDto(int Id, int ChannelId, string ChannelName, int? DeviceTypeId, string? DeviceTypeName, string Name, string? ModelPartNo, string? SerialNumber, string Status, DateTime? CalibrationDate, DateTime? CalibrationDueDate, string? CalibrationStatus, string? Remark);
 
@@ -300,11 +318,11 @@ namespace PMSystem2.Api.Models
     public record CreateLineRequest(string Name, string? Remark);
     public record UpdateLineRequest(string Name, string? Remark);
 
-    public record CreateStationRequest(int LineId, int? ModelGroupId, int? StationTypeId, string Name, string? ProcessInfo = null, string? Remark = null);
-    public record UpdateStationRequest(int LineId, int? ModelGroupId, int? StationTypeId, string Name, string? ProcessInfo = null, string? Remark = null);
+    public record CreateStationRequest(int LineId, int? ModelGroupId, int? StationTypeId, string Name, string? ProcessInfo = null, string? Remark = null, int? CpkStepNumber = null, string? CpkStepName = null, string? CpkJobFile = null);
+    public record UpdateStationRequest(int LineId, int? ModelGroupId, int? StationTypeId, string Name, string? ProcessInfo = null, string? Remark = null, int? CpkStepNumber = null, string? CpkStepName = null, string? CpkJobFile = null);
 
-    public record CreateChannelRequest(int StationId, string Name, string? MachinePartNo = null, string? IpAddress = null, string? MacAddress = null, string? GmesName = null, string? Remark = null);
-    public record UpdateChannelRequest(int StationId, string Name, string? MachinePartNo = null, string? IpAddress = null, string? MacAddress = null, string? GmesName = null, string? Status = null, string? Remark = null);
+    public record CreateChannelRequest(int StationId, string Name, string? MachinePartNo = null, string? IpAddress = null, string? MacAddress = null, string? GmesName = null, string? Remark = null, int? CpkStepNumber = null, string? CpkStepName = null);
+    public record UpdateChannelRequest(int StationId, string Name, string? MachinePartNo = null, string? IpAddress = null, string? MacAddress = null, string? GmesName = null, string? Status = null, string? Remark = null, int? CpkStepNumber = null, string? CpkStepName = null);
 
     public record CreateModelGroupRequest(int? BuyerId, string Name, string? Remark);
     public record UpdateModelGroupRequest(int? BuyerId, string Name, string? Remark);

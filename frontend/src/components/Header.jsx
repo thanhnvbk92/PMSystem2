@@ -1,5 +1,5 @@
 import React from 'react';
-import { Activity, Database, BarChart3, Search, RefreshCw, Radio, Terminal } from 'lucide-react';
+import { Activity, Database, BarChart3, Search, RefreshCw, Radio, Terminal, Gauge, ClipboardCheck } from 'lucide-react';
 
 export default function Header({ activeTab, onRefresh, summaryData }) {
   const getTabDetails = () => {
@@ -17,6 +17,20 @@ export default function Header({ activeTab, onRefresh, summaryData }) {
           subtitle: 'Tìm kiếm theo mã vạch PID Barcode, lọc trạng thái OK/NG và tra cứu chi tiết từng bước kiểm tra',
           icon: Search,
           color: 'text-emerald-400',
+        };
+      case 'cpk':
+        return {
+          title: 'Theo Dõi Năng Lực Quá Trình (CPK)',
+          subtitle: 'Theo dõi CPK theo Channel và Step từ 50 PCB OK gần nhất tính từ đầu tháng',
+          icon: Gauge,
+          color: 'text-fuchsia-400',
+        };
+      case 'improvements':
+        return {
+          title: 'Cải Tiến Giảm Lỗi',
+          subtitle: 'Theo dõi hành động và đo hiệu quả trực tiếp từ tỷ lệ lỗi trong dữ liệu FCT',
+          icon: ClipboardCheck,
+          color: 'text-cyan-400',
         };
       case 'master':
         return {
@@ -65,6 +79,7 @@ export default function Header({ activeTab, onRefresh, summaryData }) {
 
       {/* Top Header Actions & Badges */}
       <div className="flex items-center gap-3 relative z-10">
+        <div id="analytics-header-actions" className="flex items-center gap-2" />
         {summaryData && (
           <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-950/70 border border-white/10 text-xs font-mono text-slate-300">
             <Radio className="w-3.5 h-3.5 text-blue-400 animate-pulse" />

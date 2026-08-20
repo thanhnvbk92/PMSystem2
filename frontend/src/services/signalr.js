@@ -4,9 +4,65 @@ const SIGNALR_HOST = typeof window !== 'undefined' ? window.location.hostname : 
 const HUB_URL = `http://${SIGNALR_HOST}:5000/hubs/production`;
 
 let connection = null;
+let retryTimer = null;
+let startPromise = null;
+const callbacks = { pcb: null, stats: null, delta: null, state: null };
 
-export const initSignalR = (onPcbResultReceived, onStatsReceived, onStateChange) => {
-  if (connection) return connection;
+const listeners = {
+  ReceiveCommandStatus: new Set(),
+  ReceiveMachineStatusChanged: new Set(),
+  ReceiveMachineAlert: new Set(),
+};
+
+export const onCommandStatus = (callback) => {
+  listeners.ReceiveCommandStatus.add(callback);
+  return () => listeners.ReceiveCommandStatus.delete(callback);
+};
+
+export const onMachineStatusChanged = (callback) => {
+  listeners.ReceiveMachineStatusChanged.add(callback);
+  return () => listeners.ReceiveMachineStatusChanged.delete(callback);
+};
+
+export const onMachineAlert = (callback) => {
+  listeners.ReceiveMachineAlert.add(callback);
+  return () => listeners.ReceiveMachineAlert.delete(callback);
+};
+
+const scheduleStart = () => {
+  if (retryTimer) return;
+  retryTimer = window.setTimeout(() => {
+    retryTimer = null;
+    startConnection();
+  }, 3000);
+};
+
+const startConnection = () => {
+  if (!connection || connection.state !== signalR.HubConnectionState.Disconnected || startPromise) return startPromise;
+  callbacks.state?.(signalR.HubConnectionState.Connecting);
+  startPromise = connection.start()
+    .then(() => {
+      console.log('SignalR Hub Connected successfully.');
+      callbacks.state?.(signalR.HubConnectionState.Connected);
+    })
+    .catch((err) => {
+      console.error('SignalR Connection Error:', err);
+      callbacks.state?.(signalR.HubConnectionState.Disconnected);
+      scheduleStart();
+    })
+    .finally(() => { startPromise = null; });
+  return startPromise;
+};
+
+export const initSignalR = (onPcbResultReceived, onStatsReceived, onStateChange, onProductionDelta) => {
+  callbacks.pcb = onPcbResultReceived;
+  callbacks.stats = onStatsReceived;
+  callbacks.state = onStateChange;
+  callbacks.delta = onProductionDelta;
+  if (connection) {
+    startConnection();
+    return connection;
+  }
 
   connection = new signalR.HubConnectionBuilder()
     .withUrl(HUB_URL, {
@@ -18,35 +74,41 @@ export const initSignalR = (onPcbResultReceived, onStatsReceived, onStateChange)
     .build();
 
   connection.onreconnecting(() => {
-    if (onStateChange) onStateChange(signalR.HubConnectionState.Reconnecting);
+    callbacks.state?.(signalR.HubConnectionState.Reconnecting);
   });
 
   connection.onreconnected(() => {
-    if (onStateChange) onStateChange(signalR.HubConnectionState.Connected);
+    callbacks.state?.(signalR.HubConnectionState.Connected);
   });
 
   connection.onclose(() => {
-    if (onStateChange) onStateChange(signalR.HubConnectionState.Disconnected);
+    callbacks.state?.(signalR.HubConnectionState.Disconnected);
+    scheduleStart();
   });
 
   connection.on('ReceivePcbResult', (result) => {
-    if (onPcbResultReceived) onPcbResultReceived(result);
+    callbacks.pcb?.(result);
   });
 
   connection.on('ReceiveStatsUpdate', (stat) => {
-    if (onStatsReceived) onStatsReceived(stat);
+    callbacks.stats?.(stat);
   });
 
-  connection
-    .start()
-    .then(() => {
-      console.log('SignalR Hub Connected successfully.');
-      if (onStateChange) onStateChange(signalR.HubConnectionState.Connected);
-    })
-    .catch((err) => {
-      console.error('SignalR Connection Error:', err);
-      if (onStateChange) onStateChange(signalR.HubConnectionState.Disconnected);
-    });
+  connection.on('ReceiveProductionDelta', (delta) => callbacks.delta?.(delta));
+
+  connection.on('ReceiveCommandStatus', (report) => {
+    listeners.ReceiveCommandStatus.forEach((cb) => cb(report));
+  });
+
+  connection.on('ReceiveMachineStatusChanged', (status) => {
+    listeners.ReceiveMachineStatusChanged.forEach((cb) => cb(status));
+  });
+
+  connection.on('ReceiveMachineAlert', (alert) => {
+    listeners.ReceiveMachineAlert.forEach((cb) => cb(alert));
+  });
+
+  startConnection();
 
   return connection;
 };

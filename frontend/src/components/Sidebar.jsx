@@ -1,7 +1,6 @@
 import React from 'react';
 import {
   Activity,
-  Cpu,
   Database,
   AlertCircle,
   ChevronLeft,
@@ -10,6 +9,7 @@ import {
   Search,
   Layers,
   Terminal
+  ,Gauge, ClipboardCheck
 } from 'lucide-react';
 import * as signalR from '@microsoft/signalr';
 
@@ -74,6 +74,22 @@ export default function Sidebar({
       activeBg: 'from-emerald-600 to-teal-600',
     },
     {
+      id: 'cpk',
+      label: 'Theo Dõi CPK',
+      category: 'QUALITY',
+      icon: Gauge,
+      color: 'text-fuchsia-400',
+      activeBg: 'from-fuchsia-600 to-purple-600',
+    },
+    {
+      id: 'improvements',
+      label: 'Cải Tiến Giảm Lỗi',
+      category: 'QUALITY',
+      icon: ClipboardCheck,
+      color: 'text-cyan-400',
+      activeBg: 'from-cyan-600 to-teal-600',
+    },
+    {
       id: 'command',
       label: 'Điều Khiển Máy',
       category: 'REMOTE CONTROL',
@@ -97,21 +113,23 @@ export default function Sidebar({
         }`}
     >
       {/* Sidebar Header / Brand Logo */}
-      <div className="p-4 border-b border-white/10 flex items-center justify-between relative">
-        <div className="flex items-center gap-3 overflow-hidden">
+      <div className="p-4 border-b border-white/10 flex items-center relative">
+        <div className="flex flex-1 min-w-0 items-center gap-3 overflow-hidden">
           <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500 via-indigo-600 to-purple-600 p-0.5 shadow-lg shadow-blue-500/25 flex-shrink-0 flex items-center justify-center">
             <div className="w-full h-full bg-slate-950/80 rounded-[10px] flex items-center justify-center backdrop-blur-md">
-              <Cpu className="w-5 h-5 text-blue-400 animate-pulse" />
+              <span className="text-[11px] font-black tracking-tight text-blue-300 font-display" aria-hidden="true">
+                FCT
+              </span>
             </div>
           </div>
 
           {!isCollapsed && (
-            <div className="flex flex-col truncate">
-              <div className="flex items-center gap-1.5">
-                <span className="font-extrabold tracking-wider font-display text-lg bg-clip-text text-transparent bg-gradient-to-r from-white via-slate-100 to-blue-200">
+            <div className="flex min-w-0 flex-1 flex-col">
+              <div className="flex min-w-0 items-center gap-1.5">
+                <span className="min-w-0 truncate font-extrabold tracking-wider font-display text-lg bg-clip-text text-transparent bg-gradient-to-r from-white via-slate-100 to-blue-200">
                   FCT System
                 </span>
-                <span className="text-[9px] px-1.5 py-0.2 rounded bg-blue-500/20 text-blue-300 font-mono font-bold">
+                <span className="shrink-0 text-[9px] px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-300 font-mono font-bold">
                   v2.0
                 </span>
               </div>
@@ -123,7 +141,7 @@ export default function Sidebar({
         {/* Collapse Button */}
         <button
           onClick={() => setIsCollapsed(!isCollapsed)}
-          className="p-1.5 rounded-lg bg-slate-900/80 hover:bg-slate-800 text-slate-400 hover:text-white border border-white/10 transition-colors"
+          className="ml-2 shrink-0 p-1.5 rounded-lg bg-slate-900/80 hover:bg-slate-800 text-slate-400 hover:text-white border border-white/10 transition-colors"
           title={isCollapsed ? 'Mở rộng Sidebar' : 'Thu gọn Sidebar'}
         >
           {isCollapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronLeft className="w-4 h-4" />}

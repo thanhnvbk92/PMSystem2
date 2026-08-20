@@ -506,6 +506,7 @@ export default function PcbSearch({ lines, stations, channels = [], onFilterChan
                 <th className="p-3.5">Mã PCB (PID Barcode)</th>
                 <th className="p-3.5">Dây chuyền</th>
                 <th className="p-3.5">Trạm / Channel</th>
+                <th className="p-3.5">IP Máy</th>
                 <th className="p-3.5 text-center">Kết quả</th>
                 <th className="p-3.5 text-right">Chi tiết Test Steps</th>
               </tr>
@@ -514,6 +515,7 @@ export default function PcbSearch({ lines, stations, channels = [], onFilterChan
               {searchResults && searchResults.length > 0 ? (
                 searchResults.map((log) => {
                   const isOk = log.result === 'OK' || log.result === 'PASS';
+                  const machineIp = log.channelIp || (channels && channels.find(c => c.id === log.channelId)?.ipAddress) || '-';
                   return (
                     <tr key={log.id} className="hover:bg-slate-800/50 transition-colors">
                       <td className="p-3.5 text-slate-400 whitespace-nowrap">
@@ -523,6 +525,9 @@ export default function PcbSearch({ lines, stations, channels = [], onFilterChan
                       <td className="p-3.5 text-slate-300 font-sans">{log.lineName}</td>
                       <td className="p-3.5 text-slate-300 font-sans">
                         {log.stationName} <span className="text-slate-500 font-mono text-[11px]">({log.channelName})</span>
+                      </td>
+                      <td className="p-3.5 text-slate-300 font-mono text-xs">
+                        <span className="px-2 py-1 rounded bg-slate-900 border border-slate-800 text-blue-300">{machineIp}</span>
                       </td>
                       <td className="p-3.5 text-center">
                         {isOk ? (
@@ -544,7 +549,7 @@ export default function PcbSearch({ lines, stations, channels = [], onFilterChan
                 })
               ) : (
                 <tr>
-                  <td colSpan={6} className="p-12 text-center text-slate-500 font-sans space-y-2">
+                  <td colSpan={7} className="p-12 text-center text-slate-500 font-sans space-y-2">
                     <Search className="w-8 h-8 mx-auto text-slate-600 mb-2" />
                     <p className="text-sm font-semibold text-slate-400">Không tìm thấy bản ghi PCB phù hợp</p>
                     <p className="text-xs text-slate-600">Thử thay đổi từ khóa PID hoặc điều chỉnh lại các bộ lọc Dây chuyền / Trạm kiểm tra.</p>
@@ -565,7 +570,14 @@ export default function PcbSearch({ lines, stations, channels = [], onFilterChan
                 <h3 className="text-xl font-bold text-white flex items-center gap-2 font-display">
                   Chi Tiết Bước Kiểm Tra PCB: <span className="text-blue-400 font-mono">{activeModalItem.pid}</span>
                 </h3>
-                <p className="text-xs text-slate-400 mt-1 font-sans">Trạm: {activeModalItem.stationName} ({activeModalItem.lineName}) - Channel: {activeModalItem.channelName}</p>
+                <p className="text-xs text-slate-400 mt-1 font-sans">
+                  Trạm: {activeModalItem.stationName} ({activeModalItem.lineName}) - Channel: {activeModalItem.channelName}
+                  {(activeModalItem.channelIp || (channels && channels.find(c => c.id === activeModalItem.channelId)?.ipAddress)) && (
+                    <span className="ml-2 px-1.5 py-0.5 rounded bg-blue-950 text-blue-300 font-mono text-[11px] border border-blue-800/50">
+                      IP: {activeModalItem.channelIp || channels.find(c => c.id === activeModalItem.channelId)?.ipAddress}
+                    </span>
+                  )}
+                </p>
               </div>
               <button
                 onClick={() => setActiveModalItem(null)}
@@ -590,68 +602,88 @@ export default function PcbSearch({ lines, stations, channels = [], onFilterChan
               </div>
             </div>
 
-            <div className="space-y-3">
-              <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wider flex items-center gap-1.5 font-display">
-                <ShieldCheck className="w-4 h-4 text-blue-400" />
-                Danh Sách Tham Số Đo Đạc ({activeModalItem.steps ? activeModalItem.steps.length : 0} Steps)
-              </h4>
-              <div className="max-h-64 overflow-y-auto border border-slate-800/80 rounded-xl bg-slate-950/80">
-                {activeModalItem.steps && activeModalItem.steps.length > 0 ? (
-                  <table className="w-full text-left text-xs">
-                    <thead className="bg-slate-900/90 text-slate-400 uppercase font-semibold text-[11px] border-b border-slate-800 sticky top-0 font-display">
-                      <tr>
-                        <th className="p-2.5 text-center w-10">#</th>
-                        <th className="p-2.5">Tên bước / Linh kiện</th>
-                        <th className="p-2.5">Phân loại</th>
-                        <th className="p-2.5 text-right">Giá trị đo</th>
-                        <th className="p-2.5 text-center">Tiêu chuẩn (Min~Max)</th>
-                        <th className="p-2.5 text-center">Kết quả</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-800/60 font-mono">
-                      {activeModalItem.steps.map((step, idx) => {
-                        const isStepNg = step.result !== 'OK' && step.result !== 'PASS';
-                        const name = step.stepName ?? step.step_name ?? '';
-                        
-                        const stepType = step.stepType || step.step_type;
-                        const minVal = step.specMin ?? step.spec_min;
-                        const maxVal = step.specMax ?? step.spec_max;
-                        const hasSpec = (minVal !== null && minVal !== undefined && minVal !== '') || (maxVal !== null && maxVal !== undefined && maxVal !== '');
-                        
-                        return (
-                          <tr key={idx} className={`transition-colors ${isStepNg ? 'bg-rose-950/40 hover:bg-rose-900/50' : 'hover:bg-slate-900/50'}`}>
-                            <td className="p-2.5 text-center text-slate-500">{step.stepNumber || step.step_number || idx + 1}</td>
-                            <td className={`p-2.5 font-sans font-medium ${isStepNg ? 'text-rose-300 font-semibold flex items-center gap-1.5' : 'text-slate-200'}`}>
-                              {isStepNg && <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-pulse"></span>}
-                              {name}
-                            </td>
-                            <td className="p-2.5 text-slate-400 font-sans text-[11px]">
-                              {stepType ? <span className="px-1.5 py-0.5 rounded bg-slate-800 text-slate-300">{stepType}</span> : '-'}
-                            </td>
-                            <td className={`p-2.5 text-right font-bold ${isStepNg ? 'text-rose-400' : 'text-blue-400'}`}>
-                              {step.value ?? step.val ?? '-'}
-                            </td>
-                            <td className="p-2.5 text-center text-slate-400 text-[11px]">
-                              {hasSpec ? `${minVal ?? '-'} ~ ${maxVal ?? '-'}` : '-'}
-                            </td>
-                            <td className="p-2.5 text-center">
-                              <span className={!isStepNg ? 'badge badge-ok font-sans' : 'badge badge-ng font-sans'}>
-                                {step.result}
-                              </span>
-                            </td>
+            {(() => {
+              const modalSteps = (activeModalItem.steps && activeModalItem.steps.length > 0)
+                ? activeModalItem.steps
+                : ((activeModalItem.result === 'NG' || activeModalItem.result === 'FAIL') ? [{
+                    stepNumber: 1,
+                    stepName: activeModalItem.errorCode || 'DEFECT_UNSPECIFIED',
+                    stepType: 'Mã lỗi tổng hợp',
+                    result: 'NG',
+                    value: '-',
+                    specMin: '-',
+                    specMax: '-'
+                  }] : []);
+
+              return (
+                <div className="space-y-3">
+                  <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wider flex items-center gap-1.5 font-display">
+                    <ShieldCheck className="w-4 h-4 text-blue-400" />
+                    Danh Sách Tham Số Đo Đạc ({modalSteps.length} Steps)
+                  </h4>
+                  <div className="max-h-64 overflow-y-auto border border-slate-800/80 rounded-xl bg-slate-950/80">
+                    {modalSteps.length > 0 ? (
+                      <table className="w-full text-left text-xs">
+                        <thead className="bg-slate-900/90 text-slate-400 uppercase font-semibold text-[11px] border-b border-slate-800 sticky top-0 font-display">
+                          <tr>
+                            <th className="p-2.5 text-center w-10">#</th>
+                            <th className="p-2.5">Tên bước / Linh kiện</th>
+                            <th className="p-2.5">Phân loại</th>
+                            <th className="p-2.5 text-right">Giá trị đo</th>
+                            <th className="p-2.5 text-center">Tiêu chuẩn (Min~Max)</th>
+                            <th className="p-2.5 text-center">Kết quả</th>
                           </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                ) : (
-                  <div className="p-6 text-center text-slate-500 text-xs space-y-1 font-sans">
-                    <p>Đã kiểm tra quy chuẩn thành công.</p>
-                    <p className="text-[11px] text-slate-600">Dữ liệu tham số chi tiết đã được ghi nhận trong CSDL TimescaleDB.</p>
+                        </thead>
+                        <tbody className="divide-y divide-slate-800/60 font-mono">
+                          {modalSteps.map((step, idx) => {
+                            const isStepNg = step.result !== 'OK' && step.result !== 'PASS';
+                            const name = step.stepName ?? step.step_name ?? '';
+                            
+                            const rawStepType = step.stepType || step.step_type;
+                            const displayStepType = (rawStepType && rawStepType !== name) ? rawStepType : (isStepNg ? 'Mã lỗi' : 'Bước kiểm tra');
+                            const minVal = step.specMin ?? step.spec_min;
+                            const maxVal = step.specMax ?? step.spec_max;
+                            const hasSpec = (minVal !== null && minVal !== undefined && String(minVal).trim() !== '' && String(minVal).trim() !== '-') || (maxVal !== null && maxVal !== undefined && String(maxVal).trim() !== '' && String(maxVal).trim() !== '-');
+                            
+                            const rawVal = step.value ?? step.val;
+                            const displayVal = (rawVal !== null && rawVal !== undefined && String(rawVal).trim() !== '' && String(rawVal).trim() !== '-') ? rawVal : '-';
+
+                            return (
+                              <tr key={idx} className={`transition-colors ${isStepNg ? 'bg-rose-950/40 hover:bg-rose-900/50' : 'hover:bg-slate-900/50'}`}>
+                                <td className="p-2.5 text-center text-slate-500">{step.stepNumber || step.step_number || idx + 1}</td>
+                                <td className={`p-2.5 font-sans font-medium ${isStepNg ? 'text-rose-300 font-semibold flex items-center gap-1.5' : 'text-slate-200'}`}>
+                                  {isStepNg && <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-pulse"></span>}
+                                  {name}
+                                </td>
+                                <td className="p-2.5 text-slate-400 font-sans text-[11px]">
+                                  <span className="px-1.5 py-0.5 rounded bg-slate-800 text-slate-300">{displayStepType}</span>
+                                </td>
+                                <td className={`p-2.5 text-right font-bold ${isStepNg ? 'text-rose-400' : 'text-blue-400'}`}>
+                                  {displayVal}
+                                </td>
+                                <td className="p-2.5 text-center text-slate-400 text-[11px]">
+                                  {hasSpec ? `${minVal ?? '-'} ~ ${maxVal ?? '-'}` : '-'}
+                                </td>
+                                <td className="p-2.5 text-center">
+                                  <span className={!isStepNg ? 'badge badge-ok font-sans' : 'badge badge-ng font-sans'}>
+                                    {step.result}
+                                  </span>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    ) : (
+                      <div className="p-6 text-center text-slate-400 text-xs space-y-1 font-sans">
+                        <p className="text-emerald-400 font-semibold text-sm">Bo mạch kiểm tra ĐẠT (PASS/OK)</p>
+                        <p className="text-xs text-slate-400">Tất cả các bước kiểm tra quy chuẩn đều đạt yêu cầu.</p>
+                      </div>
+                    )}
                   </div>
-                )}
-              </div>
-            </div>
+                </div>
+              );
+            })()}
 
             <div className="flex justify-end pt-2">
               <button

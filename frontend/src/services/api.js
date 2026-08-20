@@ -59,6 +59,10 @@ export const MasterDataApi = {
 };
 
 export const ProductionApi = {
+  getCpkSteps: (channelId) => api.get('/production/cpk/steps', { params: { channelId } }).then(res => res.data),
+  getStationCpkSteps: (stationId) => api.get('/production/cpk/station-steps', { params: { stationId } }).then(res => res.data),
+  getCpk: (channelId, stepNumber, stepName, jobFile = null, limit = 50) => api.get('/production/cpk', { params: { channelId, stepNumber, stepName, jobFile, limit } }).then(res => res.data),
+  getCpkOverview: () => api.get('/production/cpk/overview').then(res => res.data),
   getSummary: (lineId = null, stationId = null, startDate = null, endDate = null) => 
     api.get('/production/summary', { params: { lineId, stationId, startDate, endDate } }).then(res => res.data),
   getLatest: (limit = 100, lineId = null, stationId = null, searchPid = null, resultFilter = null, startDate = null, endDate = null) => 
@@ -71,6 +75,8 @@ export const ProductionApi = {
     api.get('/production/stats/station-yield', { params: { lineId, startDate, endDate } }).then(res => res.data),
   getDefectPareto: (lineId = null, stationId = null, startDate = null, endDate = null) =>
     api.get('/production/stats/defect-pareto', { params: { lineId, stationId, startDate, endDate } }).then(res => res.data),
+  getBiMatrix: (lineId = null, stationId = null, channelId = null, errorCode = null, jobFile = null, startDate = null, endDate = null, hours = 24) =>
+    api.get('/production/stats/bi-matrix', { params: { lineId, stationId, channelId, errorCode, jobFile, startDate, endDate, hours } }).then(res => res.data),
   submitPcb: (data) => api.post('/production/submit', data).then(res => res.data),
   getExportCount: (lineId = null, stationId = null, searchPid = null, resultFilter = null, startDate = null, endDate = null) =>
     api.get('/production/export-count', { params: { lineId, stationId, searchPid, resultFilter, startDate, endDate } }).then(res => res.data),
@@ -115,4 +121,37 @@ export const CommandApi = {
   sendCommand: (data) => api.post('/commands/send', data).then(res => res.data),
   changeModel: (data) => api.post('/commands/change-model', data).then(res => res.data),
   restartApp: (data) => api.post('/commands/restart', data).then(res => res.data),
+  updateApp: async (data) => {
+    try {
+      return (await api.post('/commands/update', data)).data;
+    } catch (error) {
+      // Rolling-upgrade fallback: older API versions do not expose /commands/update yet.
+      if (error.response?.status !== 404) throw error;
+      return (await api.post('/commands/send', {
+        channelIds: data.channelIds,
+        macAddress: data.macAddress,
+        channelId: data.channelId,
+        stationId: data.stationId,
+        lineId: data.lineId,
+        command: 'update',
+        data: {
+          force: data.force,
+          update_xml_path: data.updateXmlPath || null,
+        },
+      })).data;
+    }
+  },
+};
+
+export const ImprovementApi = {
+  getTopDefects: (startDate, endDate, limit = 5) => api.get('/improvements/top-defects', { params: { startDate, endDate, limit } }).then(res => res.data),
+  list: (status = null) => api.get('/improvements', { params: { status } }).then(res => res.data),
+  get: (id) => api.get(`/improvements/${id}`).then(res => res.data),
+  getTrend: (id, startDate, endDate, granularity = 'day') => api.get(`/improvements/${id}/trend`, { params: { startDate, endDate, granularity } }).then(res => res.data),
+  create: (data) => api.post('/improvements', data).then(res => res.data),
+  update: (id, data) => api.put(`/improvements/${id}`, data).then(res => res.data),
+  updateRootCause: (id, rootCause) => api.patch(`/improvements/${id}/root-cause`, { rootCause }).then(res => res.data),
+  addAction: (id, data) => api.post(`/improvements/${id}/actions`, data).then(res => res.data),
+  updateAction: (id, data) => api.put(`/improvements/actions/${id}`, data).then(res => res.data),
+  deleteAction: (id) => api.delete(`/improvements/actions/${id}`),
 };

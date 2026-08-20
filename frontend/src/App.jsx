@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import Sidebar from './components/Sidebar';
 import Header from './components/Header';
 import Dashboard from './components/Dashboard';
@@ -6,11 +6,19 @@ import Analytics from './components/Analytics';
 import PcbSearch from './components/PcbSearch';
 import MasterData from './components/MasterData';
 import CommandControl from './components/CommandControl';
+import Cpk from './components/Cpk';
+import Improvements from './components/Improvements';
 import { MasterDataApi, ProductionApi } from './services/api';
 import { initSignalR } from './services/signalr';
 import * as signalR from '@microsoft/signalr';
 
-const VALID_TABS = ['dashboard', 'analytics', 'pcb-search', 'command', 'master'];
+const VALID_TABS = ['dashboard', 'analytics', 'cpk', 'improvements', 'pcb-search', 'command', 'master'];
+
+const getTodayRange = () => {
+  const now = new Date();
+  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  return { startDate: start.toISOString(), endDate: now.toISOString() };
+};
 
 const getInitialTab = () => {
   const hash = window.location.hash.replace('#', '');
@@ -25,6 +33,9 @@ const getInitialTab = () => {
 };
 
 export default function App() {
+  const appInitializedRef = useRef(false);
+  const lastProductionFilterRef = useRef(null);
+  const productionRequestRef = useRef(0);
   const [activeTab, setActiveTabState] = useState(getInitialTab);
 
   const setActiveTab = useCallback((tab) => {
@@ -72,13 +83,14 @@ export default function App() {
   const [summary, setSummary] = useState(null);
   const [latestLogs, setLatestLogs] = useState([]);
   const [hourlyStats, setHourlyStats] = useState([]);
-  const [newRecordIds, setNewRecordIds] = useState(new Set());
+  const [productionLoadInfo, setProductionLoadInfo] = useState({ loading: false, durationMs: null, requests: {} });
 
   // Active filters
   const [activeLineId, setActiveLineId] = useState(null);
   const [activeStationId, setActiveStationId] = useState(null);
-  const [activeStartDate, setActiveStartDate] = useState(null);
-  const [activeEndDate, setActiveEndDate] = useState(null);
+  const initialTodayRangeRef = useRef(getTodayRange());
+  const [activeStartDate, setActiveStartDate] = useState(initialTodayRangeRef.current.startDate);
+  const [activeEndDate, setActiveEndDate] = useState(initialTodayRangeRef.current.endDate);
 
   // Error state
   const [dbError, setDbError] = useState(null);
@@ -118,17 +130,34 @@ export default function App() {
 
   // Load Production Summary & Logs
   const loadProductionData = useCallback(async () => {
+    const requestId = ++productionRequestRef.current;
+    const loadStarted = performance.now();
+    setProductionLoadInfo(prev => ({ ...prev, loading: true }));
     try {
-      const [sum, latest, hourly] = await Promise.all([
-        ProductionApi.getSummary(activeLineId, activeStationId, activeStartDate, activeEndDate),
-        ProductionApi.getLatest(100, activeLineId, activeStationId, null, null, activeStartDate, activeEndDate),
-        ProductionApi.getHourlyStats(24, activeLineId, activeStationId, activeStartDate, activeEndDate),
+      const timed = async (name, request) => {
+        const started = performance.now();
+        const data = await request();
+        return { name, data, durationMs: performance.now() - started };
+      };
+      const results = await Promise.all([
+        timed('summary', () => ProductionApi.getSummary(activeLineId, activeStationId, activeStartDate, activeEndDate)),
+        timed('latest', () => ProductionApi.getLatest(100, activeLineId, activeStationId, null, null, activeStartDate, activeEndDate)),
+        timed('hourly', () => ProductionApi.getHourlyStats(24, activeLineId, activeStationId, activeStartDate, activeEndDate)),
       ]);
+      if (requestId !== productionRequestRef.current) return;
+      const byName = Object.fromEntries(results.map(x => [x.name, x]));
+      const sum = byName.summary.data;
+      const latest = byName.latest.data;
+      const hourly = byName.hourly.data;
       setSummary(sum);
       setLatestLogs(latest || []);
       setHourlyStats(hourly || []);
+      setProductionLoadInfo({ loading: false, durationMs: performance.now() - loadStarted,
+        requests: Object.fromEntries(results.map(x => [x.name, x.durationMs])) });
     } catch (err) {
+      if (requestId !== productionRequestRef.current) return;
       console.error('Failed to load Production Data:', err);
+      setProductionLoadInfo(prev => ({ ...prev, loading: false, durationMs: performance.now() - loadStarted }));
     }
   }, [activeLineId, activeStationId, activeStartDate, activeEndDate]);
 
@@ -157,15 +186,6 @@ export default function App() {
       };
     });
 
-    // Row flash animation tracking
-    setNewRecordIds((prev) => new Set(prev).add(newResult.id));
-    setTimeout(() => {
-      setNewRecordIds((prev) => {
-        const copy = new Set(prev);
-        copy.delete(newResult.id);
-        return copy;
-      });
-    }, 1500);
   }, []);
 
   // Handle incoming hourly stats broadcast
@@ -181,24 +201,44 @@ export default function App() {
     });
   }, []);
 
+  const handleProductionDelta = useCallback((delta) => {
+    setSummary((prev) => {
+      if (!prev) return prev;
+      const total = prev.totalInspected + Number(delta?.total || 0);
+      const ok = prev.totalOk + Number(delta?.ok || 0);
+      const ng = prev.totalNg + Number(delta?.ng || 0);
+      return { ...prev, totalInspected: total, totalOk: ok, totalNg: ng,
+        overallYieldRate: total > 0 ? (ok / total) * 100 : 100 };
+    });
+  }, []);
+
   useEffect(() => {
+    if (appInitializedRef.current) return;
+    appInitializedRef.current = true;
     loadMasterData();
-    loadProductionData();
 
     // Initialize SignalR Connection
     initSignalR(
       handlePcbResultReceived,
       handleStatsReceived,
-      (state) => setSignalRState(state)
+      (state) => setSignalRState(state),
+      handleProductionDelta
     );
-  }, [loadProductionData, handlePcbResultReceived, handleStatsReceived]);
+  }, [handlePcbResultReceived, handleStatsReceived, handleProductionDelta]);
 
-  const handleFilterChange = (lineId, stationId, startDate = null, endDate = null) => {
+  useEffect(() => {
+    const filterKey = JSON.stringify([activeLineId, activeStationId, activeStartDate, activeEndDate]);
+    if (lastProductionFilterRef.current === filterKey) return;
+    lastProductionFilterRef.current = filterKey;
+    loadProductionData();
+  }, [loadProductionData, activeLineId, activeStationId, activeStartDate, activeEndDate]);
+
+  const handleFilterChange = useCallback((lineId, stationId, startDate = null, endDate = null) => {
     setActiveLineId(lineId);
     setActiveStationId(stationId);
     if (startDate !== undefined) setActiveStartDate(startDate);
     if (endDate !== undefined) setActiveEndDate(endDate);
-  };
+  }, []);
 
   return (
     <div className="min-h-screen w-full bg-slate-950 text-slate-100 flex relative overflow-x-hidden">
@@ -256,24 +296,21 @@ export default function App() {
           {activeTab === 'dashboard' && (
             <Dashboard
               summary={summary}
-              latestLogs={latestLogs}
               hourlyStats={hourlyStats}
               lines={lines}
               stations={stations}
               startDate={activeStartDate}
               endDate={activeEndDate}
               onFilterChange={handleFilterChange}
-              newRecordIds={newRecordIds}
+              productionLoadInfo={productionLoadInfo}
             />
           )}
 
           {activeTab === 'analytics' && (
             <Analytics
-              summary={summary}
-              latestLogs={latestLogs}
-              hourlyStats={hourlyStats}
               lines={lines}
               stations={stations}
+              channels={channels}
               startDate={activeStartDate}
               endDate={activeEndDate}
               onFilterChange={handleFilterChange}
@@ -289,6 +326,10 @@ export default function App() {
               onFilterChange={handleFilterChange}
             />
           )}
+
+          {activeTab === 'cpk' && <Cpk lines={lines} stations={stations} channels={channels} />}
+
+          {activeTab === 'improvements' && <Improvements lines={lines} stations={stations} />}
 
           {activeTab === 'command' && (
             <CommandControl

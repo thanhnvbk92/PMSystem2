@@ -35,6 +35,7 @@ import {
   XSquare
 } from 'lucide-react';
 import { CommandApi } from '../services/api';
+import { onCommandStatus, onMachineStatusChanged, onMachineAlert } from '../services/signalr';
 
 export default function CommandControl({ lines = [], stations = [], channels = [], onRefreshMasterData }) {
   // Targeting Scope State: 'all' | 'line' | 'station' | 'channel'
@@ -95,14 +96,22 @@ export default function CommandControl({ lines = [], stations = [], channels = [
     setIsTreeOpen(false);
   };
 
-  // Active Command Tab: 'change-model' | 'restart' | 'custom'
+  // Active Command Tab: 'change-model' | 'update' | 'restart' | 'custom' | 'cmd-exec'
   const [activeCommandTab, setActiveCommandTab] = useState('change-model');
 
   // Command Form State
   const [modelName, setModelName] = useState('');
+  const [updateForce, setUpdateForce] = useState(true);
+  const [updateXmlPath, setUpdateXmlPath] = useState('');
   const [delayMs, setDelayMs] = useState(1500);
   const [customCommand, setCustomCommand] = useState('sync.config');
   const [customJsonData, setCustomJsonData] = useState('{\n  "version": "1.0",\n  "force_update": true\n}');
+
+  // CMD System Command State
+  const [cmdCommandLine, setCmdCommandLine] = useState('ipconfig /all');
+  const [cmdTimeoutSec, setCmdTimeoutSec] = useState(30);
+  const [cmdRunAsAdmin, setCmdRunAsAdmin] = useState(true);
+  const [cmdShowWindow, setCmdShowWindow] = useState(true);
 
   // Dispatch Status & Console History
   const [isSending, setIsSending] = useState(false);
@@ -345,6 +354,104 @@ export default function CommandControl({ lines = [], stations = [], channels = [
     setTimeout(() => setNotification(null), 4000);
   };
 
+  // Real-time SignalR Event Listeners for Command Reports & Telemetry
+  useEffect(() => {
+    const unsubCommandStatus = onCommandStatus((report) => {
+      console.log('Realtime CommandStatus report received:', report);
+      if (!report) return;
+
+      const { command_id, status, progress, result, error, message, mac_address, channel_id } = report;
+      const nowTime = new Date().toLocaleTimeString();
+
+      // Find affected channel in state
+      let matchedChannel = null;
+      if (channel_id) {
+        matchedChannel = (channels || []).find((c) => String(c.id) === String(channel_id));
+      } else if (mac_address) {
+        matchedChannel = (channels || []).find(
+          (c) => c.macAddress && c.macAddress.toLowerCase() === mac_address.toLowerCase()
+        );
+      }
+
+      const channelKey = matchedChannel ? `channel-${matchedChannel.id}` : null;
+      const channelLabel = matchedChannel
+        ? `Kênh #${matchedChannel.channelNo || matchedChannel.id} (${matchedChannel.macAddress || 'Device'})`
+        : mac_address || (channel_id ? `Channel #${channel_id}` : 'Thiết bị');
+
+      const isSuccess = status === 'success' || status === 'completed' || status === 'OK';
+      const isRunning = status === 'running' || status === 'pending';
+      const statusState = isRunning ? 'sending' : isSuccess ? 'success' : 'error';
+
+      const displayMsg =
+        message ||
+        error ||
+        (result ? (typeof result === 'object' ? JSON.stringify(result) : String(result)) : null) ||
+        (isSuccess ? 'Thực thi lệnh thành công' : isRunning ? 'Đang thực thi lệnh...' : 'Lỗi thực thi lệnh');
+
+      // Update treeview channel execution status
+      if (channelKey) {
+        setExecutionStatuses((prev) => ({
+          ...prev,
+          [channelKey]: {
+            status: statusState,
+            timestamp: nowTime,
+            message: `${displayMsg} ${progress !== undefined && progress > 0 ? `(${progress}%)` : ''}`,
+            progress: progress || 0,
+          },
+        }));
+      }
+
+      // Update or append log entry in Execution Console History
+      setCommandHistory((prev) => {
+        const existingIdx = prev.findIndex(
+          (h) => (command_id && h.commandId === command_id) || (h.channelId && channel_id && h.channelId === channel_id)
+        );
+        if (existingIdx !== -1) {
+          const updated = [...prev];
+          updated[existingIdx] = {
+            ...updated[existingIdx],
+            status: statusState,
+            progress: progress || updated[existingIdx].progress,
+            response: `${displayMsg} ${progress !== undefined && progress > 0 ? `[${progress}%]` : ''}`,
+            timestamp: nowTime,
+          };
+          return updated;
+        }
+
+        return [
+          {
+            id: `cmd-rt-${Date.now().toString().slice(-6)}`,
+            commandId: command_id,
+            channelId: channel_id,
+            command: 'SignalR Status Report',
+            detail: `Progress: ${progress || 0}%`,
+            targetText: `🎯 ${channelLabel}`,
+            timestamp: nowTime,
+            status: statusState,
+            progress: progress || 0,
+            response: displayMsg,
+          },
+          ...prev,
+        ];
+      });
+    });
+
+    const unsubAlert = onMachineAlert((alert) => {
+      if (!alert) return;
+      showToast('error', `⚠️ Cảnh báo thiết bị [${alert.mac_address || alert.channel_id}]: ${alert.alert_type || ''} - ${alert.message || ''}`);
+    });
+
+    const unsubStatusChanged = onMachineStatusChanged(() => {
+      if (onRefreshMasterData) onRefreshMasterData();
+    });
+
+    return () => {
+      unsubCommandStatus();
+      unsubAlert();
+      unsubStatusChanged();
+    };
+  }, [channels, onRefreshMasterData]);
+
   // Handle Command Execution
   const handleExecuteCommand = async () => {
     // Validation
@@ -398,6 +505,17 @@ export default function CommandControl({ lines = [], stations = [], channels = [
           ...targetPayload,
           modelName: modelName.trim(),
         });
+      } else if (activeCommandTab === 'update') {
+        cmdName = 'update';
+        payloadDetail = updateXmlPath.trim()
+          ? `Update XML: ${updateXmlPath.trim()}${updateForce ? ' (force)' : ''}`
+          : `Update theo cấu hình mặc định${updateForce ? ' (force)' : ''}`;
+        res = await CommandApi.updateApp({
+          ...targetPayload,
+          channelIds: targeted.map((channel) => channel.id),
+          force: updateForce,
+          updateXmlPath: updateXmlPath.trim() || null,
+        });
       } else if (activeCommandTab === 'restart') {
         cmdName = 'app.restart';
         payloadDetail = `Delay: ${delayMs}ms`;
@@ -425,39 +543,91 @@ export default function CommandControl({ lines = [], stations = [], channels = [
         payloadDetail = customJsonData.trim() ? 'JSON Data attached' : 'No payload';
         res = await CommandApi.sendCommand({
           ...targetPayload,
+          channelIds: targeted.map((channel) => channel.id),
           command: cmdName,
           data: parsedData,
         });
+      } else if (activeCommandTab === 'cmd-exec') {
+        if (!cmdCommandLine.trim()) {
+          showToast('error', 'Vui lòng nhập câu lệnh CMD!');
+          setIsSending(false);
+          return;
+        }
+        cmdName = 'system.cmd';
+        payloadDetail = `CMD: ${cmdCommandLine.trim()}`;
+        res = await CommandApi.sendCommand({
+          ...targetPayload,
+          channelIds: targeted.map((channel) => channel.id),
+          command: 'system.cmd',
+          data: {
+            command_line: cmdCommandLine.trim(),
+            timeout_seconds: parseInt(cmdTimeoutSec, 10) || 30,
+            run_as_admin: cmdRunAsAdmin,
+            show_window: cmdShowWindow,
+          },
+        });
       }
 
-      showToast('success', `Đã phát lệnh '${cmdName}' thành công đến ${targetDesc}!`);
+      showToast('success', `Đã chuyển lệnh '${cmdName}' đến backend cho ${targetDesc}. Đang chờ client xác nhận...`);
 
-      // Mark targeted channels as success
+      const cmdId = res?.command_id;
+
+      // Update targeted channels to dispatched state (awaiting client execution status)
       setExecutionStatuses((prev) => {
         const next = { ...prev };
         targeted.forEach((c) => {
           next[`channel-${c.id}`] = {
-            status: 'success',
+            status: 'sending',
             timestamp: nowTime,
-            message: res?.message || 'Đã nhận lệnh thành công',
+            message: res?.message || 'Đã phát lệnh qua SignalR. Đang chờ máy thực thi...',
           };
         });
         return next;
       });
 
       // Add entry to execution history console
-      setCommandHistory((prev) => [
-        {
-          id: `cmd-${Date.now().toString().slice(-6)}`,
-          command: cmdName,
-          detail: payloadDetail,
-          targetText: targetDesc,
-          timestamp: new Date().toLocaleTimeString(),
-          status: 'success',
-          response: res?.message || 'Lệnh đã gửi thành công qua SignalR CommandHub.',
-        },
-        ...prev,
-      ]);
+      setCommandHistory((prev) => {
+        // A very fast client can report before the HTTP dispatch response returns.
+        // Keep that real report instead of adding a duplicate PENDING entry.
+        if (cmdId && prev.some((item) => item.commandId === cmdId)) return prev;
+        return [
+          {
+            id: `cmd-${Date.now().toString().slice(-6)}`,
+            commandId: cmdId,
+            command: cmdName,
+            detail: payloadDetail,
+            targetText: targetDesc,
+            timestamp: new Date().toLocaleTimeString(),
+            status: 'sending',
+            response: res?.message || 'Lệnh đã phát thành công. Đang chờ phản hồi tiến độ từ máy...',
+          },
+          ...prev,
+        ];
+      });
+
+      // A successful HTTP response only confirms dispatch. Mark it failed only
+      // when no SignalR status report is received from the client within 30s.
+      setTimeout(() => {
+        setCommandHistory((prev) => prev.map((item) =>
+          item.commandId === cmdId && item.status === 'sending'
+            ? { ...item, status: 'error', response: 'Không nhận được phản hồi từ Backup Log client sau 30 giây.' }
+            : item
+        ));
+        setExecutionStatuses((prev) => {
+          const next = { ...prev };
+          targeted.forEach((channel) => {
+            const key = `channel-${channel.id}`;
+            if (next[key]?.status === 'sending') {
+              next[key] = {
+                ...next[key],
+                status: 'error',
+                message: 'Không nhận được phản hồi từ Backup Log client sau 30 giây.',
+              };
+            }
+          });
+          return next;
+        });
+      }, 30000);
     } catch (err) {
       console.error('Failed to send command:', err);
       const errMessage = err.response?.data?.error || err.message || 'Không thể kết nối đến máy chủ.';
@@ -497,13 +667,25 @@ export default function CommandControl({ lines = [], stations = [], channels = [
     const safeLines = lines || [];
     const safeStations = stations || [];
     const safeChannels = channels || [];
+    const getChannelSortName = (channel) =>
+      channel.channelName || channel.name || `Kênh #${channel.channelNo || channel.id}`;
+    const sortChannelsByName = (left, right) => {
+      const byName = getChannelSortName(left).localeCompare(
+        getChannelSortName(right),
+        'vi',
+        { numeric: true, sensitivity: 'base' }
+      );
+      return byName || Number(left.id || 0) - Number(right.id || 0);
+    };
 
     const buildLineNode = (line) => {
       const lineStations = safeStations.filter((s) => String(s.lineId) === String(line.id));
       const lineChannels = safeChannels.filter((c) => String(c.lineId) === String(line.id));
 
       const stationNodes = lineStations.map((station) => {
-        const stationChannels = safeChannels.filter((c) => String(c.stationId) === String(station.id));
+        const stationChannels = safeChannels
+          .filter((c) => String(c.stationId) === String(station.id))
+          .sort(sortChannelsByName);
 
         const channelNodes = stationChannels.map((ch) => {
           const name = ch.channelName || ch.name || `Kênh #${ch.channelNo || ch.id}`;
@@ -553,7 +735,9 @@ export default function CommandControl({ lines = [], stations = [], channels = [
       const targetStation = safeStations.find((s) => String(s.id) === String(selectedStationId));
       if (targetStation) {
         const lineId = targetStation.lineId;
-        const stationChannels = safeChannels.filter((c) => String(c.stationId) === String(targetStation.id));
+        const stationChannels = safeChannels
+          .filter((c) => String(c.stationId) === String(targetStation.id))
+          .sort(sortChannelsByName);
         const channelNodes = stationChannels.map((ch) => {
           const name = ch.channelName || ch.name || `Kênh #${ch.channelNo || ch.id}`;
           const ip = ch.ipAddress || ch.ip;
@@ -993,7 +1177,7 @@ export default function CommandControl({ lines = [], stations = [], channels = [
             </div>
 
             {/* Action Command Tabs */}
-            <div className="flex border-b border-white/10 mb-5 gap-4">
+            <div className="flex flex-wrap border-b border-white/10 mb-5 gap-x-4 gap-y-2">
               <button
                 onClick={() => setActiveCommandTab('change-model')}
                 className={`pb-3 text-xs font-medium transition-all relative flex items-center gap-2 ${
@@ -1004,6 +1188,18 @@ export default function CommandControl({ lines = [], stations = [], channels = [
               >
                 <RotateCcw className="w-3.5 h-3.5" />
                 <span>Đổi Model Sản Xuất</span>
+              </button>
+
+              <button
+                onClick={() => setActiveCommandTab('update')}
+                className={`pb-3 text-xs font-medium transition-all relative flex items-center gap-2 ${
+                  activeCommandTab === 'update'
+                    ? 'text-amber-400 border-b-2 border-amber-400'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+                <span>Cập Nhật App</span>
               </button>
 
               <button
@@ -1028,6 +1224,18 @@ export default function CommandControl({ lines = [], stations = [], channels = [
               >
                 <Terminal className="w-3.5 h-3.5" />
                 <span>Lệnh Tùy Chỉnh (JSON)</span>
+              </button>
+
+              <button
+                onClick={() => setActiveCommandTab('cmd-exec')}
+                className={`pb-3 text-xs font-medium transition-all relative flex items-center gap-2 ${
+                  activeCommandTab === 'cmd-exec'
+                    ? 'text-amber-400 border-b-2 border-amber-400'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                <Terminal className="w-3.5 h-3.5 text-rose-400" />
+                <span className="text-amber-300 font-semibold">Chạy CMD Admin</span>
               </button>
             </div>
 
@@ -1078,7 +1286,43 @@ export default function CommandControl({ lines = [], stations = [], channels = [
                 </div>
               )}
 
-              {/* TAB 2: RESTART APP */}
+              {/* TAB 2: UPDATE APP */}
+              {activeCommandTab === 'update' && (
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-xs font-medium text-slate-300 mb-1">
+                      Đường dẫn Update XML (không bắt buộc)
+                    </label>
+                    <input
+                      type="text"
+                      value={updateXmlPath}
+                      onChange={(e) => setUpdateXmlPath(e.target.value)}
+                      placeholder="Để trống để dùng cấu hình update mặc định của client"
+                      className="input-field text-sm w-full font-mono"
+                    />
+                  </div>
+
+                  <label className="flex items-center gap-2 cursor-pointer text-xs text-slate-300">
+                    <input
+                      type="checkbox"
+                      checked={updateForce}
+                      onChange={(e) => setUpdateForce(e.target.checked)}
+                      className="w-4 h-4 rounded bg-slate-900 border-white/20 text-amber-500 focus:ring-amber-400"
+                    />
+                    <span>Ép kiểm tra và thực hiện cập nhật</span>
+                  </label>
+
+                  <div className="p-3 bg-amber-500/10 border border-amber-500/30 rounded-xl text-xs text-amber-200 space-y-1">
+                    <p className="flex items-center gap-1.5 font-semibold text-amber-300">
+                      <ShieldAlert className="w-4 h-4 text-amber-400" />
+                      Cảnh báo cập nhật:
+                    </p>
+                    <p>Client sẽ kiểm tra phiên bản, tải bản cập nhật nếu có và có thể tự đóng ứng dụng để hoàn tất cài đặt.</p>
+                  </div>
+                </div>
+              )}
+
+              {/* TAB 3: RESTART APP */}
               {activeCommandTab === 'restart' && (
                 <div className="space-y-4">
                   <div>
@@ -1123,7 +1367,7 @@ export default function CommandControl({ lines = [], stations = [], channels = [
                 </div>
               )}
 
-              {/* TAB 3: CUSTOM JSON COMMAND */}
+              {/* TAB 4: CUSTOM JSON COMMAND */}
               {activeCommandTab === 'custom' && (
                 <div className="space-y-4">
                   <div>
@@ -1150,6 +1394,86 @@ export default function CommandControl({ lines = [], stations = [], channels = [
                       className="input-field text-xs w-full font-mono custom-scrollbar"
                       placeholder="{\n  'param': 'value'\n}"
                     />
+                  </div>
+                </div>
+              )}
+
+              {/* TAB 5: CMD EXECUTION (ADMIN) */}
+              {activeCommandTab === 'cmd-exec' && (
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-xs font-medium text-slate-300 mb-1">
+                      Câu lệnh CMD (Command Line) <span className="text-rose-400">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={cmdCommandLine}
+                      onChange={(e) => setCmdCommandLine(e.target.value)}
+                      placeholder="Ví dụ: ipconfig /all, systeminfo, tasklist..."
+                      className="input-field text-sm w-full font-mono text-emerald-400 bg-slate-950 border-amber-500/30"
+                    />
+                  </div>
+
+                  {/* Preset CMD Quick Buttons */}
+                  <div>
+                    <span className="text-[11px] text-slate-400 block mb-1.5 font-medium">Gợi ý lệnh CMD phổ biến:</span>
+                    <div className="flex flex-wrap gap-1.5">
+                      {[
+                        { label: 'Kiểm tra IP (ipconfig)', cmd: 'ipconfig /all' },
+                        { label: 'Thông tin hệ thống', cmd: 'systeminfo' },
+                        { label: 'Danh sách tiến trình', cmd: 'tasklist' },
+                        { label: 'Kiểm tra kết nối mạng', cmd: 'ping -n 4 8.8.8.8' },
+                        { label: 'Tên máy trạm (hostname)', cmd: 'hostname' },
+                        { label: 'Group Policy Update', cmd: 'gpupdate /force' }
+                      ].map((preset, idx) => (
+                        <button
+                          key={idx}
+                          type="button"
+                          onClick={() => setCmdCommandLine(preset.cmd)}
+                          className="px-2.5 py-1 text-[11px] font-mono bg-slate-800/80 hover:bg-amber-500/20 hover:text-amber-300 text-slate-300 rounded-lg border border-white/10 transition-all"
+                        >
+                          {preset.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-3 gap-3 pt-1">
+                    <div>
+                      <label className="block text-xs font-medium text-slate-300 mb-1">
+                        Timeout (giây)
+                      </label>
+                      <input
+                        type="number"
+                        min={5}
+                        max={300}
+                        value={cmdTimeoutSec}
+                        onChange={(e) => setCmdTimeoutSec(e.target.value)}
+                        className="input-field text-xs w-full font-mono"
+                      />
+                    </div>
+                    <div className="flex items-center pt-5">
+                      <label className="flex items-center gap-2 cursor-pointer text-xs text-slate-300">
+                        <input
+                          type="checkbox"
+                          checked={cmdRunAsAdmin}
+                          onChange={(e) => setCmdRunAsAdmin(e.target.checked)}
+                          className="w-4 h-4 rounded bg-slate-900 border-white/20 text-amber-500 focus:ring-amber-400"
+                        />
+                        <span>Quyền Administrator</span>
+                      </label>
+                    </div>
+                    <div className="flex items-center pt-5">
+                      <label className="flex items-center gap-2 cursor-pointer text-xs text-slate-300">
+                        <input
+                          type="checkbox"
+                          checked={cmdShowWindow}
+                          onChange={(e) => setCmdShowWindow(e.target.checked)}
+                          className="w-4 h-4 rounded bg-slate-900 border-white/20 text-amber-500 focus:ring-amber-400"
+                        />
+                        <span>Hiển thị cửa sổ CMD</span>
+                      </label>
+                    </div>
                   </div>
                 </div>
               )}
@@ -1214,6 +1538,8 @@ export default function CommandControl({ lines = [], stations = [], channels = [
                         <span className="text-slate-500">{item.timestamp}</span>
                         {item.status === 'success' ? (
                           <span className="badge badge-ok text-[10px]">SUCCESS</span>
+                        ) : item.status === 'sending' ? (
+                          <span className="px-2 py-0.5 rounded-full border border-amber-500/40 bg-amber-500/10 text-amber-300 text-[10px]">PENDING</span>
                         ) : (
                           <span className="badge badge-ng text-[10px]">FAILED</span>
                         )}

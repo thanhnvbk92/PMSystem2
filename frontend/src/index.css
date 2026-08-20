@@ -58,6 +58,17 @@ h1, h2, h3, h4, .font-display {
   font-family: var(--font-mono);
 }
 
+.field {
+  width: 100%;
+  border: 1px solid rgba(255,255,255,.1);
+  border-radius: .75rem;
+  background: rgba(2,6,23,.75);
+  padding: .65rem .75rem;
+  color: #e2e8f0;
+  outline: none;
+}
+.field:focus { border-color: rgba(34,211,238,.65); }
+
 /* Custom Scrollbar */
 ::-webkit-scrollbar {
   width: 7px;

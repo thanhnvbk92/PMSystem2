@@ -42,6 +42,8 @@ namespace PMSystem2.Api.Services
         Task<bool> DeleteStationAsync(int id);
 
         Task<List<ChannelDto>> GetChannelsAsync();
+        Task<ChannelDto?> GetChannelAsync(int id);
+        Task<ChannelDto?> FindChannelAsync(string identity);
         Task<ChannelDto> CreateChannelAsync(CreateChannelRequest req);
         Task<ChannelDto?> UpdateChannelAsync(int id, UpdateChannelRequest req);
         Task<bool> DeleteChannelAsync(int id);
@@ -444,7 +446,10 @@ namespace PMSystem2.Api.Services
                     s.StationType != null ? s.StationType.Name : null,
                     s.Name,
                     s.ProcessInfo,
-                    s.Remark
+                    s.Remark,
+                    s.CpkStepNumber,
+                    s.CpkStepName,
+                    s.CpkJobFile
                 ))
                 .ToListAsync();
         }
@@ -461,7 +466,10 @@ namespace PMSystem2.Api.Services
                 StationTypeId = req.StationTypeId,
                 Name = req.Name,
                 ProcessInfo = req.ProcessInfo,
-                Remark = req.Remark
+                Remark = req.Remark,
+                CpkStepNumber = req.CpkStepNumber,
+                CpkStepName = req.CpkStepName,
+                CpkJobFile = req.CpkJobFile
             };
             db.Stations.Add(entity);
             await db.SaveChangesAsync();
@@ -482,7 +490,10 @@ namespace PMSystem2.Api.Services
                 entity.StationType?.Name,
                 entity.Name,
                 entity.ProcessInfo,
-                entity.Remark
+                entity.Remark,
+                entity.CpkStepNumber,
+                entity.CpkStepName,
+                entity.CpkJobFile
             );
         }
 
@@ -499,6 +510,9 @@ namespace PMSystem2.Api.Services
             entity.Name = req.Name;
             entity.ProcessInfo = req.ProcessInfo;
             entity.Remark = req.Remark;
+            entity.CpkStepNumber = string.IsNullOrWhiteSpace(req.CpkStepName) ? null : req.CpkStepNumber;
+            entity.CpkStepName = string.IsNullOrWhiteSpace(req.CpkStepName) ? null : req.CpkStepName;
+            entity.CpkJobFile = string.IsNullOrWhiteSpace(req.CpkStepName) ? null : req.CpkJobFile;
             await db.SaveChangesAsync();
 
             await db.Entry(entity).Reference(s => s.Line).LoadAsync();
@@ -516,7 +530,10 @@ namespace PMSystem2.Api.Services
                 entity.StationType?.Name,
                 entity.Name,
                 entity.ProcessInfo,
-                entity.Remark
+                entity.Remark,
+                entity.CpkStepNumber,
+                entity.CpkStepName,
+                entity.CpkJobFile
             );
         }
 
@@ -563,9 +580,45 @@ namespace PMSystem2.Api.Services
                     c.MacAddress,
                     c.GmesName,
                     c.Status,
-                    c.Remark
+                    c.Remark,
+                    c.CpkStepNumber,
+                    c.CpkStepName
                 ))
                 .ToListAsync();
+        }
+
+        public async Task<ChannelDto?> GetChannelAsync(int id)
+        {
+            using var scope = _scopeFactory.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            return await db.Channels.AsNoTracking()
+                .Where(c => c.Id == id)
+                .Select(c => new ChannelDto(
+                    c.Id, c.StationId, c.Station != null ? c.Station.Name : "Unassigned Station",
+                    c.Station != null ? c.Station.LineId : 0,
+                    c.Station != null && c.Station.Line != null ? c.Station.Line.Name : "Unassigned Line",
+                    c.Name, c.MachinePartNo, c.IpAddress, c.MacAddress, c.GmesName,
+                    c.Status, c.Remark, c.CpkStepNumber, c.CpkStepName))
+                .FirstOrDefaultAsync();
+        }
+
+        public async Task<ChannelDto?> FindChannelAsync(string identity)
+        {
+            using var scope = _scopeFactory.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var value = identity.Trim();
+            return await db.Channels.AsNoTracking()
+                .Where(c => (c.MacAddress != null && EF.Functions.ILike(c.MacAddress, value))
+                    || (c.IpAddress != null && EF.Functions.ILike(c.IpAddress, value))
+                    || EF.Functions.ILike(c.Name, $"%{value}%"))
+                .OrderBy(c => c.Id)
+                .Select(c => new ChannelDto(
+                    c.Id, c.StationId, c.Station != null ? c.Station.Name : "Unassigned Station",
+                    c.Station != null ? c.Station.LineId : 0,
+                    c.Station != null && c.Station.Line != null ? c.Station.Line.Name : "Unassigned Line",
+                    c.Name, c.MachinePartNo, c.IpAddress, c.MacAddress, c.GmesName,
+                    c.Status, c.Remark, c.CpkStepNumber, c.CpkStepName))
+                .FirstOrDefaultAsync();
         }
 
         public async Task<ChannelDto> CreateChannelAsync(CreateChannelRequest req)
@@ -592,6 +645,8 @@ namespace PMSystem2.Api.Services
                 IpAddress = targetIp,
                 MacAddress = string.IsNullOrWhiteSpace(req.MacAddress) ? null : req.MacAddress.Trim(),
                 GmesName = req.GmesName,
+                CpkStepNumber = req.CpkStepNumber,
+                CpkStepName = req.CpkStepName,
                 Status = "online",
                 Remark = req.Remark
             };
@@ -618,7 +673,9 @@ namespace PMSystem2.Api.Services
                 entity.MacAddress,
                 entity.GmesName,
                 entity.Status,
-                entity.Remark
+                entity.Remark,
+                entity.CpkStepNumber,
+                entity.CpkStepName
             );
         }
 
@@ -648,6 +705,11 @@ namespace PMSystem2.Api.Services
             if (req.MachinePartNo != null) entity.MachinePartNo = req.MachinePartNo;
             if (req.MacAddress != null) entity.MacAddress = string.IsNullOrWhiteSpace(req.MacAddress) ? null : req.MacAddress.Trim();
             if (req.GmesName != null) entity.GmesName = req.GmesName;
+            if (req.CpkStepName != null)
+            {
+                entity.CpkStepNumber = string.IsNullOrWhiteSpace(req.CpkStepName) ? null : req.CpkStepNumber;
+                entity.CpkStepName = string.IsNullOrWhiteSpace(req.CpkStepName) ? null : req.CpkStepName;
+            }
             if (req.Status != null) entity.Status = req.Status;
             if (req.Remark != null) entity.Remark = req.Remark;
 
@@ -672,7 +734,9 @@ namespace PMSystem2.Api.Services
                 entity.MacAddress,
                 entity.GmesName,
                 entity.Status,
-                entity.Remark
+                entity.Remark,
+                entity.CpkStepNumber,
+                entity.CpkStepName
             );
         }
 
@@ -739,7 +803,9 @@ namespace PMSystem2.Api.Services
                 targetChannel.MacAddress,
                 targetChannel.GmesName,
                 targetChannel.Status,
-                targetChannel.Remark
+                targetChannel.Remark,
+                targetChannel.CpkStepNumber,
+                targetChannel.CpkStepName
             );
         }
 

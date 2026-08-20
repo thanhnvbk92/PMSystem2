@@ -7,9 +7,11 @@ namespace PMSystem2.Api.Hubs
     {
         Task ReceivePcbResult(PcbResultDto result);
         Task ReceiveStatsUpdate(HourlyStatDto stat);
+        Task ReceiveProductionDelta(object delta);
         Task ReceiveSystemAlert(string message, string level);
         Task ReceiveMachineStatusChanged(object status);
         Task ReceiveMachineAlert(object alert);
+        Task ReceiveCommandStatus(object report);
     }
 
     public class ProductionHub : Hub<IProductionClient>
