@@ -1,7 +1,7 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   Database, Plus, RefreshCw, Layers, Cpu, Radio, Building2, Pencil, Trash2, X, Search, Filter,
-  AlertTriangle, GitMerge, Box, Tag, Sliders, HardDrive, ArrowUpDown, ArrowUp, ArrowDown, Gauge, Save
+  AlertTriangle, GitMerge, Box, Tag, Sliders, HardDrive, ArrowUpDown, ArrowUp, ArrowDown, Gauge, Save, FileText
 } from 'lucide-react';
 import { MasterDataApi, ProductionApi } from '../services/api';
 
@@ -246,6 +246,30 @@ export default function MasterData({
   const channelsTable = useTableSortAndFilter(localChannels, 'id', 'asc');
   const modelGroupsTable = useTableSortAndFilter(localModelGroups, 'id', 'asc');
   const modelsTable = useTableSortAndFilter(localModels, 'id', 'asc');
+  const [jobMappingPage, setJobMappingPage] = useState({ items: [], page: 1, pageSize: 50, totalCount: 0, filteredCount: 0, unmappedCount: 0, totalPages: 1 });
+  const [jobMappingSearch, setJobMappingSearch] = useState('');
+  const [jobMappingStatus, setJobMappingStatus] = useState('all');
+  const [jobMappingPageNumber, setJobMappingPageNumber] = useState(1);
+  const [jobMappingsLoading, setJobMappingsLoading] = useState(false);
+  const [selectedJobMappingIds, setSelectedJobMappingIds] = useState([]);
+  const [bulkJobMappingModelId, setBulkJobMappingModelId] = useState('');
+  const loadJobMappings = useCallback(async () => {
+    setJobMappingsLoading(true);
+    try {
+      const data = await MasterDataApi.getJobFileModelMappings({ page: jobMappingPageNumber, pageSize: 50, search: jobMappingSearch || undefined, status: jobMappingStatus });
+      setJobMappingPage(data);
+      if (jobMappingPageNumber > data.totalPages) setJobMappingPageNumber(data.totalPages);
+    } finally {
+      setJobMappingsLoading(false);
+    }
+  }, [jobMappingPageNumber, jobMappingSearch, jobMappingStatus]);
+  useEffect(() => {
+    const timer = setTimeout(loadJobMappings, 250);
+    return () => clearTimeout(timer);
+  }, [loadJobMappings]);
+  const unmappedJobFileCount = jobMappingPage.unmappedCount;
+  const currentJobPageIds = jobMappingPage.items.map(x => x.id);
+  const allCurrentJobFilesSelected = currentJobPageIds.length > 0 && currentJobPageIds.every(id => selectedJobMappingIds.includes(id));
   const stationTypesTable = useTableSortAndFilter(localStationTypes, 'id', 'asc');
   const deviceTypesTable = useTableSortAndFilter(localDeviceTypes, 'id', 'asc');
   const devicesTable = useTableSortAndFilter(localDevices, 'id', 'asc');
@@ -255,6 +279,7 @@ export default function MasterData({
   const [buyerForm, setBuyerForm] = useState({ name: '', remark: '' });
   const [modelGroupForm, setModelGroupForm] = useState({ buyerId: '', name: '', remark: '' });
   const [modelForm, setModelForm] = useState({ modelGroupId: '', name: '', remark: '' });
+  const [jobMappingForm, setJobMappingForm] = useState({ jobFile: '', modelId: '', remark: '' });
   const [stationTypeForm, setStationTypeForm] = useState({ name: '', remark: '' });
   const [lineForm, setLineForm] = useState({ name: '', remark: '' });
   const [stationForm, setStationForm] = useState({ lineId: '', modelGroupId: '', stationTypeId: '', name: '', remark: '' });
@@ -274,8 +299,10 @@ export default function MasterData({
       await actionFn();
       setEditModal(null);
       await onRefresh();
+      return true;
     } catch (err) {
       alert(err.response?.data?.error || err.message);
+      return false;
     } finally {
       setLoading(false);
     }
@@ -287,14 +314,29 @@ export default function MasterData({
   const handleDeleteBuyer = (id, name) => { if (window.confirm(`Xóa Buyer "${name}"?`)) handleAction(async () => { await MasterDataApi.deleteBuyer(id); }); };
 
   // MODEL GROUP
-  const handleCreateModelGroup = (e) => { e.preventDefault(); if (!modelGroupForm.name) return; handleAction(async () => { await MasterDataApi.createModelGroup({ ...modelGroupForm, buyerId: modelGroupForm.buyerId ? parseInt(modelGroupForm.buyerId) : null }); setModelGroupForm({ buyerId: '', name: '', remark: '' }); }); };
+  const handleCreateModelGroup = (e) => { e.preventDefault(); if (!modelGroupForm.name) return; handleAction(async () => { await MasterDataApi.createModelGroup({ ...modelGroupForm, buyerId: modelGroupForm.buyerId ? parseInt(modelGroupForm.buyerId) : null }); setModelGroupForm(current => ({ ...current, name: '', remark: '' })); }); };
   const handleUpdateModelGroup = (id, data) => handleAction(async () => { await MasterDataApi.updateModelGroup(id, { ...data, buyerId: data.buyerId ? parseInt(data.buyerId) : null }); });
   const handleDeleteModelGroup = (id, name) => { if (window.confirm(`Xóa Model Group "${name}"?`)) handleAction(async () => { await MasterDataApi.deleteModelGroup(id); }); };
 
   // MODEL ITEM
-  const handleCreateModel = (e) => { e.preventDefault(); if (!modelForm.name) return; handleAction(async () => { await MasterDataApi.createModel({ ...modelForm, modelGroupId: modelForm.modelGroupId ? parseInt(modelForm.modelGroupId) : null }); setModelForm({ modelGroupId: '', name: '', remark: '' }); }); };
+  const handleCreateModel = (e) => { e.preventDefault(); if (!modelForm.name) return; handleAction(async () => { await MasterDataApi.createModel({ ...modelForm, modelGroupId: modelForm.modelGroupId ? parseInt(modelForm.modelGroupId) : null }); setModelForm(current => ({ ...current, name: '', remark: '' })); }); };
   const handleUpdateModel = (id, data) => handleAction(async () => { await MasterDataApi.updateModel(id, { ...data, modelGroupId: data.modelGroupId ? parseInt(data.modelGroupId) : null }); });
   const handleDeleteModel = (id, name) => { if (window.confirm(`Xóa Model "${name}"?`)) handleAction(async () => { await MasterDataApi.deleteModel(id); }); };
+
+  const handleSaveJobMapping = async (e) => { e.preventDefault(); if (!jobMappingForm.jobFile.trim() || !jobMappingForm.modelId) return; const saved = await handleAction(async () => { await MasterDataApi.saveJobFileModelMapping({ ...jobMappingForm, modelId: parseInt(jobMappingForm.modelId) }); setJobMappingForm(current => ({ ...current, jobFile: '', remark: '' })); }); if (saved) await loadJobMappings(); };
+  const handleDeleteJobMapping = async (id, jobFile) => { if (window.confirm(`Xóa mapping Job File "${jobFile}"?`)) { const saved = await handleAction(async () => { await MasterDataApi.deleteJobFileModelMapping(id); }); if (saved) await loadJobMappings(); } };
+  const toggleJobMappingSelection = (id) => setSelectedJobMappingIds(current => current.includes(id) ? current.filter(x => x !== id) : [...current, id]);
+  const toggleCurrentJobMappingPage = () => setSelectedJobMappingIds(current => allCurrentJobFilesSelected
+    ? current.filter(id => !currentJobPageIds.includes(id))
+    : [...new Set([...current, ...currentJobPageIds])]);
+  const handleBulkSaveJobMappings = async () => {
+    if (!bulkJobMappingModelId || selectedJobMappingIds.length === 0) return;
+    const saved = await handleAction(() => MasterDataApi.bulkSaveJobFileModelMappings({ ids: selectedJobMappingIds, modelId: parseInt(bulkJobMappingModelId) }));
+    if (saved) {
+      setSelectedJobMappingIds([]);
+      await loadJobMappings();
+    }
+  };
 
   // STATION TYPE
   const handleCreateStationType = (e) => { e.preventDefault(); if (!stationTypeForm.name) return; handleAction(async () => { await MasterDataApi.createStationType(stationTypeForm); setStationTypeForm({ name: '', remark: '' }); }); };
@@ -307,12 +349,12 @@ export default function MasterData({
   const handleDeleteLine = (id, name) => { if (window.confirm(`Xóa Line "${name}"?`)) handleAction(async () => { await MasterDataApi.deleteLine(id); }); };
 
   // STATION
-  const handleCreateStation = (e) => { e.preventDefault(); if (!stationForm.name || !stationForm.lineId) return; handleAction(async () => { await MasterDataApi.createStation({ lineId: parseInt(stationForm.lineId), modelGroupId: stationForm.modelGroupId ? parseInt(stationForm.modelGroupId) : null, stationTypeId: stationForm.stationTypeId ? parseInt(stationForm.stationTypeId) : null, name: stationForm.name, remark: stationForm.remark }); setStationForm({ lineId: '', modelGroupId: '', stationTypeId: '', name: '', remark: '' }); }); };
+  const handleCreateStation = (e) => { e.preventDefault(); if (!stationForm.name || !stationForm.lineId) return; handleAction(async () => { await MasterDataApi.createStation({ lineId: parseInt(stationForm.lineId), modelGroupId: stationForm.modelGroupId ? parseInt(stationForm.modelGroupId) : null, stationTypeId: stationForm.stationTypeId ? parseInt(stationForm.stationTypeId) : null, name: stationForm.name, remark: stationForm.remark }); setStationForm(current => ({ ...current, name: '', remark: '' })); }); };
   const handleUpdateStation = (id, data) => handleAction(async () => { await MasterDataApi.updateStation(id, { lineId: parseInt(data.lineId), modelGroupId: data.modelGroupId ? parseInt(data.modelGroupId) : null, stationTypeId: data.stationTypeId ? parseInt(data.stationTypeId) : null, name: data.name, processInfo: data.processInfo, remark: data.remark, cpkStepNumber: data.cpkStepNumber ? parseInt(data.cpkStepNumber) : null, cpkStepName: data.cpkStepName || '', cpkJobFile: data.cpkJobFile || '' }); });
   const handleDeleteStation = (id, name) => { if (window.confirm(`Xóa Station "${name}"?`)) handleAction(async () => { await MasterDataApi.deleteStation(id); }); };
 
   // CHANNEL
-  const handleCreateChannel = (e) => { e.preventDefault(); if (!channelForm.name || !channelForm.stationId) return; handleAction(async () => { await MasterDataApi.createChannel({ stationId: parseInt(channelForm.stationId), name: channelForm.name, machinePartNo: channelForm.machinePartNo, gmesName: channelForm.gmesName, ipAddress: channelForm.ipAddress, macAddress: channelForm.macAddress }); setChannelForm({ lineId: '', stationId: '', name: '', machinePartNo: '', gmesName: '', ipAddress: '', macAddress: '' }); }); };
+  const handleCreateChannel = (e) => { e.preventDefault(); if (!channelForm.name || !channelForm.stationId) return; handleAction(async () => { await MasterDataApi.createChannel({ stationId: parseInt(channelForm.stationId), name: channelForm.name, machinePartNo: channelForm.machinePartNo, gmesName: channelForm.gmesName, ipAddress: channelForm.ipAddress, macAddress: channelForm.macAddress }); setChannelForm(current => ({ ...current, name: '', machinePartNo: '', gmesName: '', ipAddress: '', macAddress: '' })); }); };
   const handleUpdateChannel = (id, data) => handleAction(async () => { await MasterDataApi.updateChannel(id, { stationId: parseInt(data.stationId), name: data.name, machinePartNo: data.machinePartNo, gmesName: data.gmesName, ipAddress: data.ipAddress, macAddress: data.macAddress, status: data.status, remark: data.remark }); });
   const handleDeleteChannel = (id, name) => { if (window.confirm(`Xóa Channel "${name}"?`)) handleAction(async () => { await MasterDataApi.deleteChannel(id); }); };
 
@@ -322,7 +364,7 @@ export default function MasterData({
   const handleDeleteDeviceType = (id, name) => { if (window.confirm(`Xóa Device Type "${name}"?`)) handleAction(async () => { await MasterDataApi.deleteDeviceType(id); }); };
 
   // DEVICE
-  const handleCreateDevice = (e) => { e.preventDefault(); if (!deviceForm.name || !deviceForm.channelId) return; handleAction(async () => { await MasterDataApi.createDevice({ ...deviceForm, channelId: parseInt(deviceForm.channelId), deviceTypeId: deviceForm.deviceTypeId ? parseInt(deviceForm.deviceTypeId) : null }); setDeviceForm({ channelId: '', deviceTypeId: '', name: '', modelPartNo: '', serialNumber: '', status: 'online', remark: '' }); }); };
+  const handleCreateDevice = (e) => { e.preventDefault(); if (!deviceForm.name || !deviceForm.channelId) return; handleAction(async () => { await MasterDataApi.createDevice({ ...deviceForm, channelId: parseInt(deviceForm.channelId), deviceTypeId: deviceForm.deviceTypeId ? parseInt(deviceForm.deviceTypeId) : null }); setDeviceForm(current => ({ ...current, name: '', modelPartNo: '', serialNumber: '', remark: '' })); }); };
   const handleUpdateDevice = (id, data) => handleAction(async () => { await MasterDataApi.updateDevice(id, { ...data, channelId: parseInt(data.channelId), deviceTypeId: deviceForm.deviceTypeId ? parseInt(deviceForm.deviceTypeId) : null }); });
   const handleDeleteDevice = (id, name) => { if (window.confirm(`Xóa Device "${name}"?`)) handleAction(async () => { await MasterDataApi.deleteDevice(id); }); };
 
@@ -358,6 +400,7 @@ export default function MasterData({
           { id: 'channels', label: 'Channels', icon: Radio, count: localChannels.length, conflict: ipConflicts.length },
           { id: 'model-groups', label: 'Model Groups', icon: Box, count: localModelGroups.length },
           { id: 'models', label: 'Models', icon: Tag, count: localModels.length },
+          { id: 'job-model-mapping', label: `Job → Model (${unmappedJobFileCount} chưa map)`, icon: FileText, count: jobMappingPage.totalCount },
           { id: 'station-types', label: 'Station Types', icon: Sliders, count: localStationTypes.length },
           { id: 'device-types', label: 'Device Types', icon: HardDrive, count: localDeviceTypes.length },
           { id: 'devices', label: 'Devices', icon: Cpu, count: localDevices.length },
@@ -938,6 +981,49 @@ export default function MasterData({
                   )}
                 </tbody>
               </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {activeSubTab === 'job-model-mapping' && (
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <div className="glass-panel p-6 border border-white/10 space-y-4">
+            <div className={`rounded-xl border px-4 py-3 ${unmappedJobFileCount > 0 ? 'border-amber-500/30 bg-amber-500/10' : 'border-emerald-500/30 bg-emerald-500/10'}`}>
+              <div className="text-[11px] uppercase tracking-wider text-slate-400">Job File chưa mapping Model</div>
+              <div className={`mt-1 text-2xl font-bold ${unmappedJobFileCount > 0 ? 'text-amber-300' : 'text-emerald-300'}`}>{unmappedJobFileCount}</div>
+            </div>
+            <h3 className="text-sm font-bold text-white flex items-center gap-2"><Plus className="w-4 h-4 text-blue-400" /> Mapping Job File → Model</h3>
+            <form onSubmit={handleSaveJobMapping} className="space-y-4">
+              <div><label className="block text-xs font-semibold text-slate-300 mb-1.5">JOB FILE *</label><input required className="w-full bg-slate-950/80 border border-slate-700/80 rounded-xl px-3.5 py-2.5 text-xs text-white" placeholder="Nhập chính xác tên Job File" value={jobMappingForm.jobFile} onChange={e => setJobMappingForm({...jobMappingForm, jobFile:e.target.value})}/></div>
+              <div><label className="block text-xs font-semibold text-slate-300 mb-1.5">MODEL *</label><select required className="w-full bg-slate-950/80 border border-slate-700/80 rounded-xl px-3.5 py-2.5 text-xs text-white" value={jobMappingForm.modelId} onChange={e => setJobMappingForm({...jobMappingForm, modelId:e.target.value})}><option value="">-- Chọn Model --</option>{localModels.map(m => <option key={m.id} value={m.id}>{m.name}{m.modelGroupName ? ` (${m.modelGroupName})` : ''}</option>)}</select></div>
+              <div><label className="block text-xs font-semibold text-slate-300 mb-1.5">REMARK</label><input className="w-full bg-slate-950/80 border border-slate-700/80 rounded-xl px-3.5 py-2.5 text-xs text-white" value={jobMappingForm.remark} onChange={e => setJobMappingForm({...jobMappingForm, remark:e.target.value})}/></div>
+              <button disabled={loading} className="w-full rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 py-2.5 text-xs font-bold text-white">{loading ? 'Đang lưu...' : 'Lưu mapping'}</button>
+              <p className="text-[11px] text-slate-500">Nếu Job File đã tồn tại, Model và Remark sẽ được cập nhật.</p>
+            </form>
+          </div>
+          <div className="lg:col-span-2 glass-panel p-6 border border-white/10 space-y-4">
+            <div className="flex flex-wrap gap-3 rounded-xl border border-white/10 bg-slate-900/60 p-3">
+              <div className="relative min-w-[220px] flex-1">
+                <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
+                <input value={jobMappingSearch} onChange={e => { setJobMappingSearch(e.target.value); setJobMappingPageNumber(1); }} placeholder="Tìm Job File, Model, Remark..." className="w-full rounded-xl border border-slate-700/80 bg-slate-950/80 py-2 pl-9 pr-3 text-xs text-white" />
+              </div>
+              <select value={jobMappingStatus} onChange={e => { setJobMappingStatus(e.target.value); setJobMappingPageNumber(1); }} className="rounded-xl border border-slate-700/80 bg-slate-950/80 px-3 py-2 text-xs text-white">
+                <option value="all">Tất cả</option><option value="unmapped">Chưa mapping</option><option value="mapped">Đã mapping</option>
+              </select>
+              <span className="self-center text-xs text-slate-400">{jobMappingPage.filteredCount.toLocaleString()} / {jobMappingPage.totalCount.toLocaleString()}</span>
+            </div>
+            <div className="flex flex-wrap items-center gap-3 rounded-xl border border-blue-500/20 bg-blue-500/5 p-3">
+              <span className="text-xs font-semibold text-blue-300">Đã chọn: {selectedJobMappingIds.length}</span>
+              <select value={bulkJobMappingModelId} onChange={e => setBulkJobMappingModelId(e.target.value)} className="min-w-[220px] flex-1 rounded-xl border border-slate-700/80 bg-slate-950/80 px-3 py-2 text-xs text-white"><option value="">-- Chọn Model để gán hàng loạt --</option>{localModels.map(m => <option key={m.id} value={m.id}>{m.name}{m.modelGroupName ? ` (${m.modelGroupName})` : ''}</option>)}</select>
+              <button disabled={loading || !bulkJobMappingModelId || selectedJobMappingIds.length === 0} onClick={handleBulkSaveJobMappings} className="rounded-xl bg-blue-600 px-4 py-2 text-xs font-bold text-white disabled:opacity-40">Gán Model</button>
+              {selectedJobMappingIds.length > 0 && <button onClick={() => setSelectedJobMappingIds([])} className="text-xs text-slate-400 hover:text-white">Bỏ chọn</button>}
+            </div>
+            <div className="overflow-x-auto rounded-xl border border-white/10"><table className="w-full text-left text-xs"><thead className="bg-slate-950/90 text-slate-400 uppercase"><tr><th className="w-10 p-3.5"><input type="checkbox" checked={allCurrentJobFilesSelected} onChange={toggleCurrentJobMappingPage} title="Chọn tất cả trang hiện tại"/></th><th className="p-3.5">Job File</th><th className="p-3.5">Model</th><th className="p-3.5">Remark</th><th className="p-3.5 text-right">Thao tác</th></tr></thead><tbody className="divide-y divide-slate-800/60">{jobMappingsLoading ? <tr><td colSpan={5} className="p-8 text-center text-slate-500">Đang tải...</td></tr> : jobMappingPage.items.length === 0 ? <tr><td colSpan={5} className="p-8 text-center text-slate-500">Không tìm thấy Job File.</td></tr> : jobMappingPage.items.map(x => <tr key={x.id} className={`hover:bg-slate-800/50 ${selectedJobMappingIds.includes(x.id) ? 'bg-blue-500/10' : ''}`}><td className="p-3.5"><input type="checkbox" checked={selectedJobMappingIds.includes(x.id)} onChange={() => toggleJobMappingSelection(x.id)}/></td><td className="p-3.5 break-all font-mono text-amber-300">{x.jobFile}</td><td className="p-3.5 font-semibold text-white">{x.modelName || <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-[10px] text-amber-300">Chưa mapping</span>}</td><td className="p-3.5 text-slate-400">{x.remark || '—'}</td><td className="p-3.5 text-right"><div className="flex justify-end gap-2"><button onClick={() => setJobMappingForm({ jobFile: x.jobFile, modelId: x.modelId ? String(x.modelId) : '', remark: x.remark || '' })} className="rounded-lg bg-blue-500/10 px-2.5 py-1.5 text-blue-300">{x.modelId ? 'Sửa' : 'Gán Model'}</button>{x.modelId && <button title="Bỏ mapping" onClick={() => handleDeleteJobMapping(x.id, x.jobFile)} className="p-1.5 rounded-lg bg-rose-500/10 text-rose-400"><Trash2 className="w-3.5 h-3.5"/></button>}</div></td></tr>)}</tbody></table></div>
+            <div className="flex items-center justify-between text-xs text-slate-400">
+              <button disabled={jobMappingPage.page <= 1 || jobMappingsLoading} onClick={() => setJobMappingPageNumber(p => Math.max(1, p - 1))} className="rounded-lg border border-slate-700 px-3 py-1.5 disabled:opacity-40">Trang trước</button>
+              <span>Trang <strong className="text-white">{jobMappingPage.page}</strong> / {jobMappingPage.totalPages}</span>
+              <button disabled={jobMappingPage.page >= jobMappingPage.totalPages || jobMappingsLoading} onClick={() => setJobMappingPageNumber(p => p + 1)} className="rounded-lg border border-slate-700 px-3 py-1.5 disabled:opacity-40">Trang sau</button>
             </div>
           </div>
         </div>

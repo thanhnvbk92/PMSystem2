@@ -39,5 +39,7 @@ public class ImprovementAction
     [Column("completed_at")] public DateTime? CompletedAt { get; set; }
     [Column("evidence")] public string? Evidence { get; set; }
     [Column("created_at")] public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
-    [ForeignKey(nameof(ImprovementId))] public Improvement? Improvement { get; set; }
+    [ForeignKey(nameof(ImprovementId))]
+    [System.Text.Json.Serialization.JsonIgnore]
+    public Improvement? Improvement { get; set; }
 }

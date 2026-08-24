@@ -12,6 +12,7 @@ namespace PMSystem2.Api.Data
         public DbSet<Buyer> Buyers => Set<Buyer>();
         public DbSet<ModelGroup> ModelGroups => Set<ModelGroup>();
         public DbSet<ModelItem> Models => Set<ModelItem>();
+        public DbSet<JobFileModelMapping> JobFileModelMappings => Set<JobFileModelMapping>();
         public DbSet<StationType> StationTypes => Set<StationType>();
         public DbSet<Line> Lines => Set<Line>();
         public DbSet<Station> Stations => Set<Station>();
@@ -44,6 +45,12 @@ namespace PMSystem2.Api.Data
                 .WithMany(mg => mg.Models)
                 .HasForeignKey(m => m.ModelGroupId)
                 .OnDelete(DeleteBehavior.SetNull);
+
+            modelBuilder.Entity<JobFileModelMapping>()
+                .HasOne(m => m.Model).WithMany(m => m.JobFileMappings)
+                .HasForeignKey(m => m.ModelId).OnDelete(DeleteBehavior.SetNull);
+            modelBuilder.Entity<JobFileModelMapping>()
+                .HasIndex(m => m.JobFile).IsUnique();
 
             // 3. Station -> Line, ModelGroup, StationType (FKs)
             modelBuilder.Entity<Station>()
@@ -97,9 +104,8 @@ namespace PMSystem2.Api.Data
 
             // 7. PcbResult Index
             modelBuilder.Entity<PcbResult>()
-                .HasIndex(p => new { p.StationId, p.Pid, p.InspectTime, p.Result })
-                .IsUnique()
-                .HasDatabaseName("UX_pcb_results_station_pid_time_result");
+                .HasIndex(p => new { p.Pid, p.Result, p.StartTime })
+                .HasDatabaseName("IX_pcb_results_pid_result_start_time");
 
             modelBuilder.Entity<CpkStepCatalog>()
                 .HasIndex(s => new { s.StationId, s.JobFile, s.StepNumber, s.StepName })

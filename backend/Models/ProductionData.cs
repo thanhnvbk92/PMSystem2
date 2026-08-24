@@ -386,6 +386,7 @@ namespace PMSystem2.Api.Models
         int ActiveChannels,
         List<HourlyStatDto> RecentHourlyStats
     );
+    public record ProductionCounterDto(int TotalInspected, int TotalOk, int TotalNg, double OverallYieldRate);
 
     public record LineYieldStatDto(
         int LineId,
@@ -432,8 +433,11 @@ namespace PMSystem2.Api.Models
         long Total,
         long Ok,
         long Ng,
-        double YieldRate
+        double YieldRate,
+        double DefectRate
     );
+
+    public record ModelYieldStatDto(int ModelId, string ModelName, long Total, long Ok, long Ng, double YieldRate, double DefectRate);
 
     public record BiAnalyticsMatrixDto(
         long TotalInspected,
@@ -442,6 +446,7 @@ namespace PMSystem2.Api.Models
         double OverallYieldRate,
         List<HourlyStatDto> TimeTrend,
         List<LineYieldStatDto> LineStats,
+        List<ModelYieldStatDto> ModelStats,
         List<StationYieldStatDto> StationStats,
         List<ChannelYieldStatDto> MachineStats,
         List<DefectParetoStatDto> DefectStats,

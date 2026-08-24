@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   Search, RefreshCw, Eye, ShieldCheck, 
   X, FileSpreadsheet, Download, AlertTriangle, Calendar, Clock
@@ -10,6 +10,7 @@ export default function PcbSearch({ lines, stations, channels = [], onFilterChan
   const [selectedStation, setSelectedStation] = useState('');
   const [resultFilter, setResultFilter] = useState('ALL'); // ALL, OK, NG
   const [searchPid, setSearchPid] = useState('');
+  const [searchError, setSearchError] = useState('');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   const [activeModalItem, setActiveModalItem] = useState(null);
@@ -21,17 +22,14 @@ export default function PcbSearch({ lines, stations, channels = [], onFilterChan
   const [isSearching, setIsSearching] = useState(false);
   const [searchExecutionTime, setSearchExecutionTime] = useState(null);
 
-  const startDateInputRef = useRef(null);
-  const endDateInputRef = useRef(null);
-
   // Execute server-side search across full PostgreSQL database with execution timer
-  const executeSearch = async (lineId, stationId, pid, filter, start, end) => {
+  const executeSearch = async (lineId, stationId, pid, error, filter, start, end) => {
     setIsSearching(true);
     const startTime = performance.now();
     try {
       const formattedStart = start ? new Date(start).toISOString() : null;
       const formattedEnd = end ? new Date(end).toISOString() : null;
-      const data = await ProductionApi.getLatest(500, lineId, stationId, pid, filter, formattedStart, formattedEnd);
+      const data = await ProductionApi.getLatest(500, lineId, stationId, pid, error, filter, formattedStart, formattedEnd);
       const endTime = performance.now();
       setSearchExecutionTime((endTime - startTime).toFixed(1));
       setSearchResults(data || []);
@@ -45,7 +43,7 @@ export default function PcbSearch({ lines, stations, channels = [], onFilterChan
   const handleManualSearch = () => {
     const lineId = selectedLine ? parseInt(selectedLine) : null;
     const stationId = selectedStation ? parseInt(selectedStation) : null;
-    executeSearch(lineId, stationId, searchPid, resultFilter, startDate, endDate);
+    executeSearch(lineId, stationId, searchPid, searchError, resultFilter, startDate, endDate);
   };
 
   // Run search on initial component mount
@@ -71,6 +69,7 @@ export default function PcbSearch({ lines, stations, channels = [], onFilterChan
     setSelectedStation('');
     setResultFilter('ALL');
     setSearchPid('');
+    setSearchError('');
     setStartDate('');
     setEndDate('');
     onFilterChange(null, null);
@@ -225,7 +224,7 @@ export default function PcbSearch({ lines, stations, channels = [], onFilterChan
 
     try {
       // 1. Get total record count for current filter
-      const count = await ProductionApi.getExportCount(lineId, stationId, searchPid, resultFilter, formattedStart, formattedEnd);
+      const count = await ProductionApi.getExportCount(lineId, stationId, searchPid, searchError, resultFilter, formattedStart, formattedEnd);
       
       // 2. Warn if large dataset (> 3000 rows)
       if (count > 3000) {
@@ -234,13 +233,14 @@ export default function PcbSearch({ lines, stations, channels = [], onFilterChan
           lineId,
           stationId,
           searchPid,
+          searchError,
           resultFilter,
           startDate: formattedStart,
           endDate: formattedEnd
         });
       } else {
         // Download all matching rows directly
-        await ProductionApi.downloadExportCsv(null, lineId, stationId, searchPid, resultFilter, formattedStart, formattedEnd);
+        await ProductionApi.downloadExportCsv(null, lineId, stationId, searchPid, searchError, resultFilter, formattedStart, formattedEnd);
       }
     } catch (err) {
       console.error('Lỗi xuất CSV từ server:', err);
@@ -251,11 +251,11 @@ export default function PcbSearch({ lines, stations, channels = [], onFilterChan
 
   const confirmDownloadAll = async () => {
     if (!exportWarningModal) return;
-    const { lineId, stationId, searchPid, resultFilter, startDate: start, endDate: end } = exportWarningModal;
+    const { lineId, stationId, searchPid, searchError, resultFilter, startDate: start, endDate: end } = exportWarningModal;
     setExportWarningModal(null);
     setIsExportingServer(true);
     try {
-      await ProductionApi.downloadExportCsv(null, lineId, stationId, searchPid, resultFilter, start, end);
+      await ProductionApi.downloadExportCsv(null, lineId, stationId, searchPid, searchError, resultFilter, start, end);
     } catch (err) {
       console.error('Lỗi xuất dữ liệu lớn CSV:', err);
     } finally {
@@ -290,6 +290,23 @@ export default function PcbSearch({ lines, stations, channels = [], onFilterChan
                   onClick={() => setSearchPid('')}
                   className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-white"
                 >
+                  <X className="w-4 h-4" />
+                </button>
+              )}
+            </div>
+
+            <div className="relative flex-1">
+              <AlertTriangle className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-rose-400" />
+              <input
+                type="text"
+                placeholder="Tên hoặc mã lỗi (ví dụ READ_FID)..."
+                value={searchError}
+                onChange={(e) => setSearchError(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && handleManualSearch()}
+                className="w-full bg-slate-950/90 border border-slate-700/80 rounded-xl pl-10 pr-8 py-2.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-rose-500 font-mono shadow-inner"
+              />
+              {searchError && (
+                <button onClick={() => setSearchError('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-white">
                   <X className="w-4 h-4" />
                 </button>
               )}
@@ -385,7 +402,7 @@ export default function PcbSearch({ lines, stations, channels = [], onFilterChan
             </div>
 
             {/* Reset Filters */}
-            {(selectedLine || selectedStation || resultFilter !== 'ALL' || searchPid || startDate || endDate) && (
+            {(selectedLine || selectedStation || resultFilter !== 'ALL' || searchPid || searchError || startDate || endDate) && (
               <button
                 onClick={resetFilters}
                 className="p-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold flex items-center gap-1 transition-colors"
@@ -405,38 +422,67 @@ export default function PcbSearch({ lines, stations, channels = [], onFilterChan
               <span>Khoảng thời gian:</span>
             </div>
 
-            {/* Start DateTime Input Picker */}
-            <div 
-              onClick={() => startDateInputRef.current?.showPicker && startDateInputRef.current.showPicker()}
-              className="flex items-center gap-2 bg-slate-950/90 hover:bg-slate-900 border border-slate-700/80 rounded-xl px-3 py-1.5 text-xs text-white cursor-pointer transition-colors group"
-            >
+            {/* Date and time are separate so operators can type the hour directly. */}
+            <div className="flex items-center gap-2 bg-slate-950/90 border border-slate-700/80 rounded-xl px-3 py-1.5 text-xs text-white">
               <span className="text-slate-400 text-[11px] font-sans">Từ:</span>
               <input
-                ref={startDateInputRef}
-                type="datetime-local"
-                value={startDate}
-                onChange={(e) => setStartDate(e.target.value)}
-                onClick={(e) => e.target.showPicker && e.target.showPicker()}
-                className="bg-transparent text-xs text-white focus:outline-none font-mono cursor-pointer [color-scheme:dark]"
+                type="date"
+                value={startDate.slice(0, 10)}
+                onChange={(e) => setStartDate(e.target.value ? `${e.target.value}T${startDate.slice(11, 16) || '00:00'}` : '')}
+                className="bg-transparent text-xs text-white focus:outline-none font-mono [color-scheme:dark]"
               />
-              <Calendar className="w-3.5 h-3.5 text-slate-500 group-hover:text-blue-400 transition-colors" />
+              <div className="flex items-center gap-1 font-mono">
+                <select
+                  aria-label="Giờ bắt đầu (24 giờ)"
+                  disabled={!startDate}
+                  value={startDate.slice(11, 13)}
+                  onChange={(e) => setStartDate(`${startDate.slice(0, 10)}T${e.target.value}:${startDate.slice(14, 16) || '00'}`)}
+                  className="bg-slate-900 rounded px-1 py-0.5 text-xs text-white disabled:opacity-40"
+                >
+                  {Array.from({ length: 24 }, (_, hour) => String(hour).padStart(2, '0')).map(hour => <option key={hour} value={hour}>{hour}</option>)}
+                </select>
+                <span>:</span>
+                <select
+                  aria-label="Phút bắt đầu"
+                  disabled={!startDate}
+                  value={startDate.slice(14, 16)}
+                  onChange={(e) => setStartDate(`${startDate.slice(0, 10)}T${startDate.slice(11, 13) || '00'}:${e.target.value}`)}
+                  className="bg-slate-900 rounded px-1 py-0.5 text-xs text-white disabled:opacity-40"
+                >
+                  {Array.from({ length: 60 }, (_, minute) => String(minute).padStart(2, '0')).map(minute => <option key={minute} value={minute}>{minute}</option>)}
+                </select>
+              </div>
             </div>
 
-            {/* End DateTime Input Picker */}
-            <div 
-              onClick={() => endDateInputRef.current?.showPicker && endDateInputRef.current.showPicker()}
-              className="flex items-center gap-2 bg-slate-950/90 hover:bg-slate-900 border border-slate-700/80 rounded-xl px-3 py-1.5 text-xs text-white cursor-pointer transition-colors group"
-            >
+            <div className="flex items-center gap-2 bg-slate-950/90 border border-slate-700/80 rounded-xl px-3 py-1.5 text-xs text-white">
               <span className="text-slate-400 text-[11px] font-sans">Đến:</span>
               <input
-                ref={endDateInputRef}
-                type="datetime-local"
-                value={endDate}
-                onChange={(e) => setEndDate(e.target.value)}
-                onClick={(e) => e.target.showPicker && e.target.showPicker()}
-                className="bg-transparent text-xs text-white focus:outline-none font-mono cursor-pointer [color-scheme:dark]"
+                type="date"
+                value={endDate.slice(0, 10)}
+                onChange={(e) => setEndDate(e.target.value ? `${e.target.value}T${endDate.slice(11, 16) || '23:59'}` : '')}
+                className="bg-transparent text-xs text-white focus:outline-none font-mono [color-scheme:dark]"
               />
-              <Calendar className="w-3.5 h-3.5 text-slate-500 group-hover:text-blue-400 transition-colors" />
+              <div className="flex items-center gap-1 font-mono">
+                <select
+                  aria-label="Giờ kết thúc (24 giờ)"
+                  disabled={!endDate}
+                  value={endDate.slice(11, 13)}
+                  onChange={(e) => setEndDate(`${endDate.slice(0, 10)}T${e.target.value}:${endDate.slice(14, 16) || '59'}`)}
+                  className="bg-slate-900 rounded px-1 py-0.5 text-xs text-white disabled:opacity-40"
+                >
+                  {Array.from({ length: 24 }, (_, hour) => String(hour).padStart(2, '0')).map(hour => <option key={hour} value={hour}>{hour}</option>)}
+                </select>
+                <span>:</span>
+                <select
+                  aria-label="Phút kết thúc"
+                  disabled={!endDate}
+                  value={endDate.slice(14, 16)}
+                  onChange={(e) => setEndDate(`${endDate.slice(0, 10)}T${endDate.slice(11, 13) || '23'}:${e.target.value}`)}
+                  className="bg-slate-900 rounded px-1 py-0.5 text-xs text-white disabled:opacity-40"
+                >
+                  {Array.from({ length: 60 }, (_, minute) => String(minute).padStart(2, '0')).map(minute => <option key={minute} value={minute}>{minute}</option>)}
+                </select>
+              </div>
             </div>
 
             {/* Quick Presets */}

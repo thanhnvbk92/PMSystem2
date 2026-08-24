@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { 
   BarChart3, Layers, AlertTriangle, Cpu, Clock, 
   Sparkles, CheckCircle, ShieldCheck, Filter, RefreshCw, FileSpreadsheet, Download,
-  Activity, XCircle, FileText, ChevronRight
+  Activity, XCircle, FileText, ChevronRight, Tag
 } from 'lucide-react';
 import { 
   AreaChart, Area, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, 
@@ -16,6 +16,8 @@ function Analytics({ lines, stations, channels = [], startDate, endDate, onFilte
   const [selectedLine, setSelectedLine] = useState('');
   const [selectedStation, setSelectedStation] = useState('');
   const [selectedChannel, setSelectedChannel] = useState('');
+  const [selectedModel, setSelectedModel] = useState('');
+  const [selectedModelName, setSelectedModelName] = useState('');
   const [selectedErrorCode, setSelectedErrorCode] = useState('');
   const [selectedJobFile, setSelectedJobFile] = useState('');
   const [selectedHours, setSelectedHours] = useState(24);
@@ -42,11 +44,12 @@ function Analytics({ lines, stations, channels = [], startDate, endDate, onFilte
       const lineId = selectedLine ? parseInt(selectedLine) : null;
       const stationId = selectedStation ? parseInt(selectedStation) : null;
       const channelId = selectedChannel ? parseInt(selectedChannel) : null;
+      const modelId = selectedModel ? parseInt(selectedModel) : null;
       const errCode = selectedErrorCode || null;
       const job = selectedJobFile || null;
 
       const data = await ProductionApi.getBiMatrix(
-        lineId, stationId, channelId, errCode, job,
+        lineId, stationId, channelId, modelId, errCode, job,
         selectedTimeWindow?.start?.toISOString() || null,
         selectedTimeWindow?.end?.toISOString() || null,
         selectedHours
@@ -62,7 +65,7 @@ function Analytics({ lines, stations, channels = [], startDate, endDate, onFilte
 
   useEffect(() => {
     fetchBiMatrix();
-  }, [selectedLine, selectedStation, selectedChannel, selectedErrorCode, selectedJobFile, selectedHours, selectedTimeWindow]);
+  }, [selectedLine, selectedStation, selectedChannel, selectedModel, selectedErrorCode, selectedJobFile, selectedHours, selectedTimeWindow]);
 
   const handleLineChange = (val) => {
     setSelectedLine(val);
@@ -81,6 +84,16 @@ function Analytics({ lines, stations, channels = [], startDate, endDate, onFilte
     setSelectedChannel(val);
   };
 
+  const handleModelChange = (modelId, modelName = '') => {
+    setSelectedModel(modelId ? String(modelId) : '');
+    setSelectedModelName(modelId ? modelName : '');
+  };
+
+  const handleModelChartClick = (chartState) => {
+    const model = chartState?.activePayload?.[0]?.payload;
+    if (model?.modelId) handleModelChange(model.modelId, model.displayName);
+  };
+
   const handleErrorCodeChange = (val) => {
     setSelectedErrorCode(val);
   };
@@ -93,6 +106,8 @@ function Analytics({ lines, stations, channels = [], startDate, endDate, onFilte
     setSelectedLine('');
     setSelectedStation('');
     setSelectedChannel('');
+    setSelectedModel('');
+    setSelectedModelName('');
     setSelectedErrorCode('');
     setSelectedJobFile('');
     setSelectedHours(24);
@@ -100,7 +115,7 @@ function Analytics({ lines, stations, channels = [], startDate, endDate, onFilte
     if (onFilterChange) onFilterChange(null, null, null, null);
   };
 
-  const hasActiveFilters = selectedLine || selectedStation || selectedChannel || selectedErrorCode || selectedJobFile || selectedTimeWindow;
+  const hasActiveFilters = selectedLine || selectedStation || selectedChannel || selectedModel || selectedErrorCode || selectedJobFile || selectedTimeWindow;
 
   const filteredStations = useMemo(() => {
     if (!selectedLine) return stations || [];
@@ -173,11 +188,11 @@ function Analytics({ lines, stations, channels = [], startDate, endDate, onFilte
     const lineId = selectedLine ? parseInt(selectedLine) : null;
     const stationId = selectedStation ? parseInt(selectedStation) : null;
     try {
-      const count = await ProductionApi.getExportCount(lineId, stationId, null, null, startDate, endDate);
+      const count = await ProductionApi.getExportCount(lineId, stationId, null, null, null, startDate, endDate);
       if (count > 3000) {
         setExportWarningModal({ count, lineId, stationId });
       } else {
-        await ProductionApi.downloadExportCsv(null, lineId, stationId, null, null, startDate, endDate);
+        await ProductionApi.downloadExportCsv(null, lineId, stationId, null, null, null, startDate, endDate);
       }
     } catch (err) {
       console.error('Lỗi xuất CSV:', err);
@@ -192,7 +207,7 @@ function Analytics({ lines, stations, channels = [], startDate, endDate, onFilte
     setExportWarningModal(null);
     setIsExporting(true);
     try {
-      await ProductionApi.downloadExportCsv(null, lineId, stationId, null, null, startDate, endDate);
+      await ProductionApi.downloadExportCsv(null, lineId, stationId, null, null, null, startDate, endDate);
     } catch (err) {
       console.error('Lỗi xuất dữ liệu CSV:', err);
     } finally {
@@ -247,6 +262,19 @@ function Analytics({ lines, stations, channels = [], startDate, endDate, onFilte
           raw: l
         };
       });
+  }, [biData]);
+
+  const modelChartData = useMemo(() => {
+    if (!biData?.modelStats) return [];
+    return biData.modelStats.map(m => {
+      const total = m.total ?? m.Total ?? 0;
+      const ok = m.ok ?? m.Ok ?? 0;
+      const ng = m.ng ?? m.Ng ?? 0;
+      return { modelId: m.modelId ?? m.ModelId, displayName: m.modelName ?? m.ModelName,
+        Volume: total, OK: ok, NG: ng, DefectRate: total > 0 ? parseFloat((ng * 100 / total).toFixed(3)) : 0 };
+    })
+      .filter(m => m.Volume >= 10)
+      .sort((a, b) => b.DefectRate - a.DefectRate || b.NG - a.NG);
   }, [biData]);
 
   // Station Chart Data (Top 10 Lowest Yield Rate, with Line Name included)
@@ -514,6 +542,12 @@ function Analytics({ lines, stations, channels = [], startDate, endDate, onFilte
                 <button onClick={() => handleChannelChange('')} className="hover:text-white">✕</button>
               </span>
             )}
+            {selectedModel && (
+              <span className="px-2 py-0.5 rounded-md bg-amber-500/20 text-amber-300 border border-amber-500/30 flex items-center gap-1">
+                Model: {selectedModelName || `#${selectedModel}`}
+                <button onClick={() => handleModelChange('')} className="hover:text-white">✕</button>
+              </span>
+            )}
             {selectedErrorCode && (
               <span className="px-2 py-0.5 rounded-md bg-rose-500/20 text-rose-300 border border-rose-500/30 flex items-center gap-1">
                 Code: {selectedErrorCode}
@@ -572,7 +606,7 @@ function Analytics({ lines, stations, channels = [], startDate, endDate, onFilte
       </div>
 
       {/* SECTION 2: 3-COLUMN CORRELATION GRID (LINES, STATIONS, MACHINES) */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         
         {/* Chart A: Line Yield Rate (Stacked Volume Bars OK+NG + Yield Rate Line) */}
         <div className="glass-panel p-4 space-y-3">
@@ -610,6 +644,13 @@ function Analytics({ lines, stations, channels = [], startDate, endDate, onFilte
               </div>
             )}
           </div>
+        </div>
+
+        {/* Chart B: Model statistics derived from manual Job File mapping */}
+        <div className="glass-panel p-4 space-y-3">
+          <div className="flex items-center justify-between border-b border-white/5 pb-2"><h4 className="text-xs font-bold text-slate-200 uppercase tracking-wider flex items-center gap-1.5"><Tag className="w-3.5 h-3.5 text-amber-400"/>Tỷ lệ lỗi theo Model</h4><span className="text-[10px] text-slate-400 font-mono">Job File mapping</span></div>
+          <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-[9px] font-mono"><span className="text-rose-400">■ Fail (NG)</span><span className="text-emerald-400">■ Pass (OK)</span><span className="text-rose-300">— Tỷ lệ lỗi (%)</span></div>
+          <div className="h-64 w-full">{modelChartData.length > 0 ? <ResponsiveContainer width="100%" height="100%"><ComposedChart data={modelChartData} margin={{top:10,right:15,left:-15,bottom:55}} onClick={handleModelChartClick} className="cursor-pointer"><CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)"/><XAxis dataKey="displayName" stroke="#94a3b8" fontSize={9} interval={0} angle={-25} textAnchor="end"/><YAxis yAxisId="left" stroke="#64748b" fontSize={10}/><YAxis yAxisId="right" orientation="right" domain={[0,'auto']} stroke="#fb7185" fontSize={10} unit="%"/><Tooltip content={<DualAxisTooltip/>}/><Bar yAxisId="left" dataKey="OK" name="Pass (OK)" stackId="a" fill="#10b981" maxBarSize={28}/><Bar yAxisId="left" dataKey="NG" name="Fail (NG)" stackId="a" fill="#ef4444" radius={[4,4,0,0]} maxBarSize={28}/><Line yAxisId="right" type="monotone" dataKey="DefectRate" name="Tỷ lệ lỗi (%)" stroke="#fb7185" strokeWidth={2.5} dot={{r:3,fill:'#fb7185'}}/></ComposedChart></ResponsiveContainer> : <div className="h-full flex items-center justify-center text-center text-slate-500 text-xs">Chưa có dữ liệu Model.<br/>Hãy mapping Job File trong Master Data.</div>}</div>
         </div>
 
         {/* Chart B: Station Yield Rate (Top 10 Lowest Yield Rate, Stacked Volume Bars OK+NG + Yield Line) */}
@@ -697,7 +738,7 @@ function Analytics({ lines, stations, channels = [], startDate, endDate, onFilte
           <div className="flex items-center justify-between border-b border-white/5 pb-2">
             <h4 className="text-xs font-bold text-rose-300 uppercase tracking-wider flex items-center gap-1.5 font-display">
               <AlertTriangle className="w-4 h-4 text-rose-400" />
-              Top 10 Mã Lỗi (Defects Pareto)
+              Top 10 Step NG (Defects Pareto)
             </h4>
             <span className="text-[10px] text-slate-400 font-mono">Click thanh lỗi để lọc</span>
           </div>
@@ -743,14 +784,15 @@ function Analytics({ lines, stations, channels = [], startDate, endDate, onFilte
           </div>
 
           <div className="h-72 w-full overflow-y-auto pr-1">
-            {biData?.jobFileStats?.length > 0 ? (
+            {biData?.jobFileStats?.some(job => (job.total ?? job.Total ?? job.totalInspected ?? 0) >= 10) ? (
               <div className="space-y-1.5">
-                {biData.jobFileStats.map((job) => {
+                {biData.jobFileStats.filter(job => (job.total ?? job.Total ?? job.totalInspected ?? 0) >= 10).map((job) => {
                   const jobFileName = job.jobFile ?? job.JobFile ?? 'Unknown Job';
                   const total = job.total ?? job.Total ?? job.totalInspected ?? 0;
                   const ok = job.ok ?? job.Ok ?? job.okCount ?? 0;
                   const ng = job.ng ?? job.Ng ?? job.ngCount ?? 0;
                   const yieldRate = job.yieldRate ?? job.YieldRate ?? 0;
+                  const defectRate = job.defectRate ?? job.DefectRate ?? (total > 0 ? ng * 100 / total : 0);
                   const isSelected = selectedJobFile === jobFileName;
 
                   return (
@@ -772,10 +814,10 @@ function Analytics({ lines, stations, channels = [], startDate, endDate, onFilte
                         <div>Total: <span className="text-white font-bold">{total.toLocaleString()}</span></div>
                         <div>OK: <span className="text-emerald-400">{ok.toLocaleString()}</span></div>
                         <div>NG: <span className="text-rose-400">{ng.toLocaleString()}</span></div>
-                        <div className={`px-2 py-0.5 rounded-md font-bold text-[10px] ${
-                          yieldRate >= 98.5 ? 'bg-emerald-500/20 text-emerald-300' : yieldRate >= 95 ? 'bg-amber-500/20 text-amber-300' : 'bg-rose-500/20 text-rose-300'
+                        <div title={`Yield: ${yieldRate.toFixed(1)}%`} className={`px-2 py-0.5 rounded-md font-bold text-[10px] ${
+                          defectRate >= 5 ? 'bg-rose-500/20 text-rose-300' : defectRate >= 1.5 ? 'bg-amber-500/20 text-amber-300' : 'bg-emerald-500/20 text-emerald-300'
                         }`}>
-                          {yieldRate.toFixed(1)}%
+                          Lỗi {defectRate.toFixed(2)}%
                         </div>
                       </div>
                     </div>

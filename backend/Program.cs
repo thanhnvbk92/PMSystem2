@@ -9,6 +9,13 @@ AppContext.SetSwitch("Npgsql.EnableLegacyTimestampBehavior", true);
 
 var builder = WebApplication.CreateBuilder(args);
 
+// Optional machine-local settings. This file is ignored by Git so database
+// credentials do not need to be committed to source control.
+builder.Configuration.AddJsonFile(
+    "appsettings.Local.json",
+    optional: true,
+    reloadOnChange: true);
+
 // Bind Kestrel to listen on all network interfaces (LAN & Localhost) on port 5000
 builder.WebHost.UseUrls("http://0.0.0.0:5000");
 
@@ -34,13 +41,22 @@ var connectionString = builder.Configuration.GetConnectionString("DefaultConnect
 var connectionBuilder = new NpgsqlConnectionStringBuilder(connectionString)
 {
     ApplicationName = "FCT-System-API",
-    MaxPoolSize = 20,
+    MaxPoolSize = 50,
     MinPoolSize = 0,
     ConnectionIdleLifetime = 15,
     ConnectionPruningInterval = 5,
     Timeout = 10,
     CommandTimeout = 60
 };
+
+if (string.IsNullOrWhiteSpace(connectionBuilder.Password) ||
+    connectionBuilder.Password.Equals("CHANGE_ME", StringComparison.Ordinal))
+{
+    throw new InvalidOperationException(
+        "Database password is not configured. Create backend/appsettings.Local.json " +
+        "from appsettings.Local.example.json or set ConnectionStrings__DefaultConnection.");
+}
+
 connectionString = connectionBuilder.ConnectionString;
 
 builder.Services.AddDbContext<AppDbContext>(options =>
@@ -93,7 +109,16 @@ using (var scope = app.Services.CreateScope())
         try
         {
             db.Database.SetCommandTimeout(60);
-            await db.Database.ExecuteSqlRawAsync(@"
+            var legacySchemaCurrent = await db.Database.SqlQueryRaw<bool>(@"
+                SELECT (to_regclass('public.cpk_result_cache') IS NOT NULL
+                    AND to_regclass('public.cpk_step_catalog') IS NOT NULL
+                    AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='pcb_results' AND column_name='file_path')
+                    AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='channels' AND column_name='cpk_step_name')
+                    AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='stations' AND column_name='cpk_job_file')) AS ""Value""
+            ").SingleAsync();
+            if (!legacySchemaCurrent)
+            {
+                await db.Database.ExecuteSqlRawAsync(@"
                 CREATE TABLE IF NOT EXISTS model_groups (
                     id SERIAL PRIMARY KEY,
                     buyer_id INT REFERENCES buyers(id) ON DELETE SET NULL,
@@ -196,7 +221,8 @@ using (var scope = app.Services.CreateScope())
                     CONSTRAINT UX_cpk_result_cache_key UNIQUE (channel_id, job_file, step_number, step_name, from_date)
                 );
 
-            ");
+                ");
+            }
         }
         catch (Exception ex)
         {
@@ -315,6 +341,19 @@ using (var scope = app.Services.CreateScope())
                     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
                 );
                 CREATE INDEX IF NOT EXISTS IX_improvement_actions_parent ON improvement_actions(improvement_id, status);
+                CREATE TABLE IF NOT EXISTS job_file_model_mappings (
+                    id SERIAL PRIMARY KEY,
+                    job_file VARCHAR(255) NOT NULL UNIQUE,
+                    model_id INT NULL REFERENCES models(id) ON DELETE SET NULL,
+                    remark TEXT,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                );
+                ALTER TABLE job_file_model_mappings ALTER COLUMN model_id DROP NOT NULL;
+                ALTER TABLE job_file_model_mappings DROP CONSTRAINT IF EXISTS job_file_model_mappings_model_id_fkey;
+                ALTER TABLE job_file_model_mappings ADD CONSTRAINT job_file_model_mappings_model_id_fkey
+                    FOREIGN KEY (model_id) REFERENCES models(id) ON DELETE SET NULL;
+                CREATE INDEX IF NOT EXISTS IX_job_file_model_mappings_model ON job_file_model_mappings(model_id);
             ");
         }
         catch (Exception ex)

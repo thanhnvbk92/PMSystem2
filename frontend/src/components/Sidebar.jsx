@@ -161,10 +161,18 @@ export default function Sidebar({
               const Icon = item.icon;
               const isActive = activeTab === item.id;
               return (
-                <button
+                <a
                   key={item.id}
-                  onClick={() => setActiveTab(item.id)}
-                  title={isCollapsed ? item.label : undefined}
+                  href={`#${item.id}`}
+                  onClick={(event) => {
+                    // Keep modified/middle clicks as real links so Analytics and
+                    // PCB Search can be opened side-by-side in separate tabs.
+                    if (event.button === 0 && !event.ctrlKey && !event.metaKey && !event.shiftKey && !event.altKey) {
+                      event.preventDefault();
+                      setActiveTab(item.id);
+                    }
+                  }}
+                  title={isCollapsed ? item.label : `${item.label} (Ctrl+click để mở tab mới)`}
                   className={`w-full flex items-center gap-3 px-3 py-3 rounded-xl text-xs font-semibold tracking-wide transition-all group relative ${isActive
                       ? `bg-gradient-to-r ${item.activeBg} text-white shadow-lg border border-white/20`
                       : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
@@ -179,7 +187,7 @@ export default function Sidebar({
                   {isActive && (
                     <span className="absolute right-2 w-1.5 h-1.5 rounded-full bg-white animate-ping"></span>
                   )}
-                </button>
+                </a>
               );
             })}
           </nav>

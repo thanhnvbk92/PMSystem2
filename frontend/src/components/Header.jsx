@@ -1,7 +1,28 @@
 import React from 'react';
 import { Activity, Database, BarChart3, Search, RefreshCw, Radio, Terminal, Gauge, ClipboardCheck } from 'lucide-react';
 
-export default function Header({ activeTab, onRefresh, summaryData }) {
+export default function Header({ activeTab, onRefresh, signalRState, lastSignalREvent, summaryData }) {
+  const isSignalRConnected = signalRState === 'Connected';
+  const signalRLabel = isSignalRConnected
+    ? 'Connected'
+    : signalRState === 'Reconnecting'
+      ? 'Reconnecting'
+      : 'Disconnected';
+  const lastEventText = lastSignalREvent?.receivedAt
+    ? new Date(lastSignalREvent.receivedAt).toLocaleTimeString([], {
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+      })
+    : 'Chưa nhận event';
+  const eventInspectTime = lastSignalREvent?.inspectTime
+    ? String(lastSignalREvent.inspectTime).replace('T', ' ').replace(/Z$/, '')
+    : null;
+  const eventOutcome = lastSignalREvent
+    ? lastSignalREvent.applied
+      ? `Đã cộng${lastSignalREvent.count ? ` +${lastSignalREvent.count}` : ''}`
+      : `Bỏ qua: ${lastSignalREvent.reason || 'Không xác định'}`
+    : null;
   const getTabDetails = () => {
     switch (activeTab) {
       case 'analytics':
@@ -80,6 +101,28 @@ export default function Header({ activeTab, onRefresh, summaryData }) {
       {/* Top Header Actions & Badges */}
       <div className="flex items-center gap-3 relative z-10">
         <div id="analytics-header-actions" className="flex items-center gap-2" />
+        <div
+          className={`hidden md:flex items-center gap-2 px-3 py-1.5 rounded-xl border text-xs font-mono ${
+            isSignalRConnected
+              ? 'bg-emerald-500/10 border-emerald-500/25 text-emerald-300'
+              : signalRState === 'Reconnecting'
+                ? 'bg-amber-500/10 border-amber-500/25 text-amber-300'
+                : 'bg-rose-500/10 border-rose-500/25 text-rose-300'
+          }`}
+          title={lastSignalREvent
+            ? `Event cuối: ${lastSignalREvent.type} lúc ${lastEventText}. ${eventOutcome}${eventInspectTime ? `. Inspect time: ${eventInspectTime}` : ''}`
+            : 'Trình duyệt chưa nhận event production nào từ SignalR'}
+        >
+          <span className={`w-2 h-2 rounded-full ${isSignalRConnected ? 'bg-emerald-400 animate-pulse' : signalRState === 'Reconnecting' ? 'bg-amber-400 animate-pulse' : 'bg-rose-400'}`} />
+          <strong>SignalR {signalRLabel}</strong>
+          <span className="text-slate-400">|</span>
+          <span>Last event: {lastEventText}</span>
+          {eventOutcome && (
+            <span className={lastSignalREvent.applied ? 'text-emerald-300' : 'text-amber-300'}>
+              ({eventOutcome})
+            </span>
+          )}
+        </div>
         {summaryData && (
           <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-950/70 border border-white/10 text-xs font-mono text-slate-300">
             <Radio className="w-3.5 h-3.5 text-blue-400 animate-pulse" />

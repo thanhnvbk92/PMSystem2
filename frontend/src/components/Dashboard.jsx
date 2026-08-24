@@ -32,6 +32,10 @@ function Dashboard({
   onFilterChange,
   productionLoadInfo
 }) {
+  const toProductionClockIso = (date) => new Date(Date.UTC(
+    date.getFullYear(), date.getMonth(), date.getDate(),
+    date.getHours(), date.getMinutes(), date.getSeconds(), date.getMilliseconds()
+  )).toISOString();
   const [selectedTimeRange, setSelectedTimeRange] = useState('today');
   const [selectedLineId, setSelectedLineId] = useState('');
   const [lineYieldData, setLineYieldData] = useState([]);
@@ -61,20 +65,28 @@ function Dashboard({
   const calculateDateRange = (timeRangeKey) => {
     if (!timeRangeKey || timeRangeKey === 'all') return { sDate: null, eDate: null };
     const now = new Date();
+    let eDate = now;
     let sDate;
     if (timeRangeKey === 'today') {
       sDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      eDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
     } else if (timeRangeKey === 'week') {
       const daysSinceMonday = (now.getDay() + 6) % 7;
       sDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() - daysSinceMonday);
+      eDate = new Date(
+        sDate.getFullYear(), sDate.getMonth(), sDate.getDate() + 6,
+        23, 59, 59, 999
+      );
     } else if (timeRangeKey === 'month') {
       sDate = new Date(now.getFullYear(), now.getMonth(), 1);
+      eDate = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
     } else if (timeRangeKey === 'year') {
       sDate = new Date(now.getFullYear(), 0, 1);
+      eDate = new Date(now.getFullYear(), 11, 31, 23, 59, 59, 999);
     } else {
       return { sDate: null, eDate: null };
     }
-    return { sDate: sDate.toISOString(), eDate: now.toISOString() };
+    return { sDate: toProductionClockIso(sDate), eDate: toProductionClockIso(eDate) };
   };
 
   // Load backend stats used by the remaining line and station charts.
@@ -166,26 +178,30 @@ function Dashboard({
     if (!chartHourlyStats || chartHourlyStats.length === 0) return [];
 
     const periodMap = new Map();
+    const currentProductionClock = new Date(toProductionClockIso(new Date())).getTime();
     chartHourlyStats.forEach(stat => {
       const date = new Date(stat.bucket);
       if (Number.isNaN(date.getTime())) return;
+      // Counters cover the complete selected calendar period, but the trend
+      // must stop at the current clock time and never draw future buckets.
+      if (date.getTime() > currentProductionClock) return;
       if (selectedTimeRange === 'today') {
         const now = new Date();
-        if (date.getFullYear() !== now.getFullYear()
-          || date.getMonth() !== now.getMonth()
-          || date.getDate() !== now.getDate()) return;
+        if (date.getUTCFullYear() !== now.getFullYear()
+          || date.getUTCMonth() !== now.getMonth()
+          || date.getUTCDate() !== now.getDate()) return;
       }
       let key;
       let label;
       if (selectedTimeRange === 'today') {
-        key = new Date(date.getFullYear(), date.getMonth(), date.getDate(), date.getHours()).getTime();
-        label = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        key = Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate(), date.getUTCHours());
+        label = `${String(date.getUTCHours()).padStart(2, '0')}:00`;
       } else if (selectedTimeRange === 'year') {
-        key = new Date(date.getFullYear(), date.getMonth(), 1).getTime();
-        label = `T${date.getMonth() + 1}`;
+        key = Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1);
+        label = `T${date.getUTCMonth() + 1}`;
       } else {
-        key = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
-        label = date.toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit' });
+        key = Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate());
+        label = `${String(date.getUTCDate()).padStart(2, '0')}/${String(date.getUTCMonth() + 1).padStart(2, '0')}`;
       }
       if (!periodMap.has(key)) periodMap.set(key, { label, ok: 0, ng: 0, total: 0 });
       const bucket = periodMap.get(key);

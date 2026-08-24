@@ -14,10 +14,19 @@ import * as signalR from '@microsoft/signalr';
 
 const VALID_TABS = ['dashboard', 'analytics', 'cpk', 'improvements', 'pcb-search', 'command', 'master'];
 
+// Production timestamps are factory log clock values stored with a UTC marker.
+// Preserve the local clock components when creating filter boundaries so the
+// API query and SignalR filtering use the same convention as the source log.
+const toProductionClockIso = (date) => new Date(Date.UTC(
+  date.getFullYear(), date.getMonth(), date.getDate(),
+  date.getHours(), date.getMinutes(), date.getSeconds(), date.getMilliseconds()
+)).toISOString();
+
 const getTodayRange = () => {
   const now = new Date();
   const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  return { startDate: start.toISOString(), endDate: now.toISOString() };
+  const end = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+  return { startDate: toProductionClockIso(start), endDate: toProductionClockIso(end) };
 };
 
 const getInitialTab = () => {
@@ -36,6 +45,9 @@ export default function App() {
   const appInitializedRef = useRef(false);
   const lastProductionFilterRef = useRef(null);
   const productionRequestRef = useRef(0);
+  const lastProductionVersionRef = useRef(null);
+  const realtimeResultIdsRef = useRef(new Set());
+  const counterSyncInFlightRef = useRef(false);
   const [activeTab, setActiveTabState] = useState(getInitialTab);
 
   const setActiveTab = useCallback((tab) => {
@@ -66,6 +78,7 @@ export default function App() {
   }, []);
 
   const [signalRState, setSignalRState] = useState(signalR.HubConnectionState.Disconnected);
+  const [lastSignalREvent, setLastSignalREvent] = useState(null);
   const [isCollapsed, setIsCollapsed] = useState(false);
 
   // Master Data State
@@ -91,6 +104,26 @@ export default function App() {
   const initialTodayRangeRef = useRef(getTodayRange());
   const [activeStartDate, setActiveStartDate] = useState(initialTodayRangeRef.current.startDate);
   const [activeEndDate, setActiveEndDate] = useState(initialTodayRangeRef.current.endDate);
+  const productionFilterRef = useRef({});
+  productionFilterRef.current = { activeLineId, activeStationId, activeStartDate, activeEndDate };
+
+  const getProductionFilterMismatch = useCallback((item) => {
+    const filter = productionFilterRef.current;
+    if (filter.activeLineId != null && Number(item?.lineId) !== Number(filter.activeLineId)) return 'Khác Line';
+    if (filter.activeStationId != null && Number(item?.stationId) !== Number(filter.activeStationId)) return 'Khác Station';
+    const timestamp = new Date(item?.inspectTime).getTime();
+    if (!Number.isFinite(timestamp)) return 'Inspect time không hợp lệ';
+    const start = filter.activeStartDate ? new Date(filter.activeStartDate).getTime() : -Infinity;
+    let end = filter.activeEndDate ? new Date(filter.activeEndDate).getTime() : Infinity;
+    const selectedEnd = filter.activeEndDate ? new Date(filter.activeEndDate) : null;
+    if (timestamp < start) return 'Inspect time trước khoảng lọc';
+    if (timestamp > end) return 'Inspect time sau khoảng lọc';
+    return null;
+  }, []);
+
+  const matchesActiveProductionFilter = useCallback((item) => {
+    return getProductionFilterMismatch(item) == null;
+  }, [getProductionFilterMismatch]);
 
   // Error state
   const [dbError, setDbError] = useState(null);
@@ -141,7 +174,7 @@ export default function App() {
       };
       const results = await Promise.all([
         timed('summary', () => ProductionApi.getSummary(activeLineId, activeStationId, activeStartDate, activeEndDate)),
-        timed('latest', () => ProductionApi.getLatest(100, activeLineId, activeStationId, null, null, activeStartDate, activeEndDate)),
+        timed('latest', () => ProductionApi.getLatest(100, activeLineId, activeStationId, null, null, null, activeStartDate, activeEndDate)),
         timed('hourly', () => ProductionApi.getHourlyStats(24, activeLineId, activeStationId, activeStartDate, activeEndDate)),
       ]);
       if (requestId !== productionRequestRef.current) return;
@@ -161,15 +194,50 @@ export default function App() {
     }
   }, [activeLineId, activeStationId, activeStartDate, activeEndDate]);
 
+  const refreshProductionCounters = useCallback(async () => {
+    if (counterSyncInFlightRef.current) return;
+    counterSyncInFlightRef.current = true;
+    try {
+      const counters = await ProductionApi.getCounters(
+        activeLineId, activeStationId, activeStartDate, activeEndDate);
+      setSummary(prev => prev ? { ...prev, ...counters } : prev);
+    } catch (err) {
+      console.warn('Counter synchronization failed:', err);
+    } finally {
+      counterSyncInFlightRef.current = false;
+    }
+  }, [activeLineId, activeStationId, activeStartDate, activeEndDate]);
+
+  useEffect(() => {
+    const timer = window.setInterval(refreshProductionCounters, 5000);
+    return () => window.clearInterval(timer);
+  }, [refreshProductionCounters]);
+
   // Handle incoming real-time PCB Result via SignalR Hub
   const handlePcbResultReceived = useCallback((newResult) => {
+    const receivedAt = new Date();
+    if (!matchesActiveProductionFilter(newResult)) {
+      setLastSignalREvent({ receivedAt, type: 'PCB Result', applied: false,
+        reason: getProductionFilterMismatch(newResult) || 'Ngoài bộ lọc', inspectTime: newResult?.inspectTime });
+      return;
+    }
+    if (newResult?.id != null) {
+      if (realtimeResultIdsRef.current.has(newResult.id)) {
+        setLastSignalREvent({ receivedAt, type: 'PCB Result', applied: false,
+          reason: 'Event trùng', inspectTime: newResult?.inspectTime });
+        return;
+      }
+      if (realtimeResultIdsRef.current.size > 2000) realtimeResultIdsRef.current.clear();
+      realtimeResultIdsRef.current.add(newResult.id);
+    }
+    setLastSignalREvent({ receivedAt, type: 'PCB Result', applied: true,
+      count: 1, inspectTime: newResult?.inspectTime });
     setLatestLogs((prev) => {
       const exists = prev.some((item) => item.id === newResult.id);
       if (exists) return prev;
       return [newResult, ...prev.slice(0, 99)];
     });
 
-    // Dynamic metrics update
     setSummary((prev) => {
       if (!prev) return prev;
       const isOk = newResult.result === 'OK' || newResult.result === 'PASS';
@@ -177,16 +245,11 @@ export default function App() {
       const total = prev.totalInspected + 1;
       const ok = prev.totalOk + (isOk ? 1 : 0);
       const ng = prev.totalNg + (isNg ? 1 : 0);
-      return {
-        ...prev,
-        totalInspected: total,
-        totalOk: ok,
-        totalNg: ng,
-        overallYieldRate: total > 0 ? (ok / total) * 100 : 100,
-      };
+      return { ...prev, totalInspected: total, totalOk: ok, totalNg: ng,
+        overallYieldRate: total > 0 ? (ok / total) * 100 : 100 };
     });
 
-  }, []);
+  }, [matchesActiveProductionFilter, getProductionFilterMismatch]);
 
   // Handle incoming hourly stats broadcast
   const handleStatsReceived = useCallback((stat) => {
@@ -202,29 +265,66 @@ export default function App() {
   }, []);
 
   const handleProductionDelta = useCallback((delta) => {
+    const receivedAt = new Date();
+    const version = Number(delta?.version);
+    const previousVersion = lastProductionVersionRef.current;
+    if (Number.isFinite(version)) {
+      lastProductionVersionRef.current = version;
+      if (previousVersion != null && version !== previousVersion + 1) {
+        setLastSignalREvent({ receivedAt, type: 'Production Delta', applied: false,
+          reason: 'Thiếu phiên bản, đang đồng bộ lại' });
+        loadProductionData();
+        return;
+      }
+    }
+    const applicable = Array.isArray(delta?.items)
+      ? delta.items.filter(matchesActiveProductionFilter)
+      : [];
+    if (applicable.length === 0) {
+      const firstItem = Array.isArray(delta?.items) ? delta.items[0] : null;
+      setLastSignalREvent({ receivedAt, type: 'Production Delta', applied: false,
+        reason: getProductionFilterMismatch(firstItem) || 'Ngoài bộ lọc', inspectTime: firstItem?.inspectTime });
+      return;
+    }
+    const totals = applicable.reduce((sum, item) => ({
+      total: sum.total + Number(item?.total || 0),
+      ok: sum.ok + Number(item?.ok || 0),
+      ng: sum.ng + Number(item?.ng || 0),
+    }), { total: 0, ok: 0, ng: 0 });
+    setLastSignalREvent({ receivedAt, type: 'Production Delta', applied: true,
+      count: totals.total, inspectTime: applicable[applicable.length - 1]?.inspectTime });
     setSummary((prev) => {
       if (!prev) return prev;
-      const total = prev.totalInspected + Number(delta?.total || 0);
-      const ok = prev.totalOk + Number(delta?.ok || 0);
-      const ng = prev.totalNg + Number(delta?.ng || 0);
+      const total = prev.totalInspected + totals.total;
+      const ok = prev.totalOk + totals.ok;
+      const ng = prev.totalNg + totals.ng;
       return { ...prev, totalInspected: total, totalOk: ok, totalNg: ng,
         overallYieldRate: total > 0 ? (ok / total) * 100 : 100 };
     });
-  }, []);
+  }, [matchesActiveProductionFilter, getProductionFilterMismatch, loadProductionData]);
 
   useEffect(() => {
-    if (appInitializedRef.current) return;
-    appInitializedRef.current = true;
-    loadMasterData();
+    const timer = window.setInterval(() => {
+      if (signalRState === signalR.HubConnectionState.Connected) loadProductionData();
+    }, 60000);
+    return () => window.clearInterval(timer);
+  }, [signalRState, loadProductionData]);
 
-    // Initialize SignalR Connection
+  useEffect(() => {
+    if (!appInitializedRef.current) {
+      appInitializedRef.current = true;
+      loadMasterData();
+    }
+
+    // Initialize once and keep callbacks current when filters change.
     initSignalR(
       handlePcbResultReceived,
       handleStatsReceived,
       (state) => setSignalRState(state),
-      handleProductionDelta
+      handleProductionDelta,
+      loadProductionData
     );
-  }, [handlePcbResultReceived, handleStatsReceived, handleProductionDelta]);
+  }, [handlePcbResultReceived, handleStatsReceived, handleProductionDelta, loadProductionData]);
 
   useEffect(() => {
     const filterKey = JSON.stringify([activeLineId, activeStationId, activeStartDate, activeEndDate]);
@@ -266,6 +366,7 @@ export default function App() {
             loadProductionData();
           }}
           signalRState={signalRState}
+          lastSignalREvent={lastSignalREvent}
           summaryData={summary}
         />
 

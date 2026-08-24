@@ -25,6 +25,10 @@ export const MasterDataApi = {
   createModel: (data) => api.post('/master/models', data).then(res => res.data),
   updateModel: (id, data) => api.put(`/master/models/${id}`, data).then(res => res.data),
   deleteModel: (id) => api.delete(`/master/models/${id}`).then(res => res.data),
+  getJobFileModelMappings: (params = {}) => api.get('/master/job-file-model-mappings', { params }).then(res => res.data),
+  saveJobFileModelMapping: (data) => api.post('/master/job-file-model-mappings', data).then(res => res.data),
+  bulkSaveJobFileModelMappings: (data) => api.post('/master/job-file-model-mappings/bulk', data).then(res => res.data),
+  deleteJobFileModelMapping: (id) => api.delete(`/master/job-file-model-mappings/${id}`).then(res => res.data),
 
   getStationTypes: () => api.get('/master/station-types').then(res => res.data),
   createStationType: (data) => api.post('/master/station-types', data).then(res => res.data),
@@ -65,8 +69,10 @@ export const ProductionApi = {
   getCpkOverview: () => api.get('/production/cpk/overview').then(res => res.data),
   getSummary: (lineId = null, stationId = null, startDate = null, endDate = null) => 
     api.get('/production/summary', { params: { lineId, stationId, startDate, endDate } }).then(res => res.data),
-  getLatest: (limit = 100, lineId = null, stationId = null, searchPid = null, resultFilter = null, startDate = null, endDate = null) => 
-    api.get('/production/latest', { params: { limit, lineId, stationId, searchPid, resultFilter, startDate, endDate } }).then(res => res.data),
+  getCounters: (lineId = null, stationId = null, startDate = null, endDate = null) =>
+    api.get('/production/counters', { params: { lineId, stationId, startDate, endDate } }).then(res => res.data),
+  getLatest: (limit = 100, lineId = null, stationId = null, searchPid = null, searchError = null, resultFilter = null, startDate = null, endDate = null) => 
+    api.get('/production/latest', { params: { limit, lineId, stationId, searchPid, searchError, resultFilter, startDate, endDate } }).then(res => res.data),
   getHourlyStats: (hours = 24, lineId = null, stationId = null, startDate = null, endDate = null) => 
     api.get('/production/stats/hourly', { params: { hours, lineId, stationId, startDate, endDate } }).then(res => res.data),
   getLineYieldStats: (lineId = null, startDate = null, endDate = null) =>
@@ -75,28 +81,30 @@ export const ProductionApi = {
     api.get('/production/stats/station-yield', { params: { lineId, startDate, endDate } }).then(res => res.data),
   getDefectPareto: (lineId = null, stationId = null, startDate = null, endDate = null) =>
     api.get('/production/stats/defect-pareto', { params: { lineId, stationId, startDate, endDate } }).then(res => res.data),
-  getBiMatrix: (lineId = null, stationId = null, channelId = null, errorCode = null, jobFile = null, startDate = null, endDate = null, hours = 24) =>
-    api.get('/production/stats/bi-matrix', { params: { lineId, stationId, channelId, errorCode, jobFile, startDate, endDate, hours } }).then(res => res.data),
+  getBiMatrix: (lineId = null, stationId = null, channelId = null, modelId = null, errorCode = null, jobFile = null, startDate = null, endDate = null, hours = 24) =>
+    api.get('/production/stats/bi-matrix', { params: { lineId, stationId, channelId, modelId, errorCode, jobFile, startDate, endDate, hours } }).then(res => res.data),
   submitPcb: (data) => api.post('/production/submit', data).then(res => res.data),
-  getExportCount: (lineId = null, stationId = null, searchPid = null, resultFilter = null, startDate = null, endDate = null) =>
-    api.get('/production/export-count', { params: { lineId, stationId, searchPid, resultFilter, startDate, endDate } }).then(res => res.data),
-  getExportCsvUrl: (limit = null, lineId = null, stationId = null, searchPid = null, resultFilter = null, startDate = null, endDate = null) => {
+  getExportCount: (lineId = null, stationId = null, searchPid = null, searchError = null, resultFilter = null, startDate = null, endDate = null) =>
+    api.get('/production/export-count', { params: { lineId, stationId, searchPid, searchError, resultFilter, startDate, endDate } }).then(res => res.data),
+  getExportCsvUrl: (limit = null, lineId = null, stationId = null, searchPid = null, searchError = null, resultFilter = null, startDate = null, endDate = null) => {
     const params = new URLSearchParams();
     if (limit) params.append('limit', limit);
     if (lineId) params.append('lineId', lineId);
     if (stationId) params.append('stationId', stationId);
     if (searchPid) params.append('searchPid', searchPid);
+    if (searchError) params.append('searchError', searchError);
     if (resultFilter) params.append('resultFilter', resultFilter);
     if (startDate) params.append('startDate', startDate);
     if (endDate) params.append('endDate', endDate);
     return `${API_BASE_URL}/production/export-csv?${params.toString()}`;
   },
-  downloadExportCsv: (limit = null, lineId = null, stationId = null, searchPid = null, resultFilter = null, startDate = null, endDate = null) => {
+  downloadExportCsv: (limit = null, lineId = null, stationId = null, searchPid = null, searchError = null, resultFilter = null, startDate = null, endDate = null) => {
     const params = {};
     if (limit) params.limit = limit;
     if (lineId) params.lineId = lineId;
     if (stationId) params.stationId = stationId;
     if (searchPid) params.searchPid = searchPid;
+    if (searchError) params.searchError = searchError;
     if (resultFilter) params.resultFilter = resultFilter;
     if (startDate) params.startDate = startDate;
     if (endDate) params.endDate = endDate;

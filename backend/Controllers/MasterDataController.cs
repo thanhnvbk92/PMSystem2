@@ -1,4 +1,6 @@
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
+using PMSystem2.Api.Data;
 using PMSystem2.Api.Models;
 using PMSystem2.Api.Services;
 using System.Text.Json.Serialization;
@@ -11,14 +13,121 @@ namespace PMSystem2.Api.Controllers
     public class MasterDataController : ControllerBase
     {
         private readonly IMasterDataService _masterDataService;
+        private readonly AppDbContext _db;
         private readonly Microsoft.AspNetCore.SignalR.IHubContext<PMSystem2.Api.Hubs.CommandHub, PMSystem2.Api.Hubs.ICommandClient> _commandHubContext;
 
         public MasterDataController(
             IMasterDataService masterDataService,
+            AppDbContext db,
             Microsoft.AspNetCore.SignalR.IHubContext<PMSystem2.Api.Hubs.CommandHub, PMSystem2.Api.Hubs.ICommandClient> commandHubContext)
         {
             _masterDataService = masterDataService;
+            _db = db;
             _commandHubContext = commandHubContext;
+        }
+
+        [HttpGet("job-file-model-mappings")]
+        public async Task<IActionResult> GetJobFileModelMappings(
+            [FromQuery] int page = 1,
+            [FromQuery] int pageSize = 50,
+            [FromQuery] string? search = null,
+            [FromQuery] string status = "all")
+        {
+            page = Math.Max(1, page);
+            pageSize = Math.Clamp(pageSize, 10, 200);
+
+            var all = _db.JobFileModelMappings.AsNoTracking();
+            var totalCount = await all.CountAsync();
+            var unmappedCount = await all.CountAsync(x => x.ModelId == null);
+            var query = all.AsQueryable();
+
+            if (!string.IsNullOrWhiteSpace(search))
+            {
+                var term = $"%{search.Trim()}%";
+                query = query.Where(x => EF.Functions.ILike(x.JobFile, term)
+                    || (x.Model != null && EF.Functions.ILike(x.Model.Name, term))
+                    || (x.Remark != null && EF.Functions.ILike(x.Remark, term)));
+            }
+
+            query = status.ToLowerInvariant() switch
+            {
+                "mapped" => query.Where(x => x.ModelId != null),
+                "unmapped" => query.Where(x => x.ModelId == null),
+                _ => query
+            };
+
+            var filteredCount = await query.CountAsync();
+            var items = await query.Include(x => x.Model)
+                .OrderBy(x => x.ModelId != null)
+                .ThenBy(x => x.JobFile)
+                .Select(x => new JobFileModelMappingDto(x.Id, x.JobFile, x.ModelId, x.Model != null ? x.Model.Name : null, x.Remark))
+                .Skip((page - 1) * pageSize)
+                .Take(pageSize)
+                .ToListAsync();
+
+            return Ok(new
+            {
+                items,
+                page,
+                pageSize,
+                totalCount,
+                filteredCount,
+                unmappedCount,
+                totalPages = Math.Max(1, (int)Math.Ceiling(filteredCount / (double)pageSize))
+            });
+        }
+
+        [HttpPost("job-file-model-mappings")]
+        public async Task<ActionResult<JobFileModelMappingDto>> SaveJobFileModelMapping([FromBody] SaveJobFileModelMappingRequest req)
+        {
+            var jobFile = req.JobFile?.Trim();
+            if (string.IsNullOrWhiteSpace(jobFile)) return BadRequest(new { error = "Job File là bắt buộc." });
+            var model = await _db.Models.FindAsync(req.ModelId);
+            if (model == null) return BadRequest(new { error = "Model không tồn tại." });
+            var item = await _db.JobFileModelMappings.FirstOrDefaultAsync(x => x.JobFile == jobFile);
+            if (item == null)
+            {
+                item = new JobFileModelMapping { JobFile = jobFile, ModelId = req.ModelId, Remark = req.Remark };
+                _db.JobFileModelMappings.Add(item);
+            }
+            else
+            {
+                item.ModelId = req.ModelId; item.Remark = req.Remark; item.UpdatedAt = DateTime.UtcNow;
+            }
+            await _db.SaveChangesAsync();
+            await NotifyMasterDataChangedAsync("job-file-model-mappings");
+            return Ok(new JobFileModelMappingDto(item.Id, item.JobFile, item.ModelId, model.Name, item.Remark));
+        }
+
+        [HttpPost("job-file-model-mappings/bulk")]
+        public async Task<IActionResult> BulkSaveJobFileModelMappings([FromBody] BulkSaveJobFileModelMappingRequest req)
+        {
+            var ids = (req.Ids ?? new List<int>()).Where(id => id > 0).Distinct().ToList();
+            if (ids.Count == 0) return BadRequest(new { error = "Vui lòng chọn ít nhất một Job File." });
+            if (!await _db.Models.AnyAsync(x => x.Id == req.ModelId))
+                return BadRequest(new { error = "Model không tồn tại." });
+
+            var updatedAt = DateTime.UtcNow;
+            var updated = await _db.JobFileModelMappings
+                .Where(x => ids.Contains(x.Id))
+                .ExecuteUpdateAsync(setters => setters
+                    .SetProperty(x => x.ModelId, req.ModelId)
+                    .SetProperty(x => x.UpdatedAt, updatedAt));
+
+            await NotifyMasterDataChangedAsync("job-file-model-mappings");
+            return Ok(new { updated });
+        }
+
+        [HttpDelete("job-file-model-mappings/{id:int}")]
+        public async Task<IActionResult> DeleteJobFileModelMapping(int id)
+        {
+            var item = await _db.JobFileModelMappings.FindAsync(id);
+            if (item == null) return NotFound();
+            item.ModelId = null;
+            item.UpdatedAt = DateTime.UtcNow;
+            await _db.SaveChangesAsync();
+            await NotifyMasterDataChangedAsync("job-file-model-mappings");
+            return NoContent();
         }
 
         private async Task NotifyMasterDataChangedAsync(string entityType)
@@ -377,6 +486,29 @@ namespace PMSystem2.Api.Controllers
                 var ch = await _masterDataService.GetChannelAsync(targetChannelId.Value);
                 if (ch != null)
                 {
+                    // Heartbeat reports liveness only; it must never create or
+                    // replace a Channel identity copied from another machine.
+                    if (!string.IsNullOrWhiteSpace(reqMac) &&
+                        !string.IsNullOrWhiteSpace(ch.MacAddress) &&
+                        !ch.MacAddress.Equals(reqMac, StringComparison.OrdinalIgnoreCase))
+                    {
+                        Response.Headers["Date"] = DateTime.UtcNow.ToString("r");
+                        return Conflict(new
+                        {
+                            status = "identity_mismatch",
+                            timestamp = DateTime.UtcNow,
+                            warning = "MAC_MISMATCH",
+                            channelId = ch.Id,
+                            registeredMac = ch.MacAddress,
+                            requestMac = reqMac,
+                            message = $"MAC does not match Channel #{ch.Id}. Heartbeat cannot modify Master Data."
+                        });
+                    }
+
+                    // A blank server MAC is also left untouched. Assign it only
+                    // through an explicit Master Data operation.
+                    if (string.IsNullOrWhiteSpace(ch.MacAddress)) reqMac = null;
+
                     if (!string.IsNullOrWhiteSpace(reqMac))
                     {
                         if (string.IsNullOrWhiteSpace(ch.MacAddress))
@@ -464,6 +596,118 @@ namespace PMSystem2.Api.Controllers
             return Ok(new { exists = false });
         }
 
+        [HttpGet("channels/resolve")]
+        public async Task<IActionResult> ResolveChannel([FromQuery] string? mac = null, [FromQuery] string? ip = null)
+        {
+            var normalizedMac = mac?.Trim();
+            var normalizedIp = ip?.Trim();
+            if (string.IsNullOrWhiteSpace(normalizedMac) && string.IsNullOrWhiteSpace(normalizedIp))
+                return BadRequest(new { error = "MAC hoặc IP là bắt buộc." });
+
+            var query = _db.Channels
+                .Include(c => c.Station).ThenInclude(s => s!.Line)
+                .Include(c => c.Station).ThenInclude(s => s!.ModelGroup).ThenInclude(g => g!.Buyer)
+                .AsQueryable();
+
+            Channel? channel = null;
+            string? matchedBy = null;
+            if (!string.IsNullOrWhiteSpace(normalizedMac))
+            {
+                channel = await query.OrderBy(c => c.Id).FirstOrDefaultAsync(c =>
+                    c.MacAddress != null && EF.Functions.ILike(c.MacAddress, normalizedMac));
+                if (channel != null) matchedBy = "MAC";
+            }
+            if (channel != null && !string.IsNullOrWhiteSpace(normalizedIp) &&
+                !string.Equals(channel.IpAddress, normalizedIp, StringComparison.OrdinalIgnoreCase))
+            {
+                var ipOwner = await _db.Channels.AsNoTracking().FirstOrDefaultAsync(c =>
+                    c.Id != channel.Id && c.IpAddress != null && EF.Functions.ILike(c.IpAddress, normalizedIp));
+                if (ipOwner != null)
+                    return Conflict(new { error = "IP_CONFLICT", channelId = channel.Id, conflictingChannelId = ipOwner.Id });
+
+                channel.IpAddress = normalizedIp;
+                await _db.SaveChangesAsync();
+                await _masterDataService.RefreshCacheAsync();
+                await NotifyMasterDataChangedAsync("channels");
+            }
+            if (channel == null && !string.IsNullOrWhiteSpace(normalizedIp))
+            {
+                channel = await query.OrderBy(c => c.Id).FirstOrDefaultAsync(c =>
+                    c.IpAddress != null && EF.Functions.ILike(c.IpAddress, normalizedIp));
+                if (channel != null)
+                {
+                    matchedBy = "IP";
+                    if (!string.IsNullOrWhiteSpace(normalizedMac) &&
+                        !string.IsNullOrWhiteSpace(channel.MacAddress) &&
+                        !string.Equals(channel.MacAddress, normalizedMac, StringComparison.OrdinalIgnoreCase))
+                        return Conflict(new
+                        {
+                            error = "MAC_CONFLICT",
+                            channelId = channel.Id,
+                            registeredMac = channel.MacAddress,
+                            requestMac = normalizedMac
+                        });
+
+                    if (string.IsNullOrWhiteSpace(channel.MacAddress) && !string.IsNullOrWhiteSpace(normalizedMac))
+                    {
+                        channel.MacAddress = normalizedMac;
+                        await _db.SaveChangesAsync();
+                        await _masterDataService.RefreshCacheAsync();
+                        await NotifyMasterDataChangedAsync("channels");
+                    }
+                }
+            }
+
+            if (channel == null) return Ok(new { exists = false });
+            return Ok(new
+            {
+                exists = true,
+                matchedBy,
+                data = new
+                {
+                    channelId = channel.Id,
+                    channelName = channel.Name,
+                    channel.IpAddress,
+                    channel.MacAddress,
+                    stationId = channel.StationId,
+                    stationName = channel.Station?.Name,
+                    lineId = channel.Station?.LineId,
+                    lineName = channel.Station?.Line?.Name,
+                    modelGroupId = channel.Station?.ModelGroupId,
+                    modelGroupName = channel.Station?.ModelGroup?.Name,
+                    buyerId = channel.Station?.ModelGroup?.BuyerId,
+                    buyerName = channel.Station?.ModelGroup?.Buyer?.Name
+                }
+            });
+        }
+
+        [HttpGet("channels/machine-options")]
+        public async Task<IActionResult> GetMachineOptions()
+        {
+            return Ok(new
+            {
+                buyers = await _masterDataService.GetBuyersAsync(),
+                modelGroups = await _masterDataService.GetModelGroupsAsync(),
+                lines = await _masterDataService.GetLinesAsync(),
+                stations = await _masterDataService.GetStationsAsync()
+            });
+        }
+
+        [HttpPatch("channels/{id:int}/station")]
+        public async Task<IActionResult> AssignChannelStation(int id, [FromBody] AssignChannelStationRequest req)
+        {
+            var channel = await _db.Channels.FindAsync(id);
+            if (channel == null) return NotFound(new { error = "Channel not found" });
+            if (!await _db.Stations.AnyAsync(s => s.Id == req.StationId))
+                return BadRequest(new { error = "Station not found" });
+
+            channel.StationId = req.StationId;
+            await _db.SaveChangesAsync();
+            await _masterDataService.RefreshCacheAsync();
+            await NotifyMasterDataChangedAsync("channels");
+            return Ok(new { channelId = channel.Id, stationId = channel.StationId });
+        }
+
         [HttpPost("channels")]
         public async Task<IActionResult> CreateChannel([FromBody] ChannelRegisterPayload req)
         {
@@ -482,6 +726,19 @@ namespace PMSystem2.Api.Controllers
 
                     if (matchedChannel != null)
                     {
+                        if (!string.IsNullOrWhiteSpace(targetMac) &&
+                            !string.IsNullOrWhiteSpace(matchedChannel.MacAddress) &&
+                            !matchedChannel.MacAddress.Equals(targetMac, StringComparison.OrdinalIgnoreCase))
+                        {
+                            return Conflict(new
+                            {
+                                error = "MAC_CONFLICT",
+                                channelId = matchedChannel.Id,
+                                registeredMac = matchedChannel.MacAddress,
+                                requestMac = targetMac
+                            });
+                        }
+
                         if (matchedChannel.StationId == stationId)
                         {
                             if (!string.IsNullOrWhiteSpace(targetMac))
@@ -697,6 +954,11 @@ namespace PMSystem2.Api.Controllers
     {
         public int SourceChannelId { get; set; }
         public int TargetChannelId { get; set; }
+    }
+
+    public class AssignChannelStationRequest
+    {
+        public int StationId { get; set; }
     }
 
     public class HeartbeatPayload

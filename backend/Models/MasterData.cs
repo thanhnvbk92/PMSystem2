@@ -75,6 +75,19 @@ namespace PMSystem2.Api.Models
 
         [ForeignKey(nameof(ModelGroupId))]
         public ModelGroup? ModelGroup { get; set; }
+        public ICollection<JobFileModelMapping> JobFileMappings { get; set; } = new List<JobFileModelMapping>();
+    }
+
+    [Table("job_file_model_mappings")]
+    public class JobFileModelMapping
+    {
+        [Key, Column("id")] public int Id { get; set; }
+        [Required, MaxLength(255), Column("job_file")] public string JobFile { get; set; } = string.Empty;
+        [Column("model_id")] public int? ModelId { get; set; }
+        [Column("remark")] public string? Remark { get; set; }
+        [Column("created_at")] public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+        [Column("updated_at")] public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
+        [ForeignKey(nameof(ModelId))] public ModelItem? Model { get; set; }
     }
 
     [Table("station_types")]
@@ -305,6 +318,9 @@ namespace PMSystem2.Api.Models
     public record BuyerDto(int Id, string Name, string? Remark);
     public record ModelGroupDto(int Id, int? BuyerId, string? BuyerName, string Name, string? Remark);
     public record ModelItemDto(int Id, int? ModelGroupId, string? ModelGroupName, string Name, string? Remark);
+    public record JobFileModelMappingDto(int Id, string JobFile, int? ModelId, string? ModelName, string? Remark);
+    public record SaveJobFileModelMappingRequest(string JobFile, int ModelId, string? Remark);
+    public record BulkSaveJobFileModelMappingRequest(List<int> Ids, int ModelId);
     public record StationTypeDto(int Id, string Name, string? Remark);
     public record LineDto(int Id, string Name, string? Remark);
     public record StationDto(int Id, int LineId, string LineName, int? ModelGroupId, string? ModelGroupName, int? StationTypeId, string? StationTypeName, string Name, string? ProcessInfo, string? Remark, int? CpkStepNumber, string? CpkStepName, string? CpkJobFile);

@@ -6,7 +6,7 @@ const HUB_URL = `http://${SIGNALR_HOST}:5000/hubs/production`;
 let connection = null;
 let retryTimer = null;
 let startPromise = null;
-const callbacks = { pcb: null, stats: null, delta: null, state: null };
+const callbacks = { pcb: null, stats: null, delta: null, state: null, sync: null };
 
 const listeners = {
   ReceiveCommandStatus: new Set(),
@@ -44,6 +44,9 @@ const startConnection = () => {
     .then(() => {
       console.log('SignalR Hub Connected successfully.');
       callbacks.state?.(signalR.HubConnectionState.Connected);
+      // Always synchronize once after the connection is established. This
+      // closes the race where API loading and initial SignalR events overlap.
+      callbacks.sync?.();
     })
     .catch((err) => {
       console.error('SignalR Connection Error:', err);
@@ -54,11 +57,12 @@ const startConnection = () => {
   return startPromise;
 };
 
-export const initSignalR = (onPcbResultReceived, onStatsReceived, onStateChange, onProductionDelta) => {
+export const initSignalR = (onPcbResultReceived, onStatsReceived, onStateChange, onProductionDelta, onReconnectSync) => {
   callbacks.pcb = onPcbResultReceived;
   callbacks.stats = onStatsReceived;
   callbacks.state = onStateChange;
   callbacks.delta = onProductionDelta;
+  callbacks.sync = onReconnectSync;
   if (connection) {
     startConnection();
     return connection;
@@ -79,6 +83,7 @@ export const initSignalR = (onPcbResultReceived, onStatsReceived, onStateChange,
 
   connection.onreconnected(() => {
     callbacks.state?.(signalR.HubConnectionState.Connected);
+    callbacks.sync?.();
   });
 
   connection.onclose(() => {

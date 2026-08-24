@@ -95,10 +95,27 @@ public class ImprovementsController(AppDbContext db) : ControllerBase
             "week" => date.Date.AddDays(-(((int)date.DayOfWeek + 6) % 7)),
             _ => date.Date
         };
-        var points = daily.GroupBy(x => Bucket(x.date, granularity))
-            .Select(g => new TrendPoint(g.Key, g.Sum(x => x.total), g.Sum(x => x.defects)))
-            .OrderBy(x => x.Date)
-            .ToList();
+        var aggregated = daily.GroupBy(x => Bucket(x.date, granularity))
+            .ToDictionary(g => g.Key, g => new TrendPoint(g.Key, g.Sum(x => x.total), g.Sum(x => x.defects)));
+
+        // Always return every bucket touched by the requested range. This keeps
+        // the final week/month visible even when it has no PCB data yet, and it
+        // gives improvement milestones a real X-axis coordinate.
+        static DateTime NextBucket(DateTime date, string level) => level switch
+        {
+            "month" => date.AddMonths(1),
+            "week" => date.AddDays(7),
+            _ => date.AddDays(1)
+        };
+        var firstBucket = Bucket(start, granularity);
+        var lastBucket = Bucket(end, granularity);
+        var points = new List<TrendPoint>();
+        for (var cursor = firstBucket; cursor <= lastBucket; cursor = NextBucket(cursor, granularity))
+        {
+            points.Add(aggregated.TryGetValue(cursor, out var point)
+                ? point
+                : new TrendPoint(cursor, 0, 0));
+        }
         return Ok(points.Select(x => new
         {
             date = x.Date, total = x.Total, defects = x.Defects,
@@ -123,6 +140,7 @@ public class ImprovementsController(AppDbContext db) : ControllerBase
     [HttpPost]
     public async Task<IActionResult> Create(Improvement input)
     {
+        NormalizePeriodDates(input);
         var error = Validate(input); if (error != null) return BadRequest(new { error });
         input.Id = 0; input.Code = string.IsNullOrWhiteSpace(input.Code) ? $"CI-{DateTime.UtcNow:yyyyMMddHHmmss}" : input.Code.Trim();
         input.CreatedAt = input.UpdatedAt = DateTime.UtcNow;
@@ -139,6 +157,7 @@ public class ImprovementsController(AppDbContext db) : ControllerBase
     public async Task<IActionResult> Update(long id, Improvement input)
     {
         var item = await db.Improvements.FindAsync(id); if (item == null) return NotFound();
+        NormalizePeriodDates(input);
         var error = Validate(input); if (error != null) return BadRequest(new { error });
         item.Title = input.Title.Trim(); item.ErrorCode = input.ErrorCode?.Trim(); item.LineId = input.LineId;
         item.StationId = input.StationId; item.ProblemDescription = input.ProblemDescription; item.RootCause = input.RootCause;
@@ -174,6 +193,23 @@ public class ImprovementsController(AppDbContext db) : ControllerBase
         db.Remove(item); await db.SaveChangesAsync(); return NoContent();
     }
 
+    private static DateTime AsServerLocal(DateTime value) => value.Kind switch
+    {
+        DateTimeKind.Utc => value.ToLocalTime(),
+        DateTimeKind.Unspecified => DateTime.SpecifyKind(value, DateTimeKind.Local),
+        _ => value
+    };
+
+    private static void NormalizePeriodDates(Improvement item)
+    {
+        // Npgsql legacy timestamp mode preserves clock components. Normalize
+        // incoming ISO/UTC values first so calendar dates do not move backward.
+        item.BaselineStart = AsServerLocal(item.BaselineStart);
+        item.BaselineEnd = AsServerLocal(item.BaselineEnd);
+        item.TrackingStart = AsServerLocal(item.TrackingStart);
+        item.TrackingEnd = AsServerLocal(item.TrackingEnd);
+    }
+
     private static string? Validate(Improvement x)
     {
         if (string.IsNullOrWhiteSpace(x.Title)) return "Tên cải tiến là bắt buộc.";
@@ -191,7 +227,20 @@ public class ImprovementsController(AppDbContext db) : ControllerBase
         double? reduction = baseline.Rate > 0 ? (baseline.Rate - tracking.Rate) / baseline.Rate * 100 : null;
         return new { x.Id, x.Code, x.Title, x.ErrorCode, x.LineId, x.StationId, x.ProblemDescription, x.RootCause,
             x.Owner, x.Status, x.BaselineStart, x.BaselineEnd, x.TrackingStart, x.TrackingEnd, x.TargetReductionPercent,
-            x.CreatedAt, x.UpdatedAt, actions = x.Actions.OrderBy(a => a.DueDate), baseline, tracking,
+            x.CreatedAt, x.UpdatedAt,
+            actions = x.Actions.OrderBy(a => a.DueDate).Select(a => new
+            {
+                a.Id,
+                a.ImprovementId,
+                a.Description,
+                a.Owner,
+                a.Status,
+                a.DueDate,
+                a.CompletedAt,
+                a.Evidence,
+                a.CreatedAt
+            }).ToList(),
+            baseline, tracking,
             reductionPercent = reduction, targetAchieved = reduction.HasValue && reduction >= x.TargetReductionPercent,
             measurementComplete = DateTime.UtcNow >= x.TrackingEnd };
     }

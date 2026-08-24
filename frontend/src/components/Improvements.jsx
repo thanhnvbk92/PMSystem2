@@ -3,11 +3,21 @@ import { AlertTriangle, BarChart3, CheckCircle2, ClipboardCheck, LineChart as Li
 import { CartesianGrid, Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { ImprovementApi } from '../services/api';
 
-const isoDay = (date) => new Date(date).toISOString().slice(0, 10);
+const isoDay = (date) => {
+  const local = new Date(date);
+  const year = local.getFullYear();
+  const month = String(local.getMonth() + 1).padStart(2, '0');
+  const day = String(local.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
 const today = new Date();
 const daysAgo = (days) => { const d = new Date(); d.setDate(d.getDate() - days); return isoDay(d); };
 const blank = () => ({ title: '', errorCode: '', lineId: '', stationId: '', problemDescription: '', rootCause: '', owner: '', status: 'ACTIVE', baselineStart: daysAgo(60), baselineEnd: daysAgo(30), trackingStart: daysAgo(30), trackingEnd: isoDay(today), targetReductionPercent: 30 });
-const toApi = (x) => ({ ...x, lineId: x.lineId ? Number(x.lineId) : null, stationId: x.stationId ? Number(x.stationId) : null, targetReductionPercent: Number(x.targetReductionPercent), baselineStart: new Date(`${x.baselineStart}T00:00:00`).toISOString(), baselineEnd: new Date(`${x.baselineEnd}T23:59:59`).toISOString(), trackingStart: new Date(`${x.trackingStart}T00:00:00`).toISOString(), trackingEnd: new Date(`${x.trackingEnd}T23:59:59`).toISOString() });
+const localDateBoundary = (date, endOfDay = false) => {
+  const [year, month, day] = date.split('-').map(Number);
+  return new Date(year, month - 1, day, endOfDay ? 23 : 0, endOfDay ? 59 : 0, endOfDay ? 59 : 0).toISOString();
+};
+const toApi = (x) => ({ ...x, lineId: x.lineId ? Number(x.lineId) : null, stationId: x.stationId ? Number(x.stationId) : null, targetReductionPercent: Number(x.targetReductionPercent), baselineStart: localDateBoundary(x.baselineStart), baselineEnd: localDateBoundary(x.baselineEnd, true), trackingStart: localDateBoundary(x.trackingStart), trackingEnd: localDateBoundary(x.trackingEnd, true) });
 const pct = (value) => `${Number(value || 0).toFixed(2)}%`;
 const trendBucket = (value, level) => {
   const day = isoDay(value);
@@ -18,6 +28,14 @@ const trendBucket = (value, level) => {
   return isoDay(date);
 };
 const monthLabels = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const isoWeekNumber = (value) => {
+  const source = new Date(`${value}T12:00:00`);
+  const date = new Date(Date.UTC(source.getFullYear(), source.getMonth(), source.getDate()));
+  const day = date.getUTCDay() || 7;
+  date.setUTCDate(date.getUTCDate() + 4 - day);
+  const yearStart = new Date(Date.UTC(date.getUTCFullYear(), 0, 1));
+  return Math.ceil((((date - yearStart) / 86400000) + 1) / 7);
+};
 const periodRange = (period) => {
   const end = new Date();
   const start = new Date(end);
@@ -87,8 +105,8 @@ export default function Improvements({ lines, stations }) {
     const rangeEnd = trendBucket(trendEnd, trendGranularity);
     return milestones.filter(x => x.date >= rangeStart && x.date <= rangeEnd);
   }, [trendItem, trendStart, trendEnd, trendGranularity]);
-  const trendAxisLabels = useMemo(() => new Map(trendData.map((point, index) => {
-    if (trendGranularity === 'week') return [point.date, `W${index + 1}`];
+  const trendAxisLabels = useMemo(() => new Map(trendData.map((point) => {
+    if (trendGranularity === 'week') return [point.date, `W${isoWeekNumber(point.date)}`];
     if (trendGranularity === 'month') return [point.date, monthLabels[new Date(`${point.date}T12:00:00`).getMonth()]];
     const [, month, day] = point.date.split('-');
     return [point.date, `${day}/${month}`];

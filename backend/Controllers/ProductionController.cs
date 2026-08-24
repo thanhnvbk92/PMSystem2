@@ -9,6 +9,7 @@ namespace PMSystem2.Api.Controllers
     [Route("api/production")]
     public class ProductionController : ControllerBase
     {
+        private static readonly SemaphoreSlim IngestionGate = new(8, 8);
         private readonly IPcbService _pcbService;
 
         public ProductionController(IPcbService pcbService)
@@ -23,6 +24,7 @@ namespace PMSystem2.Api.Controllers
         [HttpPost("submit")]
         public async Task<ActionResult<PcbResultDto>> Submit([FromBody] SubmitPcbRequest req)
         {
+            await IngestionGate.WaitAsync(HttpContext.RequestAborted);
             try
             {
                 var result = await _pcbService.SubmitResultAsync(req);
@@ -31,6 +33,15 @@ namespace PMSystem2.Api.Controllers
             catch (ArgumentException ex)
             {
                 return BadRequest(new { error = ex.Message });
+            }
+            catch (Exception ex) when (IsDatabaseCapacityFailure(ex))
+            {
+                return StatusCode(StatusCodes.Status503ServiceUnavailable,
+                    new { error = "DATABASE_BUSY", retryable = true });
+            }
+            finally
+            {
+                IngestionGate.Release();
             }
         }
 
@@ -51,7 +62,21 @@ namespace PMSystem2.Api.Controllers
                 });
             }
 
-            var results = await _pcbService.SubmitBatchAsync(requests);
+            await IngestionGate.WaitAsync(HttpContext.RequestAborted);
+            List<PcbResultDto> results;
+            try
+            {
+                results = await _pcbService.SubmitBatchAsync(requests);
+            }
+            catch (Exception ex) when (IsDatabaseCapacityFailure(ex))
+            {
+                return StatusCode(StatusCodes.Status503ServiceUnavailable,
+                    new { error = "DATABASE_BUSY", retryable = true });
+            }
+            finally
+            {
+                IngestionGate.Release();
+            }
             int successCount = results.Count;
             int failedCount = requests.Count - successCount;
 
@@ -76,6 +101,19 @@ namespace PMSystem2.Api.Controllers
                     error = (string?)null
                 }).ToList()
             });
+        }
+
+        private static bool IsDatabaseCapacityFailure(Exception ex)
+        {
+            for (Exception? current = ex; current != null; current = current.InnerException)
+            {
+                var message = current.Message;
+                if (message.Contains("connection pool", StringComparison.OrdinalIgnoreCase) ||
+                    message.Contains("timed out", StringComparison.OrdinalIgnoreCase) ||
+                    message.Contains("transient failure", StringComparison.OrdinalIgnoreCase))
+                    return true;
+            }
+            return false;
         }
 
         [HttpGet("cpk/steps")]
@@ -117,11 +155,12 @@ namespace PMSystem2.Api.Controllers
             [FromQuery] int? lineId = null,
             [FromQuery] int? stationId = null,
             [FromQuery] string? searchPid = null,
+            [FromQuery] string? searchError = null,
             [FromQuery] string? resultFilter = null,
             [FromQuery] DateTime? startDate = null,
             [FromQuery] DateTime? endDate = null)
         {
-            return Ok(await _pcbService.GetLatestResultsAsync(limit, lineId, stationId, searchPid, resultFilter, startDate, endDate));
+            return Ok(await _pcbService.GetLatestResultsAsync(limit, lineId, stationId, searchPid, searchError, resultFilter, startDate, endDate));
         }
 
         /// <summary>
@@ -132,11 +171,12 @@ namespace PMSystem2.Api.Controllers
             [FromQuery] int? lineId = null,
             [FromQuery] int? stationId = null,
             [FromQuery] string? searchPid = null,
+            [FromQuery] string? searchError = null,
             [FromQuery] string? resultFilter = null,
             [FromQuery] DateTime? startDate = null,
             [FromQuery] DateTime? endDate = null)
         {
-            var count = await _pcbService.GetExportCountAsync(lineId, stationId, searchPid, resultFilter, startDate, endDate);
+            var count = await _pcbService.GetExportCountAsync(lineId, stationId, searchPid, searchError, resultFilter, startDate, endDate);
             return Ok(count);
         }
 
@@ -150,11 +190,12 @@ namespace PMSystem2.Api.Controllers
             [FromQuery] int? lineId = null,
             [FromQuery] int? stationId = null,
             [FromQuery] string? searchPid = null,
+            [FromQuery] string? searchError = null,
             [FromQuery] string? resultFilter = null,
             [FromQuery] DateTime? startDate = null,
             [FromQuery] DateTime? endDate = null)
         {
-            var bytes = await _pcbService.GetExportCsvAsync(limit, lineId, stationId, searchPid, resultFilter, startDate, endDate);
+            var bytes = await _pcbService.GetExportCsvAsync(limit, lineId, stationId, searchPid, searchError, resultFilter, startDate, endDate);
             var fileName = $"PMSystem_Production_Data_{DateTime.Now:yyyyMMdd_HHmmss}.csv";
             return File(bytes, "text/csv; charset=utf-8", fileName);
         }
@@ -208,18 +249,27 @@ namespace PMSystem2.Api.Controllers
             return Ok(await _pcbService.GetSummaryAsync(lineId, stationId, startDate, endDate));
         }
 
+        [HttpGet("counters")]
+        public async Task<ActionResult<ProductionCounterDto>> GetCounters(
+            [FromQuery] int? lineId = null, [FromQuery] int? stationId = null,
+            [FromQuery] DateTime? startDate = null, [FromQuery] DateTime? endDate = null)
+        {
+            return Ok(await _pcbService.GetCountersAsync(lineId, stationId, startDate, endDate));
+        }
+
         [HttpGet("stats/bi-matrix")]
         public async Task<ActionResult<BiAnalyticsMatrixDto>> GetBiMatrix(
             [FromQuery] int? lineId = null,
             [FromQuery] int? stationId = null,
             [FromQuery] int? channelId = null,
+            [FromQuery] int? modelId = null,
             [FromQuery] string? errorCode = null,
             [FromQuery] string? jobFile = null,
             [FromQuery] DateTime? startDate = null,
             [FromQuery] DateTime? endDate = null,
             [FromQuery] int hours = 24)
         {
-            return Ok(await _pcbService.GetBiMatrixAsync(lineId, stationId, channelId, errorCode, jobFile, startDate, endDate, hours));
+            return Ok(await _pcbService.GetBiMatrixAsync(lineId, stationId, channelId, modelId, errorCode, jobFile, startDate, endDate, hours));
         }
     }
 }

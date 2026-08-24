@@ -609,8 +609,9 @@ namespace PMSystem2.Api.Services
             var value = identity.Trim();
             return await db.Channels.AsNoTracking()
                 .Where(c => (c.MacAddress != null && EF.Functions.ILike(c.MacAddress, value))
-                    || (c.IpAddress != null && EF.Functions.ILike(c.IpAddress, value))
-                    || EF.Functions.ILike(c.Name, $"%{value}%"))
+                    || (c.IpAddress != null && EF.Functions.ILike(c.IpAddress, value)))
+                // MAC/IP are identities: exact, case-insensitive equality only.
+                // Never fall back to partial Channel-name matching.
                 .OrderBy(c => c.Id)
                 .Select(c => new ChannelDto(
                     c.Id, c.StationId, c.Station != null ? c.Station.Name : "Unassigned Station",
