@@ -552,6 +552,7 @@ export default function PcbSearch({ lines, stations, channels = [], onFilterChan
                 <th className="p-3.5">Mã PCB (PID Barcode)</th>
                 <th className="p-3.5">Dây chuyền</th>
                 <th className="p-3.5">Trạm / Channel</th>
+                <th className="p-3.5">Jobfile</th>
                 <th className="p-3.5">IP Máy</th>
                 <th className="p-3.5 text-center">Kết quả</th>
                 <th className="p-3.5 text-right">Chi tiết Test Steps</th>
@@ -571,6 +572,9 @@ export default function PcbSearch({ lines, stations, channels = [], onFilterChan
                       <td className="p-3.5 text-slate-300 font-sans">{log.lineName}</td>
                       <td className="p-3.5 text-slate-300 font-sans">
                         {log.stationName} <span className="text-slate-500 font-mono text-[11px]">({log.channelName})</span>
+                      </td>
+                      <td className="p-3.5 text-slate-300 font-mono text-[11px] max-w-[220px] truncate" title={log.jobFile || ''}>
+                        {log.jobFile || '-'}
                       </td>
                       <td className="p-3.5 text-slate-300 font-mono text-xs">
                         <span className="px-2 py-1 rounded bg-slate-900 border border-slate-800 text-blue-300">{machineIp}</span>
@@ -595,7 +599,7 @@ export default function PcbSearch({ lines, stations, channels = [], onFilterChan
                 })
               ) : (
                 <tr>
-                  <td colSpan={7} className="p-12 text-center text-slate-500 font-sans space-y-2">
+                  <td colSpan={8} className="p-12 text-center text-slate-500 font-sans space-y-2">
                     <Search className="w-8 h-8 mx-auto text-slate-600 mb-2" />
                     <p className="text-sm font-semibold text-slate-400">Không tìm thấy bản ghi PCB phù hợp</p>
                     <p className="text-xs text-slate-600">Thử thay đổi từ khóa PID hoặc điều chỉnh lại các bộ lọc Dây chuyền / Trạm kiểm tra.</p>
@@ -633,7 +637,7 @@ export default function PcbSearch({ lines, stations, channels = [], onFilterChan
               </button>
             </div>
 
-            <div className="grid grid-cols-2 gap-3 text-xs font-sans">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs font-sans">
               <div className="p-3 rounded-xl bg-slate-950/80 border border-slate-800">
                 <span className="text-slate-400 block mb-0.5">Kết quả Tổng thể:</span>
                 <span className={activeModalItem.result === 'OK' || activeModalItem.result === 'PASS' ? 'text-emerald-400 font-bold text-sm' : 'text-rose-400 font-bold text-sm'}>
@@ -644,6 +648,12 @@ export default function PcbSearch({ lines, stations, channels = [], onFilterChan
                 <span className="text-slate-400 block mb-0.5">Thời gian kiểm tra:</span>
                 <span className="text-slate-200 font-mono font-medium text-xs">
                   {new Date(activeModalItem.inspectTime).toLocaleString('vi-VN')}
+                </span>
+              </div>
+              <div className="p-3 rounded-xl bg-slate-950/80 border border-slate-800">
+                <span className="text-slate-400 block mb-0.5">Jobfile:</span>
+                <span className="text-slate-200 font-mono font-medium text-xs break-all">
+                  {activeModalItem.jobFile || '-'}
                 </span>
               </div>
             </div>
