@@ -71,6 +71,33 @@ namespace PMSystem2.Api.Models
         public ICollection<TestStep> TestSteps { get; set; } = new List<TestStep>();
     }
 
+    [Table("pcb_ntf_summaries")]
+    public class PcbNtfSummary
+    {
+        [Column("pid")] public string Pid { get; set; } = string.Empty;
+        [Column("station_id")] public int StationId { get; set; }
+        [Column("first_test_time")] public DateTime FirstTestTime { get; set; }
+        [Column("last_test_time")] public DateTime LastTestTime { get; set; }
+        [Column("test_count")] public long TestCount { get; set; }
+        [Column("ng_count")] public long NgCount { get; set; }
+        [Column("ever_ng")] public bool EverNg { get; set; }
+        [Column("updated_at")] public DateTime UpdatedAt { get; set; }
+    }
+
+    [Table("pcb_rty_summaries")]
+    public class PcbRtySummary
+    {
+        [Key]
+        [Column("pid")] public string Pid { get; set; } = string.Empty;
+        [Column("first_test_time")] public DateTime FirstTestTime { get; set; }
+        [Column("last_test_time")] public DateTime LastTestTime { get; set; }
+        [Column("station_count")] public int StationCount { get; set; }
+        [Column("test_count")] public long TestCount { get; set; }
+        [Column("ng_count")] public long NgCount { get; set; }
+        [Column("ever_ng")] public bool EverNg { get; set; }
+        [Column("updated_at")] public DateTime UpdatedAt { get; set; }
+    }
+
     [Table("test_steps")]
     public class TestStep
     {
@@ -368,6 +395,15 @@ namespace PMSystem2.Api.Models
         List<TestStepInputDto> Steps
     );
 
+    public record LineDefectContributionDto(
+        int LineId,
+        string LineName,
+        long TotalCount,
+        long NgCount,
+        double DefectRate,
+        double ContributionRate
+    );
+
     public record HourlyStatDto(
         DateTime Bucket,
         int LineId,
@@ -375,7 +411,8 @@ namespace PMSystem2.Api.Models
         long TotalCount,
         long OkCount,
         long NgCount,
-        double YieldRate
+        double YieldRate,
+        List<LineDefectContributionDto>? LineContributions = null
     );
 
     public record ProductionSummaryDto(
@@ -387,6 +424,10 @@ namespace PMSystem2.Api.Models
         List<HourlyStatDto> RecentHourlyStats
     );
     public record ProductionCounterDto(int TotalInspected, int TotalOk, int TotalNg, double OverallYieldRate);
+    public record QualityModeSummaryDto(
+        long RetestAttempts, long RetestNgAttempts, double RetestDefectRate,
+        long NtfPcbStations, long NtfNgPcbStations, double NtfRate,
+        long RtyPcbs, long RtyStraightThroughPcbs, double RtyRate);
 
     public record LineYieldStatDto(
         int LineId,
@@ -455,6 +496,20 @@ namespace PMSystem2.Api.Models
 
     public record CpkStepOptionDto(int StepNumber, string StepName, string? StepType, string JobFile);
 
+    /// <summary>A record the collector is about to (re)send; see POST production/existing.</summary>
+    public class ExistingPcbQuery
+    {
+        [System.Text.Json.Serialization.JsonPropertyName("pid")] public string? Pid { get; set; }
+        [System.Text.Json.Serialization.JsonPropertyName("start_time")] public DateTime? StartTime { get; set; }
+        [System.Text.Json.Serialization.JsonPropertyName("result")] public string? Result { get; set; }
+        [System.Text.Json.Serialization.JsonPropertyName("channel_id")] public int ChannelId { get; set; }
+    }
+
+    /// <summary>A record that is already stored with the same Channel and an equal-or-better result.</summary>
+    public record ExistingPcbKey(
+        [property: System.Text.Json.Serialization.JsonPropertyName("pid")] string Pid,
+        [property: System.Text.Json.Serialization.JsonPropertyName("start_time")] DateTime StartTime);
+
     public record CpkPointDto(string Pid, DateTime InspectTime, double Value);
 
     public record CpkAnalysisDto(
@@ -470,13 +525,15 @@ namespace PMSystem2.Api.Models
         double? Cpl,
         double? Cpu,
         double? Cpk,
-        List<CpkPointDto> Points
+        List<CpkPointDto> Points,
+        bool IsHistorical = false
     );
 
     public record CpkCacheOverviewDto(
         int ChannelId, string JobFile, int StepNumber, string StepName,
         int SampleCount, double? SpecMin, double? SpecMax, double? Mean,
         double? StandardDeviation, double? Cpl, double? Cpu, double? Cpk,
-        DateTime CalculatedAt
+        DateTime CalculatedAt, DateTime FromDate, bool IsHistorical,
+        DateTime? LastSampleAt = null
     );
 }

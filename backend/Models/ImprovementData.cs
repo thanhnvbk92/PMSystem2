@@ -13,6 +13,7 @@ public class Improvement
     [MaxLength(100), Column("error_code")] public string? ErrorCode { get; set; }
     [Column("line_id")] public int? LineId { get; set; }
     [Column("station_id")] public int? StationId { get; set; }
+    [Column("model_id")] public int? ModelId { get; set; }
     [Column("problem_description")] public string? ProblemDescription { get; set; }
     [Column("root_cause")] public string? RootCause { get; set; }
     [MaxLength(120), Column("owner")] public string? Owner { get; set; }
@@ -38,6 +39,10 @@ public class ImprovementAction
     [Column("due_date")] public DateTime? DueDate { get; set; }
     [Column("completed_at")] public DateTime? CompletedAt { get; set; }
     [Column("evidence")] public string? Evidence { get; set; }
+    [Column("before_report")] public string? BeforeReport { get; set; }
+    [Column("after_report")] public string? AfterReport { get; set; }
+    [MaxLength(500), Column("before_image_url")] public string? BeforeImageUrl { get; set; }
+    [MaxLength(500), Column("after_image_url")] public string? AfterImageUrl { get; set; }
     [Column("created_at")] public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     [ForeignKey(nameof(ImprovementId))]
     [System.Text.Json.Serialization.JsonIgnore]

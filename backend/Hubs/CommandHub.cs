@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.SignalR;
 using System.Collections.Concurrent;
 using System.Text.Json.Serialization;
+using PMSystem2.Api.Services;
 
 namespace PMSystem2.Api.Hubs
 {
@@ -88,6 +89,22 @@ namespace PMSystem2.Api.Hubs
 
         [JsonPropertyName("timestamp")]
         public DateTime Timestamp { get; set; } = DateTime.UtcNow;
+
+        // Telemetry version 2+ (Backup_Log2 sending every minute with the real version and PC info).
+        [JsonPropertyName("telemetry_version")] public int TelemetryVersion { get; set; }
+        [JsonPropertyName("hostname")] public string? Hostname { get; set; }
+        [JsonPropertyName("ip_address")] public string? IpAddress { get; set; }
+        [JsonPropertyName("os_version")] public string? OsVersion { get; set; }
+        [JsonPropertyName("cpu_percent")] public double? CpuPercent { get; set; }
+        [JsonPropertyName("ram_total_mb")] public int? RamTotalMb { get; set; }
+        [JsonPropertyName("ram_used_mb")] public int? RamUsedMb { get; set; }
+        [JsonPropertyName("disk_drive")] public string? DiskDrive { get; set; }
+        [JsonPropertyName("disk_total_gb")] public double? DiskTotalGb { get; set; }
+        [JsonPropertyName("disk_free_gb")] public double? DiskFreeGb { get; set; }
+        [JsonPropertyName("app_started_at")] public DateTime? AppStartedAt { get; set; }
+        [JsonPropertyName("last_upload_at")] public DateTime? LastUploadAt { get; set; }
+        [JsonPropertyName("log_type")] public string? LogType { get; set; }
+        [JsonPropertyName("log_folders")] public string? LogFolders { get; set; }
     }
 
     public interface ICommandClient
@@ -121,11 +138,28 @@ namespace PMSystem2.Api.Hubs
 
         private readonly IHubContext<ProductionHub, IProductionClient> _productionHubContext;
         private readonly ILogger<CommandHub> _logger;
+        private readonly MachineStatusService _machineStatus;
 
-        public CommandHub(IHubContext<ProductionHub, IProductionClient> productionHubContext, ILogger<CommandHub> logger)
+        public CommandHub(IHubContext<ProductionHub, IProductionClient> productionHubContext, ILogger<CommandHub> logger,
+            MachineStatusService machineStatus)
         {
             _productionHubContext = productionHubContext;
             _logger = logger;
+            _machineStatus = machineStatus;
+        }
+
+        /// <summary>Pushes the event to the web pages, with the saved PC state (PC monitoring) when there is one.</summary>
+        private async Task BroadcastMachineAsync(object legacyPayload, MachineStatusDto? saved)
+        {
+            await _productionHubContext.Clients.All.ReceiveMachineStatusChanged(saved == null
+                ? legacyPayload
+                : new { legacy = legacyPayload, machine = saved });
+        }
+
+        private static bool HasOtherConnection(string? mac, string connectionId)
+        {
+            var key = MachineStatusService.MacKey(mac);
+            return key != null && Connections.Values.Any(c => c.ConnectionId != connectionId && MachineStatusService.MacKey(c.MacAddress) == key);
         }
 
         public override async Task OnConnectedAsync()
@@ -172,13 +206,14 @@ namespace PMSystem2.Api.Hubs
             await Groups.AddToGroupAsync(Context.ConnectionId, "AllCommandClients");
 
             // Broadcast Machine Connected status to Web Dashboard via ProductionHub
-            await _productionHubContext.Clients.All.ReceiveMachineStatusChanged(new
+            var connected = await _machineStatus.MarkConnectedAsync(macAddress, connectedChannelId);
+            await BroadcastMachineAsync(new
             {
                 mac_address = macAddress,
                 channel_id = channelIdStr,
                 is_online = true,
                 timestamp = DateTime.UtcNow
-            });
+            }, connected);
 
             await base.OnConnectedAsync();
         }
@@ -193,13 +228,15 @@ namespace PMSystem2.Api.Hubs
             _logger.LogInformation("[CommandHub] Client disconnected: ConnectionId={ConnectionId}", Context.ConnectionId);
 
             // Broadcast Machine Disconnected status to Web Dashboard via ProductionHub
-            await _productionHubContext.Clients.All.ReceiveMachineStatusChanged(new
+            var stillConnected = HasOtherConnection(macAddress, Context.ConnectionId);
+            var disconnected = await _machineStatus.MarkDisconnectedAsync(macAddress, stillConnected);
+            await BroadcastMachineAsync(new
             {
                 mac_address = macAddress,
                 channel_id = channelIdStr,
-                is_online = false,
+                is_online = stillConnected,
                 timestamp = DateTime.UtcNow
-            });
+            }, disconnected);
 
             await base.OnDisconnectedAsync(exception);
         }
@@ -262,7 +299,29 @@ namespace PMSystem2.Api.Hubs
             _logger.LogInformation("[CommandHub] Telemetry received from MAC={Mac}: Model={Model}, AppVersion={Version}",
                 telemetry.MacAddress, telemetry.CurrentModel, telemetry.AppVersion);
 
-            await _productionHubContext.Clients.All.ReceiveMachineStatusChanged(new
+            var saved = await _machineStatus.SaveTelemetryAsync(new MachineTelemetryInput
+            {
+                MacAddress = telemetry.MacAddress,
+                ChannelId = telemetry.ChannelId,
+                CurrentModel = telemetry.CurrentModel,
+                AppVersion = telemetry.AppVersion,
+                Status = telemetry.Status,
+                TelemetryVersion = telemetry.TelemetryVersion,
+                Hostname = telemetry.Hostname,
+                IpAddress = telemetry.IpAddress,
+                OsVersion = telemetry.OsVersion,
+                CpuPercent = telemetry.CpuPercent,
+                RamTotalMb = telemetry.RamTotalMb,
+                RamUsedMb = telemetry.RamUsedMb,
+                DiskDrive = telemetry.DiskDrive,
+                DiskTotalGb = telemetry.DiskTotalGb,
+                DiskFreeGb = telemetry.DiskFreeGb,
+                AppStartedAt = telemetry.AppStartedAt,
+                LastUploadAt = telemetry.LastUploadAt,
+                LogType = telemetry.LogType,
+                LogFolders = telemetry.LogFolders
+            });
+            await BroadcastMachineAsync(new
             {
                 mac_address = telemetry.MacAddress,
                 channel_id = telemetry.ChannelId,
@@ -271,7 +330,7 @@ namespace PMSystem2.Api.Hubs
                 status = telemetry.Status,
                 is_online = true,
                 timestamp = telemetry.Timestamp
-            });
+            }, saved);
         }
     }
 }

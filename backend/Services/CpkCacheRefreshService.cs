@@ -50,38 +50,53 @@ public sealed class CpkCacheRefreshService : BackgroundService
                 bool exists = await db.CpkResultHistory.AsNoTracking().AnyAsync(h =>
                     h.CalculationDate == calculationDate && h.ChannelId == channelId
                     && h.JobFile == rule.JobFile && h.StepNumber == rule.StepNumber
-                    && h.StepName == rule.StepName, token);
+                    && h.StepName == rule.StepName && h.SampleCount >= 50 && h.Cpk != null, token);
                 if (exists) { skipped++; continue; }
 
-                var analysis = await pcbService.GetCpkAnalysisAsync(channelId, rule.StepNumber,
-                    rule.StepName, rule.JobFile, 50, forceRefresh: true);
-                await db.RawCpk.Where(r => r.CalculationDate == calculationDate && r.ChannelId == channelId
-                    && r.JobFile == rule.JobFile && r.StepNumber == rule.StepNumber && r.StepName == rule.StepName)
-                    .ExecuteDeleteAsync(token);
-
-                if (analysis.SpecMin.HasValue && analysis.SpecMax.HasValue)
+                await db.Database.CreateExecutionStrategy().ExecuteAsync(async () =>
                 {
-                    db.RawCpk.AddRange(analysis.Points.Select(p => new RawCpk {
-                        CalculationDate = calculationDate, StationId = rule.Id, ChannelId = channelId,
-                        JobFile = rule.JobFile, StepNumber = rule.StepNumber, StepName = rule.StepName,
-                        Pid = p.Pid, Value = p.Value, SpecMin = analysis.SpecMin.Value,
-                        SpecMax = analysis.SpecMax.Value, InspectTime = p.InspectTime, RefreshedAt = DateTime.UtcNow
-                    }));
-                }
+                    db.ChangeTracker.Clear();
+                    await using var transaction = await db.Database.BeginTransactionAsync(token);
+                    var analysis = await pcbService.GetCpkAnalysisAsync(channelId, rule.StepNumber,
+                        rule.StepName, rule.JobFile, 50, forceRefresh: true);
+                    await db.RawCpk.Where(r => r.CalculationDate == calculationDate && r.ChannelId == channelId
+                        && r.JobFile == rule.JobFile && r.StepNumber == rule.StepNumber && r.StepName == rule.StepName)
+                        .ExecuteDeleteAsync(token);
 
-                string status = analysis.SampleCount < 50 ? "INSUFFICIENT_DATA"
-                    : !analysis.SpecMin.HasValue || !analysis.SpecMax.HasValue ? "INVALID_SPEC"
-                    : analysis.StandardDeviation is null or <= 0 ? "ZERO_VARIANCE" : "READY";
-                db.CpkResultHistory.Add(new CpkResultHistory {
-                    CalculationDate = calculationDate, StationId = rule.Id, ChannelId = channelId,
-                    JobFile = rule.JobFile, StepNumber = rule.StepNumber, StepName = rule.StepName,
-                    PeriodStart = analysis.FromDate, PeriodEnd = DateTime.UtcNow,
-                    SampleCount = analysis.SampleCount, SpecMin = analysis.SpecMin, SpecMax = analysis.SpecMax,
-                    Mean = analysis.Mean, StandardDeviation = analysis.StandardDeviation,
-                    Cpl = analysis.Cpl, Cpu = analysis.Cpu, Cpk = analysis.Cpk,
-                    Status = status, CalculatedAt = DateTime.UtcNow
+                    if (analysis.SpecMin.HasValue && analysis.SpecMax.HasValue)
+                    {
+                        db.RawCpk.AddRange(analysis.Points.Select(p => new RawCpk {
+                            CalculationDate = calculationDate, StationId = rule.Id, ChannelId = channelId,
+                            JobFile = rule.JobFile, StepNumber = rule.StepNumber, StepName = rule.StepName,
+                            Pid = p.Pid, Value = p.Value, SpecMin = analysis.SpecMin.Value,
+                            SpecMax = analysis.SpecMax.Value, InspectTime = p.InspectTime, RefreshedAt = DateTime.UtcNow
+                        }));
+                    }
+
+                    string status = analysis.SampleCount < 50 ? "INSUFFICIENT_DATA"
+                        : !analysis.SpecMin.HasValue || !analysis.SpecMax.HasValue ? "INVALID_SPEC"
+                        : analysis.StandardDeviation is null or <= 0 ? "ZERO_VARIANCE" : "READY";
+                    var snapshot = await db.CpkResultHistory.FirstOrDefaultAsync(h =>
+                        h.CalculationDate == calculationDate && h.ChannelId == channelId
+                        && h.JobFile == rule.JobFile && h.StepNumber == rule.StepNumber
+                        && h.StepName == rule.StepName, token);
+                    if (snapshot == null)
+                    {
+                        snapshot = new CpkResultHistory {
+                            CalculationDate = calculationDate, StationId = rule.Id, ChannelId = channelId,
+                            JobFile = rule.JobFile, StepNumber = rule.StepNumber, StepName = rule.StepName
+                        };
+                        db.CpkResultHistory.Add(snapshot);
+                    }
+                    snapshot.PeriodStart = analysis.FromDate; snapshot.PeriodEnd = DateTime.UtcNow;
+                    snapshot.SampleCount = analysis.SampleCount; snapshot.SpecMin = analysis.SpecMin;
+                    snapshot.SpecMax = analysis.SpecMax; snapshot.Mean = analysis.Mean;
+                    snapshot.StandardDeviation = analysis.StandardDeviation;
+                    snapshot.Cpl = analysis.Cpl; snapshot.Cpu = analysis.Cpu; snapshot.Cpk = analysis.Cpk;
+                    snapshot.Status = status; snapshot.CalculatedAt = DateTime.UtcNow;
+                    await db.SaveChangesAsync(token);
+                    await transaction.CommitAsync(token);
                 });
-                await db.SaveChangesAsync(token);
                 created++;
             }
         }

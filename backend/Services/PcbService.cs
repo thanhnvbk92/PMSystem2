@@ -15,12 +15,14 @@ namespace PMSystem2.Api.Services
     {
         Task<PcbResultDto> SubmitResultAsync(SubmitPcbRequest req);
         Task<List<PcbResultDto>> SubmitBatchAsync(List<SubmitPcbRequest> requests);
-        Task<List<PcbResultDto>> GetLatestResultsAsync(int limit = 50, int? lineId = null, int? stationId = null, string? searchPid = null, string? searchError = null, string? resultFilter = null, DateTime? startDate = null, DateTime? endDate = null);
-        Task<int> GetExportCountAsync(int? lineId = null, int? stationId = null, string? searchPid = null, string? searchError = null, string? resultFilter = null, DateTime? startDate = null, DateTime? endDate = null);
-        Task<byte[]> GetExportCsvAsync(int? limit = null, int? lineId = null, int? stationId = null, string? searchPid = null, string? searchError = null, string? resultFilter = null, DateTime? startDate = null, DateTime? endDate = null);
+        Task<List<ExistingPcbKey>> FindExistingAsync(List<ExistingPcbQuery> keys);
+        Task<List<PcbResultDto>> GetLatestResultsAsync(int limit = 50, int? lineId = null, int? stationId = null, string? searchPid = null, string? searchFid = null, string? searchError = null, string? resultFilter = null, DateTime? startDate = null, DateTime? endDate = null, IReadOnlyCollection<int>? lineIds = null, IReadOnlyCollection<int>? stationIds = null, IReadOnlyCollection<int>? channelIds = null);
+        Task<int> GetExportCountAsync(int? lineId = null, int? stationId = null, string? searchPid = null, string? searchFid = null, string? searchError = null, string? resultFilter = null, DateTime? startDate = null, DateTime? endDate = null, IReadOnlyCollection<int>? lineIds = null, IReadOnlyCollection<int>? stationIds = null, IReadOnlyCollection<int>? channelIds = null);
+        Task<byte[]> GetExportCsvAsync(int? limit = null, int? lineId = null, int? stationId = null, string? searchPid = null, string? searchFid = null, string? searchError = null, string? resultFilter = null, DateTime? startDate = null, DateTime? endDate = null, IReadOnlyCollection<int>? lineIds = null, IReadOnlyCollection<int>? stationIds = null, IReadOnlyCollection<int>? channelIds = null);
         Task<List<HourlyStatDto>> GetHourlyStatsAsync(int hours = 24, int? lineId = null, int? stationId = null, DateTime? startDate = null, DateTime? endDate = null);
         Task<ProductionSummaryDto> GetSummaryAsync(int? lineId = null, int? stationId = null, DateTime? startDate = null, DateTime? endDate = null);
         Task<ProductionCounterDto> GetCountersAsync(int? lineId = null, int? stationId = null, DateTime? startDate = null, DateTime? endDate = null);
+        Task<QualityModeSummaryDto> GetQualityModesAsync(int? lineId = null, int? stationId = null, DateTime? startDate = null, DateTime? endDate = null);
         Task<List<LineYieldStatDto>> GetLineYieldStatsAsync(int? lineId = null, DateTime? startDate = null, DateTime? endDate = null);
         Task<List<StationYieldStatDto>> GetStationYieldStatsAsync(int? lineId = null, DateTime? startDate = null, DateTime? endDate = null);
         Task<List<DefectParetoStatDto>> GetDefectParetoAsync(int? lineId = null, int? stationId = null, DateTime? startDate = null, DateTime? endDate = null);
@@ -29,9 +31,10 @@ namespace PMSystem2.Api.Services
         Task<List<CpkStepOptionDto>> GetStationCpkStepsAsync(int stationId);
         Task<CpkAnalysisDto> GetCpkAnalysisAsync(int channelId, int stepNumber, string stepName, string? jobFile, int limit = 50, bool forceRefresh = false);
         Task<List<CpkCacheOverviewDto>> GetCpkOverviewAsync();
+        Task<byte[]> GetCpkReportAsync(CancellationToken cancellationToken = default);
     }
 
-    public class PcbService : IPcbService
+    public partial class PcbService : IPcbService
     {
         private static long _productionVersion;
         private static readonly SemaphoreSlim ProductionBroadcastGate = new(1, 1);
@@ -40,19 +43,25 @@ namespace PMSystem2.Api.Services
         private readonly IHubContext<ProductionHub, IProductionClient> _hubContext;
         private readonly ILogger<PcbService> _logger;
         private readonly IMemoryCache _memoryCache;
+        private readonly PMSystem2.Api.Services.Cpk.CpkEngine _cpkEngine;
+        private readonly QualitySummaryQueue _qualitySummaryQueue;
 
         public PcbService(
             AppDbContext db,
             IMasterDataService masterDataService,
             IHubContext<ProductionHub, IProductionClient> hubContext,
             ILogger<PcbService> logger,
-            IMemoryCache memoryCache)
+            IMemoryCache memoryCache,
+            PMSystem2.Api.Services.Cpk.CpkEngine cpkEngine,
+            QualitySummaryQueue qualitySummaryQueue)
         {
             _db = db;
             _masterDataService = masterDataService;
             _hubContext = hubContext;
             _logger = logger;
             _memoryCache = memoryCache;
+            _cpkEngine = cpkEngine;
+            _qualitySummaryQueue = qualitySummaryQueue;
         }
 
         public async Task<PcbResultDto> SubmitResultAsync(SubmitPcbRequest req)
@@ -91,7 +100,7 @@ namespace PMSystem2.Api.Services
                 throw new ArgumentException($"Unable to resolve channel hierarchy for Channel ID {req.ChannelId}.");
             }
 
-            var normalizedResult = (CleanDbText(req.Result) ?? string.Empty).ToUpperInvariant();
+            var normalizedResult = NormalizePcbResult(req.Result);
             var rawInspectTime = req.InspectTime ?? req.StartTime ?? DateTime.UtcNow;
             var inspectTime = EnsureUtc(rawInspectTime);
             var startTime = req.StartTime.HasValue ? EnsureUtc(req.StartTime.Value) : inspectTime;
@@ -100,9 +109,7 @@ namespace PMSystem2.Api.Services
             string? computedErrorCode = null;
             if (normalizedResult == "NG" || normalizedResult == "FAIL")
             {
-                var firstNgStep = req.Steps?.FirstOrDefault(s =>
-                    !string.Equals(s.Result, "OK", StringComparison.OrdinalIgnoreCase) &&
-                    !string.Equals(s.Result, "PASS", StringComparison.OrdinalIgnoreCase));
+                var firstNgStep = req.Steps?.FirstOrDefault(s => IsNgStepResult(s.Result));
 
                 if (firstNgStep != null)
                 {
@@ -123,27 +130,52 @@ namespace PMSystem2.Api.Services
             var existingRecord = await _db.PcbResults
                 .Include(p => p.TestSteps)
                 .Where(p => p.Pid == cleanPid
-                    && p.Result == normalizedResult
                     && p.StartTime == startTime)
-                .OrderByDescending(p => p.Id)
+                .OrderByDescending(p => p.Result == "OK" || p.Result == "PASS")
+                .ThenBy(p => p.CreatedAt)
                 .FirstOrDefaultAsync();
 
             if (existingRecord != null)
             {
+                // Exact-key upsert: the identity fields (PID, StartTime)
+                // are intentionally immutable. A replay with the same identity
+                // refreshes the values parsed from the source log.
+                bool existingChanged = ApplyParsedFields(existingRecord, req, inspectTime);
                 if (existingRecord.ChannelId != channelId)
                 {
                     int oldChannelId = existingRecord.ChannelId;
                     existingRecord.ChannelId = channelId;
                     existingRecord.StationId = hierarchy.StationId;
-                    await _db.SaveChangesAsync();
-                    _logger.LogWarning(
-                        "[DEDUPLICATION] Duplicate PCB result reassigned to current channel. PID: {Pid}, StationId: {StationId}, InspectTime: {InspectTime}, OldChannelId: {OldChannelId}, NewChannelId: {NewChannelId}",
-                        cleanPid, hierarchy.StationId, inspectTime, oldChannelId, channelId);
+                    existingChanged = true;
+                    ReportChannelReassignment(oldChannelId, channelId, cleanPid, existingRecord.StartTime);
                 }
                 else
                 {
                     _logger.LogWarning("[DEDUPLICATION] Duplicate PCB result ignored for PID: {Pid}, StationId: {StationId}, InspectTime: {InspectTime}",
                         cleanPid, hierarchy.StationId, inspectTime);
+                }
+
+                var incomingWins = PreferIncomingResult(existingRecord.Result, normalizedResult);
+                if (incomingWins)
+                {
+                    existingRecord.Result = normalizedResult;
+                    existingRecord.ErrorCode = null;
+                    _db.TestSteps.RemoveRange(existingRecord.TestSteps.ToList());
+                    existingRecord.TestSteps.Clear();
+                    existingChanged = true;
+                }
+
+                if (IsNgResult(normalizedResult) && !IsOkResult(existingRecord.Result))
+                {
+                    ReplaceNgSteps(existingRecord, req.Steps, computedErrorCode);
+                    existingRecord.ErrorCode = computedErrorCode;
+                    existingChanged = true;
+                }
+
+                if (existingChanged)
+                {
+                    await _db.SaveChangesAsync();
+                    await TryRefreshQualitySummariesAsync(new[] { cleanPid });
                 }
 
                 return new PcbResultDto(
@@ -237,27 +269,50 @@ namespace PMSystem2.Api.Services
             {
                 _db.PcbResults.Add(entity);
                 await _db.SaveChangesAsync();
+                _cpkEngine.Enqueue(entity);
+                await TryRefreshQualitySummariesAsync(new[] { cleanPid });
             }
             catch (DbUpdateException ex) when (ex.InnerException is PostgresException { SqlState: PostgresErrorCodes.UniqueViolation })
             {
                 _logger.LogWarning(ex, "[DEDUPLICATION] DB Unique constraint prevented inserting duplicate PCB result for PID: {Pid}", cleanPid);
-                _db.Entry(entity).State = EntityState.Detached;
+                _db.ChangeTracker.Clear();
 
                 // Fallback: Fetch existing record
                 var duplicate = await _db.PcbResults
-                    .FirstOrDefaultAsync(p => p.StationId == hierarchy.StationId
-                        && p.Pid == cleanPid
-                        && p.InspectTime == inspectTime
-                        && p.Result == normalizedResult);
+                    .Include(p => p.TestSteps)
+                    .FirstOrDefaultAsync(p => p.Pid == cleanPid
+                        && p.StartTime == startTime);
 
+                bool duplicateChanged = false;
                 if (duplicate != null && duplicate.ChannelId != channelId)
                 {
                     int oldChannelId = duplicate.ChannelId;
                     duplicate.ChannelId = channelId;
+                    duplicate.StationId = hierarchy.StationId;
+                    duplicateChanged = true;
+                    ReportChannelReassignment(oldChannelId, channelId, cleanPid, duplicate.StartTime);
+                }
+
+                if (duplicate != null && PreferIncomingResult(duplicate.Result, normalizedResult))
+                {
+                    duplicate.Result = normalizedResult;
+                    duplicate.ErrorCode = null;
+                    _db.TestSteps.RemoveRange(duplicate.TestSteps.ToList());
+                    duplicate.TestSteps.Clear();
+                    duplicateChanged = true;
+                }
+                if (duplicate != null && IsNgResult(normalizedResult) && !IsOkResult(duplicate.Result))
+                {
+                    ReplaceNgSteps(duplicate, req.Steps, computedErrorCode);
+                    duplicate.ErrorCode = computedErrorCode;
+                    duplicateChanged = true;
+                }
+                if (duplicate != null)
+                    duplicateChanged |= ApplyParsedFields(duplicate, req, inspectTime);
+                if (duplicateChanged)
+                {
                     await _db.SaveChangesAsync();
-                    _logger.LogWarning(
-                        "[DEDUPLICATION] Unique-conflict PCB result reassigned to current channel. PID: {Pid}, StationId: {StationId}, InspectTime: {InspectTime}, OldChannelId: {OldChannelId}, NewChannelId: {NewChannelId}",
-                        cleanPid, hierarchy.StationId, inspectTime, oldChannelId, channelId);
+                    await TryRefreshQualitySummariesAsync(new[] { cleanPid });
                 }
 
                 return new PcbResultDto(
@@ -329,13 +384,34 @@ namespace PMSystem2.Api.Services
             {
                 _logger.LogWarning(ex, "Job File mapping registration failed after PCB was saved and broadcast.");
             }
-            if (entity.Result == "OK" || entity.Result == "PASS")
-                await TrySyncCpkStepCatalogAsync(entity.StationId, entity.JobFile, entity.TestSteps);
 
             return dto;
         }
 
+        private const int MaxDeadlockAttempts = 3;
+
         public async Task<List<PcbResultDto>> SubmitBatchAsync(List<SubmitPcbRequest> requests)
+        {
+            for (var attempt = 1; ; attempt++)
+            {
+                try
+                {
+                    return await SubmitBatchCoreAsync(requests, retried: false);
+                }
+                catch (Exception ex) when (IsDeadlock(ex) && attempt < MaxDeadlockAttempts)
+                {
+                    // Two uploads updated the same daily-rollup rows (trigger on pcb_results)
+                    // in opposite order; PostgreSQL rolled this batch back. Re-run it from a
+                    // clean state after a short random pause so the other upload finishes.
+                    _db.ChangeTracker.Clear();
+                    _logger.LogWarning("[BATCH SUBMIT] Deadlock with a concurrent upload ({Count} records); retrying {Attempt}/{Max}.",
+                        requests.Count, attempt + 1, MaxDeadlockAttempts);
+                    await Task.Delay(Random.Shared.Next(200, 800) * attempt);
+                }
+            }
+        }
+
+        private async Task<List<PcbResultDto>> SubmitBatchCoreAsync(List<SubmitPcbRequest> requests, bool retried)
         {
             if (requests == null || requests.Count == 0)
                 return new List<PcbResultDto>();
@@ -367,7 +443,7 @@ namespace PMSystem2.Api.Services
 
                 if (hierarchy == null) continue;
 
-                var normalizedResult = (CleanDbText(req.Result) ?? string.Empty).ToUpperInvariant();
+                var normalizedResult = NormalizePcbResult(req.Result);
                 var rawInspectTime = req.InspectTime ?? req.StartTime ?? DateTime.UtcNow;
                 var inspectTime = EnsureUtc(rawInspectTime);
                 var startTime = req.StartTime.HasValue ? EnsureUtc(req.StartTime.Value) : inspectTime;
@@ -375,9 +451,7 @@ namespace PMSystem2.Api.Services
                 string? computedErrorCode = null;
                 if (normalizedResult == "NG" || normalizedResult == "FAIL")
                 {
-                    var firstNgStep = req.Steps?.FirstOrDefault(s =>
-                        !string.Equals(s.Result, "OK", StringComparison.OrdinalIgnoreCase) &&
-                        !string.Equals(s.Result, "PASS", StringComparison.OrdinalIgnoreCase));
+                    var firstNgStep = req.Steps?.FirstOrDefault(s => IsNgStepResult(s.Result));
 
                     if (firstNgStep != null)
                     {
@@ -447,10 +521,18 @@ namespace PMSystem2.Api.Services
                 newEntities.Add(entity);
             }
 
+            // A source file or retry queue can contain the same PCB more than once
+            // in a single request. Keep the latest payload for the unique database
+            // identity before checking existing rows or calling AddRange.
+            newEntities = newEntities
+                .GroupBy(entity => new { entity.Pid, Start = entity.StartTime ?? entity.InspectTime })
+                .Select(group => group.FirstOrDefault(entity => IsOkResult(entity.Result)) ?? group.First())
+                .ToList();
+
             // A full local rescan primarily sends records that already exist.
             // Resolve duplicates in one database read and reassign their Channel
             // instead of attempting a bulk insert and falling back one-by-one.
-            var duplicateAssignmentsChanged = false;
+            var duplicateRecordsChanged = false;
             if (newEntities.Count > 0)
             {
                 var candidatePids = newEntities.Select(e => e.Pid).Distinct().ToList();
@@ -464,56 +546,126 @@ namespace PMSystem2.Api.Services
                         p.StartTime.Value >= minStart && p.StartTime.Value <= maxStart)
                     .ToListAsync();
                 var existingByKey = existingCandidates
-                    .GroupBy(p => (p.Pid, p.Result, Start: p.StartTime!.Value))
-                    .ToDictionary(g => g.Key, g => g.OrderByDescending(x => x.Id).First());
+                    .GroupBy(p => (p.Pid, Start: p.StartTime!.Value))
+                    .ToDictionary(g => g.Key, g => g
+                        .OrderByDescending(x => IsOkResult(x.Result))
+                        .ThenBy(x => x.CreatedAt)
+                        .First());
+
+                var existingIds = existingByKey.Values.Select(x => x.Id).ToList();
+                var existingNgSteps = await _db.TestSteps
+                    .Where(step => existingIds.Contains(step.PcbResultId)
+                        && step.Result != "OK" && step.Result != "PASS")
+                    .ToListAsync();
+                var existingNgStepsByPcb = existingNgSteps
+                    .GroupBy(step => step.PcbResultId)
+                    .ToDictionary(group => group.Key, group => group.ToList());
 
                 var toInsert = new List<PcbResult>();
                 foreach (var entity in newEntities)
                 {
-                    var key = (entity.Pid, entity.Result, Start: entity.StartTime ?? entity.InspectTime);
+                    var key = (entity.Pid, Start: entity.StartTime ?? entity.InspectTime);
                     if (!existingByKey.TryGetValue(key, out var existing))
                     {
                         toInsert.Add(entity);
                         continue;
                     }
 
+                    duplicateRecordsChanged |= ApplyParsedFields(existing, entity);
+
                     if (existing.ChannelId != entity.ChannelId || existing.StationId != entity.StationId)
                     {
                         var oldChannelId = existing.ChannelId;
                         existing.ChannelId = entity.ChannelId;
                         existing.StationId = entity.StationId;
-                        duplicateAssignmentsChanged = true;
-                        _logger.LogDebug("[BATCH DEDUPLICATION] PID {Pid}, Result {Result}, StartTime {StartTime}: Channel {OldChannelId} -> {NewChannelId}",
-                            existing.Pid, existing.Result, existing.StartTime, oldChannelId, existing.ChannelId);
+                        duplicateRecordsChanged = true;
+                        ReportChannelReassignment(oldChannelId, existing.ChannelId, existing.Pid, existing.StartTime);
+                    }
+                    if (PreferIncomingResult(existing.Result, entity.Result))
+                    {
+                        existing.Result = entity.Result;
+                        existing.ErrorCode = null;
+                        if (existingNgStepsByPcb.TryGetValue(existing.Id, out var replacedSteps))
+                            _db.TestSteps.RemoveRange(replacedSteps);
+                        duplicateRecordsChanged = true;
+                    }
+                    if (IsNgResult(entity.Result) && !IsOkResult(existing.Result))
+                    {
+                        if (existingNgStepsByPcb.TryGetValue(existing.Id, out var oldNgSteps))
+                            _db.TestSteps.RemoveRange(oldNgSteps);
+                        foreach (var incomingStep in entity.TestSteps.Where(step => IsNgStepResult(step.Result)))
+                            existing.TestSteps.Add(CloneStep(incomingStep));
+                        existing.ErrorCode = entity.ErrorCode;
+                        duplicateRecordsChanged = true;
                     }
                     resultDtos.Add(BuildResultDto(existing));
                 }
                 newEntities = toInsert;
             }
 
-            if (newEntities.Count == 0 && duplicateAssignmentsChanged)
-                await _db.SaveChangesAsync();
+            if (newEntities.Count == 0 && duplicateRecordsChanged)
+            {
+                try
+                {
+                    await _db.SaveChangesAsync();
+                }
+                catch (DbUpdateConcurrencyException ex)
+                {
+                    // Another overlapping replay already updated or removed the
+                    // same child step. The PCB identity still exists, so this is
+                    // a recoverable duplicate race rather than a failed upload.
+                    _logger.LogWarning(ex,
+                        "[BATCH DEDUPLICATION] Concurrent duplicate update detected; using the committed database result.");
+                    _db.ChangeTracker.Clear();
+                }
+            }
 
             if (newEntities.Count > 0)
             {
                 try
                 {
+                    // The daily-rollup trigger locks one aggregate row for every
+                    // PCB result. Concurrent batches must acquire those rows in a
+                    // stable order or PostgreSQL can detect a 40P01 deadlock.
+                    newEntities = newEntities
+                        .OrderBy(entity => entity.InspectTime.Date)
+                        .ThenBy(entity => entity.StationId)
+                        .ThenBy(entity => entity.ChannelId)
+                        .ThenBy(entity => entity.Result, StringComparer.Ordinal)
+                        .ThenBy(entity => entity.ErrorCode ?? string.Empty, StringComparer.Ordinal)
+                        .ThenBy(entity => entity.JobFile ?? string.Empty, StringComparer.Ordinal)
+                        .ThenBy(entity => entity.ModelId ?? 0)
+                        .ThenBy(entity => entity.Id)
+                        .ToList();
                     _db.PcbResults.AddRange(newEntities);
                     await _db.SaveChangesAsync();
+                    foreach (var saved in newEntities) _cpkEngine.Enqueue(saved);
                 }
                 catch (Exception ex)
                 {
-                    if (IsDatabaseCapacityFailure(ex))
+                    if (IsDatabaseCapacityFailure(ex) || IsDeadlock(ex))
                     {
+                        // Deadlocks are retried as a whole batch by SubmitBatchAsync; the
+                        // one-by-one fallback below would only hit the same rows again.
                         _db.ChangeTracker.Clear();
                         throw;
                     }
-                    _logger.LogWarning(ex, "[BATCH SUBMIT] Bulk save encountered issue, falling back to individual insert");
-                    foreach (var entity in newEntities)
+                    if (!retried && IsUniqueViolation(ex))
                     {
-                        _db.Entry(entity).State = EntityState.Detached;
+                        // Another request stored some of these PCBs between our duplicate
+                        // check and SaveChanges. The batch was rolled back, so re-run it
+                        // once: the fresh duplicate check now sees those rows.
+                        _logger.LogInformation("[BATCH SUBMIT] Concurrent duplicate detected; re-checking the batch once.");
+                        _db.ChangeTracker.Clear();
+                        return await SubmitBatchCoreAsync(requests, retried: true);
                     }
+                    _logger.LogWarning(ex, "[BATCH SUBMIT] Bulk save encountered issue, falling back to individual insert");
+                    // SaveChanges may leave modified/deleted duplicate entities and
+                    // their TestSteps tracked. Reusing that state makes the fallback
+                    // throw DbUpdateConcurrencyException, so start it clean.
+                    _db.ChangeTracker.Clear();
                     newEntities.Clear();
+                    resultDtos.Clear();
                     foreach (var req in requests)
                     {
                         try
@@ -521,7 +673,12 @@ namespace PMSystem2.Api.Services
                             var dto = await SubmitResultAsync(req);
                             resultDtos.Add(dto);
                         }
-                        catch { }
+                        catch (Exception individualEx)
+                        {
+                            _logger.LogWarning(individualEx,
+                                "[BATCH SUBMIT] Individual fallback failed for PID {Pid}", req.Pid);
+                            _db.ChangeTracker.Clear();
+                        }
                     }
                     return resultDtos;
                 }
@@ -570,6 +727,22 @@ namespace PMSystem2.Api.Services
                 // Only genuinely inserted rows affect live production counters;
                 // duplicate rescans merely correct ownership and must not inflate KPIs.
                 var insertedResultDtos = resultDtos.TakeLast(newEntities.Count).ToList();
+                var insertedJobFiles = insertedResultDtos
+                    .Where(x => x.ModelId == null && !string.IsNullOrWhiteSpace(x.JobFile))
+                    .Select(x => x.JobFile!)
+                    .Distinct()
+                    .ToList();
+                var unassignedJobFiles = insertedJobFiles.Count == 0
+                    ? new HashSet<string>(StringComparer.Ordinal)
+                    : (await _db.JobFileModelMappings.AsNoTracking()
+                        .Where(x => x.ModelId == 0 && insertedJobFiles.Contains(x.JobFile))
+                        .Select(x => x.JobFile)
+                        .ToListAsync()).ToHashSet(StringComparer.Ordinal);
+                insertedResultDtos = insertedResultDtos
+                    .Where(x => !string.Equals(x.ErrorCode, "DEFECT_UNSPECIFIED", StringComparison.OrdinalIgnoreCase)
+                        && x.ModelId != 0
+                        && !(x.ModelId == null && x.JobFile != null && unassignedJobFiles.Contains(x.JobFile)))
+                    .ToList();
                 var latestDto = insertedResultDtos.LastOrDefault();
                 if (latestDto != null)
                 {
@@ -622,19 +795,30 @@ namespace PMSystem2.Api.Services
                 {
                     _logger.LogWarning(ex, "Job File mapping registration failed after PCB batch was saved and broadcast.");
                 }
+            }
 
-                var catalogGroups = newEntities
-                    .Where(e => e.Result == "OK" || e.Result == "PASS")
-                    .GroupBy(e => new { e.StationId, JobFile = e.JobFile ?? string.Empty });
-                foreach (var group in catalogGroups)
-                {
-                    await TrySyncCpkStepCatalogAsync(group.Key.StationId, group.Key.JobFile,
-                        group.SelectMany(e => e.TestSteps));
-                }
+            if (newEntities.Count > 0 || duplicateRecordsChanged)
+            {
+                await TryRefreshQualitySummariesAsync(requests
+                    .Select(request => CleanDbText(request.Pid))
+                    .Where(pid => !string.IsNullOrWhiteSpace(pid))
+                    .Select(pid => pid!));
             }
 
             return resultDtos;
         }
+
+        // NTF/RTY summaries are refreshed by QualitySummaryService in the background.
+        // Uploads only enqueue the PIDs, so a slow summary query can no longer hold
+        // machine requests in a queue until they time out.
+        private Task TryRefreshQualitySummariesAsync(IEnumerable<string> pids)
+        {
+            _qualitySummaryQueue.Enqueue(pids);
+            return Task.CompletedTask;
+        }
+
+        /// <summary>Invalidates caches keyed by the production version (called after summaries change).</summary>
+        internal static void MarkQualitySummariesChanged() => Interlocked.Increment(ref _productionVersion);
 
         private async Task BroadcastProductionDeltaAsync(object items)
         {
@@ -675,27 +859,51 @@ namespace PMSystem2.Api.Services
             int? lineId = null, 
             int? stationId = null,
             string? searchPid = null,
+            string? searchFid = null,
             string? searchError = null,
             string? resultFilter = null,
             DateTime? startDate = null,
-            DateTime? endDate = null)
+            DateTime? endDate = null,
+            IReadOnlyCollection<int>? lineIds = null,
+            IReadOnlyCollection<int>? stationIds = null,
+            IReadOnlyCollection<int>? channelIds = null)
         {
             var query = _db.PcbResults.AsNoTracking().Include(p => p.TestSteps).AsQueryable();
 
             if (lineId.HasValue)
             {
                 var stations = await _masterDataService.GetStationsAsync();
-                var stationIds = stations.Where(s => s.LineId == lineId.Value).Select(s => s.Id).ToList();
-                query = query.Where(p => stationIds.Contains(p.StationId));
+                var lineStationIds = stations.Where(s => s.LineId == lineId.Value).Select(s => s.Id).ToList();
+                query = query.Where(p => lineStationIds.Contains(p.StationId));
             }
             if (stationId.HasValue)
             {
                 query = query.Where(p => p.StationId == stationId.Value);
             }
+            if (lineIds?.Count > 0)
+            {
+                var allChannels = await _masterDataService.GetChannelsAsync();
+                var selectedChannelIds = allChannels.Where(c => lineIds.Contains(c.LineId)).Select(c => c.Id).ToList();
+                query = query.Where(p => selectedChannelIds.Contains(p.ChannelId));
+            }
+            if (stationIds?.Count > 0)
+            {
+                var allChannels = await _masterDataService.GetChannelsAsync();
+                var selectedChannelIds = allChannels.Where(c => stationIds.Contains(c.StationId)).Select(c => c.Id).ToList();
+                query = query.Where(p => selectedChannelIds.Contains(p.ChannelId));
+            }
+            if (channelIds?.Count > 0) query = query.Where(p => channelIds.Contains(p.ChannelId));
             if (!string.IsNullOrWhiteSpace(searchError))
             {
                 var errorTerm = searchError.Trim();
                 query = query.Where(p => p.ErrorCode != null && EF.Functions.ILike(p.ErrorCode, $"%{errorTerm}%"));
+            }
+            if (!string.IsNullOrWhiteSpace(searchFid))
+            {
+                var fidTerm = searchFid.Trim();
+                // FID is a unique scanner value. Exact matching allows PostgreSQL
+                // to use the fid index instead of scanning the full production table.
+                query = query.Where(p => p.Fid == fidTerm);
             }
             if (!string.IsNullOrWhiteSpace(resultFilter) && resultFilter != "ALL")
             {
@@ -710,11 +918,11 @@ namespace PMSystem2.Api.Services
             }
             if (startDate.HasValue)
             {
-                query = query.Where(p => p.InspectTime >= startDate.Value.ToUniversalTime());
+                query = query.Where(p => p.InspectTime >= ToDbFilterTime(startDate.Value));
             }
             if (endDate.HasValue)
             {
-                query = query.Where(p => p.InspectTime <= endDate.Value.ToUniversalTime());
+                query = query.Where(p => p.InspectTime <= ToDbFilterTime(endDate.Value));
             }
 
             List<PcbResult> list;
@@ -807,24 +1015,46 @@ namespace PMSystem2.Api.Services
             int? lineId = null,
             int? stationId = null,
             string? searchPid = null,
+            string? searchFid = null,
             string? searchError = null,
             string? resultFilter = null,
             DateTime? startDate = null,
-            DateTime? endDate = null)
+            DateTime? endDate = null,
+            IReadOnlyCollection<int>? lineIds = null,
+            IReadOnlyCollection<int>? stationIds = null,
+            IReadOnlyCollection<int>? channelIds = null)
         {
             var query = _db.PcbResults.AsNoTracking().AsQueryable();
 
             if (lineId.HasValue)
             {
                 var stations = await _masterDataService.GetStationsAsync();
-                var stationIds = stations.Where(s => s.LineId == lineId.Value).Select(s => s.Id).ToList();
-                query = query.Where(p => stationIds.Contains(p.StationId));
+                var lineStationIds = stations.Where(s => s.LineId == lineId.Value).Select(s => s.Id).ToList();
+                query = query.Where(p => lineStationIds.Contains(p.StationId));
             }
             if (stationId.HasValue) query = query.Where(p => p.StationId == stationId.Value);
+            if (lineIds?.Count > 0)
+            {
+                var allChannels = await _masterDataService.GetChannelsAsync();
+                var selectedChannelIds = allChannels.Where(c => lineIds.Contains(c.LineId)).Select(c => c.Id).ToList();
+                query = query.Where(p => selectedChannelIds.Contains(p.ChannelId));
+            }
+            if (stationIds?.Count > 0)
+            {
+                var allChannels = await _masterDataService.GetChannelsAsync();
+                var selectedChannelIds = allChannels.Where(c => stationIds.Contains(c.StationId)).Select(c => c.Id).ToList();
+                query = query.Where(p => selectedChannelIds.Contains(p.ChannelId));
+            }
+            if (channelIds?.Count > 0) query = query.Where(p => channelIds.Contains(p.ChannelId));
             if (!string.IsNullOrWhiteSpace(searchError))
             {
                 var errorTerm = searchError.Trim();
                 query = query.Where(p => p.ErrorCode != null && EF.Functions.ILike(p.ErrorCode, $"%{errorTerm}%"));
+            }
+            if (!string.IsNullOrWhiteSpace(searchFid))
+            {
+                var fidTerm = searchFid.Trim();
+                query = query.Where(p => p.Fid == fidTerm);
             }
             if (!string.IsNullOrWhiteSpace(searchPid))
             {
@@ -836,8 +1066,8 @@ namespace PMSystem2.Api.Services
                 if (resultFilter == "OK") query = query.Where(p => p.Result == "OK" || p.Result == "PASS");
                 else if (resultFilter == "NG") query = query.Where(p => p.Result == "NG" || p.Result == "FAIL");
             }
-            if (startDate.HasValue) query = query.Where(p => p.InspectTime >= startDate.Value.ToUniversalTime());
-            if (endDate.HasValue) query = query.Where(p => p.InspectTime <= endDate.Value.ToUniversalTime());
+            if (startDate.HasValue) query = query.Where(p => p.InspectTime >= ToDbFilterTime(startDate.Value));
+            if (endDate.HasValue) query = query.Where(p => p.InspectTime <= ToDbFilterTime(endDate.Value));
 
             return await query.CountAsync();
         }
@@ -847,24 +1077,46 @@ namespace PMSystem2.Api.Services
             int? lineId = null,
             int? stationId = null,
             string? searchPid = null,
+            string? searchFid = null,
             string? searchError = null,
             string? resultFilter = null,
             DateTime? startDate = null,
-            DateTime? endDate = null)
+            DateTime? endDate = null,
+            IReadOnlyCollection<int>? lineIds = null,
+            IReadOnlyCollection<int>? stationIds = null,
+            IReadOnlyCollection<int>? channelIds = null)
         {
             var query = _db.PcbResults.AsNoTracking().AsQueryable();
 
             if (lineId.HasValue)
             {
                 var stations = await _masterDataService.GetStationsAsync();
-                var stationIds = stations.Where(s => s.LineId == lineId.Value).Select(s => s.Id).ToList();
-                query = query.Where(p => stationIds.Contains(p.StationId));
+                var lineStationIds = stations.Where(s => s.LineId == lineId.Value).Select(s => s.Id).ToList();
+                query = query.Where(p => lineStationIds.Contains(p.StationId));
             }
             if (stationId.HasValue) query = query.Where(p => p.StationId == stationId.Value);
+            if (lineIds?.Count > 0)
+            {
+                var allChannels = await _masterDataService.GetChannelsAsync();
+                var selectedChannelIds = allChannels.Where(c => lineIds.Contains(c.LineId)).Select(c => c.Id).ToList();
+                query = query.Where(p => selectedChannelIds.Contains(p.ChannelId));
+            }
+            if (stationIds?.Count > 0)
+            {
+                var allChannels = await _masterDataService.GetChannelsAsync();
+                var selectedChannelIds = allChannels.Where(c => stationIds.Contains(c.StationId)).Select(c => c.Id).ToList();
+                query = query.Where(p => selectedChannelIds.Contains(p.ChannelId));
+            }
+            if (channelIds?.Count > 0) query = query.Where(p => channelIds.Contains(p.ChannelId));
             if (!string.IsNullOrWhiteSpace(searchError))
             {
                 var errorTerm = searchError.Trim();
                 query = query.Where(p => p.ErrorCode != null && EF.Functions.ILike(p.ErrorCode, $"%{errorTerm}%"));
+            }
+            if (!string.IsNullOrWhiteSpace(searchFid))
+            {
+                var fidTerm = searchFid.Trim();
+                query = query.Where(p => p.Fid == fidTerm);
             }
             if (!string.IsNullOrWhiteSpace(searchPid))
             {
@@ -876,8 +1128,8 @@ namespace PMSystem2.Api.Services
                 if (resultFilter == "OK") query = query.Where(p => p.Result == "OK" || p.Result == "PASS");
                 else if (resultFilter == "NG") query = query.Where(p => p.Result == "NG" || p.Result == "FAIL");
             }
-            if (startDate.HasValue) query = query.Where(p => p.InspectTime >= startDate.Value.ToUniversalTime());
-            if (endDate.HasValue) query = query.Where(p => p.InspectTime <= endDate.Value.ToUniversalTime());
+            if (startDate.HasValue) query = query.Where(p => p.InspectTime >= ToDbFilterTime(startDate.Value));
+            if (endDate.HasValue) query = query.Where(p => p.InspectTime <= ToDbFilterTime(endDate.Value));
 
             query = query.OrderByDescending(p => p.InspectTime);
 
@@ -886,14 +1138,31 @@ namespace PMSystem2.Api.Services
                 query = query.Take(limit.Value);
             }
 
-            var list = await query
-                .Include(p => p.TestSteps)
-                .ToListAsync();
+            // Large exports: joining every test step (20-300 per PCB) and sorting the join
+            // took over a minute and timed out. Read the PCBs first (index on channel/time),
+            // then only their failed steps, in chunks.
+            _db.Database.SetCommandTimeout(TimeSpan.FromMinutes(5));
+            var list = await query.ToListAsync();
+            var failedStepsByPcb = new Dictionary<Guid, List<TestStep>>();
+            foreach (var chunk in list.Select(p => p.Id).Chunk(2000))
+            {
+                var ids = chunk.ToList();
+                var steps = await _db.TestSteps.AsNoTracking()
+                    .Where(t => ids.Contains(t.PcbResultId) && t.Result != null && t.Result != "" && t.Result != "OK" && t.Result != "PASS")
+                    .ToListAsync();
+                foreach (var step in steps)
+                {
+                    if (!failedStepsByPcb.TryGetValue(step.PcbResultId, out var bucket))
+                        failedStepsByPcb[step.PcbResultId] = bucket = new List<TestStep>();
+                    bucket.Add(step);
+                }
+            }
 
             var sb = new System.Text.StringBuilder();
             sb.Append('\uFEFF'); // UTF-8 BOM for Excel compatibility
 
-            sb.AppendLine("\"ID\",\"Mã PCB (PID)\",\"Tên Lỗi (Defect Name)\",\"Tên Channel (Máy)\",\"Địa chỉ IP Channel\",\"Dây Chuyền (Line)\",\"Trạm (Station)\",\"Ngày Test\",\"Giờ Test\",\"Kết quả (Result)\",\"JobFile / Model\",\"Chi tiết Lỗi (Failed Steps)\"");
+            sb.AppendLine("\"ID\",\"Mã PCB (PID)\",\"Tên Lỗi (Defect Name)\",\"Tên Channel (Máy)\",\"Địa chỉ IP Channel\",\"Dây Chuyền (Line)\",\"Trạm (Station)\",\"Ngày Test\",\"Giờ Test\",\"Kết quả (Result)\",\"JobFile / Model\"," +
+                "\"Step lỗi (Failed Step)\",\"Step No\",\"Loại Step (Type)\",\"Value\",\"Spec Min\",\"Spec Max\",\"Kết quả Step\",\"Số Step lỗi\",\"Chi tiết Lỗi (Failed Steps)\"");
 
             foreach (var item in list)
             {
@@ -913,23 +1182,34 @@ namespace PMSystem2.Api.Services
 
                 string errorCode = item.ErrorCode ?? (item.Result == "NG" || item.Result == "FAIL" ? "DEFECT_UNSPECIFIED" : "OK");
 
-                var failedSteps = item.TestSteps
-                    .Where(t => t.Result != "OK" && t.Result != "PASS")
+                var failed = failedStepsByPcb.GetValueOrDefault(item.Id, new List<TestStep>())
+                    .Where(t => IsNgStepResult(t.Result) || (!IsOkResult(t.Result) && !string.IsNullOrWhiteSpace(t.Result)))
+                    .OrderBy(t => t.StepNumber)
+                    .ToList();
+                // Main failed step: the one the error code names, else the first by step number.
+                var main = failed.FirstOrDefault(t => !string.IsNullOrWhiteSpace(item.ErrorCode) &&
+                               string.Equals(t.StepName, item.ErrorCode, StringComparison.OrdinalIgnoreCase))
+                           ?? failed.FirstOrDefault();
+                var failedSteps = failed
                     .Select(t => {
-                        var name = t.StepName ?? "";
-                        var val = !string.IsNullOrWhiteSpace(t.Value) ? t.Value : "NG";
+                        var name = string.IsNullOrWhiteSpace(t.StepName) ? $"Step {t.StepNumber}" : t.StepName;
+                        var val = !string.IsNullOrWhiteSpace(t.Value) ? t.Value : "-";
                         var hasSpec = !string.IsNullOrWhiteSpace(t.SpecMin) || !string.IsNullOrWhiteSpace(t.SpecMax);
-                        var specStr = hasSpec ? $" [Min: {t.SpecMin ?? "-"}, Max: {t.SpecMax ?? "-"}]" : "";
-                        return string.IsNullOrEmpty(name) ? $"{val}{specStr}" : $"{name}: {val}{specStr}";
+                        var specStr = hasSpec ? $" [{(string.IsNullOrWhiteSpace(t.SpecMin) ? "-" : t.SpecMin)} ~ {(string.IsNullOrWhiteSpace(t.SpecMax) ? "-" : t.SpecMax)}]" : "";
+                        return $"#{t.StepNumber} {name} = {val}{specStr} ({t.Result})";
                     })
                     .ToList();
-                string failedStepsStr = failedSteps.Count > 0 ? string.Join("; ", failedSteps) : (item.Result == "NG" ? (item.ErrorCode != null ? $"Lỗi hệ thống ({item.ErrorCode})" : "Lỗi tổng hợp") : "N/A");
+                string failedStepsStr = failedSteps.Count > 0 ? string.Join("; ", failedSteps)
+                    : IsNgResult(item.Result) ? (item.ErrorCode != null ? $"Lỗi hệ thống ({item.ErrorCode})" : "Lỗi tổng hợp") : "";
 
                 var channelName = hierarchy?.ChannelName ?? (item.ChannelId > 0 ? $"Channel #{item.ChannelId}" : "Unassigned Channel");
                 var lineName = hierarchy?.LineName ?? (hierarchy?.LineId > 0 ? $"Line #{hierarchy.LineId}" : "Unassigned Line");
                 var stationName = hierarchy?.StationName ?? (item.StationId > 0 ? $"Station #{item.StationId}" : "Unassigned Station");
 
-                sb.AppendLine($"\"{item.Id}\",\"{EscapeCsv(item.Pid)}\",\"{EscapeCsv(errorCode)}\",\"{EscapeCsv(channelName)}\",\"{EscapeCsv(hierarchy?.IpAddress ?? "")}\",\"{EscapeCsv(lineName)}\",\"{EscapeCsv(stationName)}\",\"{dateStr}\",\"{timeStr}\",\"{item.Result}\",\"{EscapeCsv(jobFile)}\",\"{EscapeCsv(failedStepsStr)}\"");
+                sb.AppendLine($"\"{item.Id}\",\"{EscapeCsv(item.Pid)}\",\"{EscapeCsv(errorCode)}\",\"{EscapeCsv(channelName)}\",\"{EscapeCsv(hierarchy?.IpAddress ?? "")}\",\"{EscapeCsv(lineName)}\",\"{EscapeCsv(stationName)}\",\"{dateStr}\",\"{timeStr}\",\"{item.Result}\",\"{EscapeCsv(jobFile)}\"," +
+                    $"\"{EscapeCsv(main?.StepName ?? "")}\",\"{main?.StepNumber.ToString() ?? ""}\",\"{EscapeCsv(main?.StepType ?? "")}\"," +
+                    $"\"{EscapeCsv(main?.Value ?? "")}\",\"{EscapeCsv(main?.SpecMin ?? "")}\",\"{EscapeCsv(main?.SpecMax ?? "")}\",\"{EscapeCsv(main?.Result ?? "")}\"," +
+                    $"\"{failed.Count}\",\"{EscapeCsv(failedStepsStr)}\"");
             }
 
             return System.Text.Encoding.UTF8.GetBytes(sb.ToString());
@@ -948,7 +1228,7 @@ namespace PMSystem2.Api.Services
             DateTime? startDate = null,
             DateTime? endDate = null)
         {
-            var query = _db.PcbResults.AsNoTracking().AsQueryable();
+            var query = ExcludeUnassignedModelData(_db.PcbResults.AsNoTracking());
 
             if (lineId.HasValue)
             {
@@ -1018,7 +1298,7 @@ namespace PMSystem2.Api.Services
             DateTime? startDate = null,
             DateTime? endDate = null)
         {
-            var query = _db.PcbResults.AsNoTracking().AsQueryable();
+            var query = ExcludeUnassignedModelData(_db.PcbResults.AsNoTracking());
 
             if (lineId.HasValue)
             {
@@ -1075,7 +1355,7 @@ namespace PMSystem2.Api.Services
             return await _memoryCache.GetOrCreateAsync(cacheKey, async entry =>
             {
                 entry.AbsoluteExpirationRelativeToNow = TimeSpan.FromSeconds(2);
-                var query = _db.PcbResults.AsNoTracking().AsQueryable();
+                var query = ExcludeUnassignedModelData(_db.PcbResults.AsNoTracking());
                 if (lineId.HasValue)
                 {
                     var stationIds = (await _masterDataService.GetStationsAsync())
@@ -1107,6 +1387,72 @@ namespace PMSystem2.Api.Services
             }) ?? new ProductionCounterDto(0, 0, 0, 0);
         }
 
+        public async Task<QualityModeSummaryDto> GetQualityModesAsync(
+            int? lineId = null, int? stationId = null, DateTime? startDate = null, DateTime? endDate = null)
+        {
+            var cacheKey = $"quality-modes-v2:{Volatile.Read(ref _productionVersion)}:{lineId}:{stationId}:{startDate?.Ticks}:{endDate?.Ticks}";
+            return await _memoryCache.GetOrCreateAsync(cacheKey, async entry =>
+            {
+                entry.AbsoluteExpirationRelativeToNow = TimeSpan.FromSeconds(30);
+                var periodQuery = ExcludeUnassignedModelData(_db.PcbResults.AsNoTracking());
+                if (startDate.HasValue)
+                {
+                    var start = EnsureUtc(startDate.Value);
+                    periodQuery = periodQuery.Where(p => p.InspectTime >= start);
+                }
+                if (endDate.HasValue)
+                {
+                    var end = EnsureUtc(endDate.Value);
+                    periodQuery = periodQuery.Where(p => p.InspectTime <= end);
+                }
+
+                // Retest: every test attempt is counted once in the selected scope.
+                var scopedQuery = periodQuery;
+                if (lineId.HasValue)
+                {
+                    var stationIds = (await _masterDataService.GetStationsAsync())
+                        .Where(s => s.LineId == lineId.Value).Select(s => s.Id).ToList();
+                    scopedQuery = scopedQuery.Where(p => stationIds.Contains(p.StationId));
+                }
+                if (stationId.HasValue) scopedQuery = scopedQuery.Where(p => p.StationId == stationId.Value);
+                var retest = await scopedQuery.GroupBy(_ => 1).Select(g => new
+                {
+                    Total = g.LongCount(),
+                    Ng = g.LongCount(x => x.Result == "NG" || x.Result == "FAIL")
+                }).SingleOrDefaultAsync();
+
+                // NTF: one PCB per PID + Station. The period selects the PCB set;
+                // its complete history at that Station determines whether it ever failed.
+                var selectedPidStations = scopedQuery.Select(p => new { p.Pid, p.StationId }).Distinct();
+                long ntfTotal = await selectedPidStations.LongCountAsync();
+                long ntfNg = await selectedPidStations
+                    .Join(_db.PcbNtfSummaries.AsNoTracking().Where(summary => summary.EverNg),
+                        selected => new { selected.Pid, selected.StationId },
+                        summary => new { summary.Pid, summary.StationId },
+                        (_, _) => 1)
+                    .LongCountAsync();
+
+                // RTY: system-wide unique PIDs appearing in the period. Any NG at
+                // any Station in their complete history means they did not run straight through.
+                var selectedPids = periodQuery.Select(p => p.Pid).Distinct();
+                long rtyTotal = await selectedPids.LongCountAsync();
+                long rtyEverNg = await selectedPids
+                    .Join(_db.PcbRtySummaries.AsNoTracking().Where(summary => summary.EverNg),
+                        pid => pid,
+                        summary => summary.Pid,
+                        (_, _) => 1)
+                    .LongCountAsync();
+                long rtyStraight = rtyTotal - rtyEverNg;
+
+                long retestTotal = retest?.Total ?? 0;
+                long retestNg = retest?.Ng ?? 0;
+                return new QualityModeSummaryDto(
+                    retestTotal, retestNg, retestTotal > 0 ? Math.Round(retestNg * 100.0 / retestTotal, 2) : 0,
+                    ntfTotal, ntfNg, ntfTotal > 0 ? Math.Round(ntfNg * 100.0 / ntfTotal, 2) : 0,
+                    rtyTotal, rtyStraight, rtyTotal > 0 ? Math.Round(rtyStraight * 100.0 / rtyTotal, 2) : 0);
+            }) ?? new QualityModeSummaryDto(0, 0, 0, 0, 0, 0, 0, 0, 0);
+        }
+
         public async Task<List<LineYieldStatDto>> GetLineYieldStatsAsync(
             int? lineId = null,
             DateTime? startDate = null,
@@ -1114,7 +1460,7 @@ namespace PMSystem2.Api.Services
         {
             var stations = await _masterDataService.GetStationsAsync();
             var lines = await _masterDataService.GetLinesAsync();
-            var query = _db.PcbResults.AsNoTracking().AsQueryable();
+            var query = ExcludeUnassignedModelData(_db.PcbResults.AsNoTracking());
 
             if (lineId.HasValue)
             {
@@ -1173,7 +1519,7 @@ namespace PMSystem2.Api.Services
         {
             var stations = await _masterDataService.GetStationsAsync();
             var lines = await _masterDataService.GetLinesAsync();
-            var query = _db.PcbResults.AsNoTracking().AsQueryable();
+            var query = ExcludeUnassignedModelData(_db.PcbResults.AsNoTracking());
 
             if (lineId.HasValue)
             {
@@ -1221,7 +1567,7 @@ namespace PMSystem2.Api.Services
             DateTime? startDate = null,
             DateTime? endDate = null)
         {
-            var query = _db.PcbResults.AsNoTracking()
+            var query = ExcludeUnassignedModelData(_db.PcbResults.AsNoTracking())
                 .Where(p => p.Result == "NG" || p.Result == "FAIL");
 
             if (lineId.HasValue)
@@ -1276,8 +1622,21 @@ namespace PMSystem2.Api.Services
             DateTime? endDate = null,
             int hours = 24)
         {
-            var cacheKey = string.Join('|', "bi-matrix-v5", lineId, stationId, channelId, modelId,
-                errorCode ?? "", jobFile ?? "", startDate?.Ticks, endDate?.Ticks, hours);
+            var requestedEnd = endDate ?? DateTime.UtcNow;
+            var requestedStart = startDate ?? requestedEnd.AddHours(-hours);
+            var requestedSpan = requestedEnd - requestedStart;
+            // Calendar presets differ by milliseconds between browsers. Bucket
+            // long-range cache keys so users share the same BI result instead of
+            // triggering another full-table aggregation for every page load.
+            long cacheStartTicks = requestedSpan.TotalHours > 48
+                ? requestedStart.Date.Ticks
+                : requestedStart.Ticks;
+            long cacheEndTicks = requestedSpan.TotalHours > 48
+                ? new DateTime(requestedEnd.Year, requestedEnd.Month, requestedEnd.Day,
+                    requestedEnd.Hour, requestedEnd.Minute / 15 * 15, 0).Ticks
+                : requestedEnd.Ticks;
+            var cacheKey = string.Join('|', "bi-matrix-v11", lineId, stationId, channelId, modelId,
+                errorCode ?? "", jobFile ?? "", cacheStartTicks, cacheEndTicks, hours);
             if (_memoryCache.TryGetValue<BiAnalyticsMatrixDto>(cacheKey, out var cachedMatrix)
                 && cachedMatrix != null)
             {
@@ -1288,7 +1647,15 @@ namespace PMSystem2.Api.Services
             var lines = await _masterDataService.GetLinesAsync();
             var channels = await _masterDataService.GetChannelsAsync();
 
-            var query = _db.PcbResults.AsNoTracking().AsQueryable();
+            if (requestedSpan.TotalHours > 48)
+            {
+                var rollupMatrix = await GetBiMatrixFromDailyRollupAsync(lineId, stationId, channelId,
+                    modelId, errorCode, jobFile, requestedStart, requestedEnd, stations, lines, channels);
+                _memoryCache.Set(cacheKey, rollupMatrix, TimeSpan.FromMinutes(15));
+                return rollupMatrix;
+            }
+
+            var query = ExcludeUnassignedModelData(_db.PcbResults.AsNoTracking());
 
             if (lineId.HasValue)
             {
@@ -1305,12 +1672,18 @@ namespace PMSystem2.Api.Services
             }
             if (modelId.HasValue)
             {
-                var mappedJobFiles = await _db.JobFileModelMappings.AsNoTracking()
+                var mappingQuery = _db.JobFileModelMappings.AsNoTracking()
+                    .Where(mapping => mapping.ModelId != null);
+                var mappedJobFiles = await mappingQuery
                     .Where(mapping => mapping.ModelId == modelId.Value)
-                    .Select(mapping => mapping.JobFile)
-                    .ToListAsync();
-                query = query.Where(p => p.ModelId == modelId.Value ||
-                    (p.JobFile != null && mappedJobFiles.Contains(p.JobFile)));
+                    .Select(mapping => mapping.JobFile).ToListAsync();
+                var allMappedJobFiles = mappingQuery.Select(mapping => mapping.JobFile);
+                // The manual Job File mapping is authoritative. Fall back to the
+                // legacy pcb_results.model_id only when that Job File has no mapping.
+                query = query.Where(p =>
+                    (p.JobFile != null && mappedJobFiles.Contains(p.JobFile))
+                    || (p.ModelId == modelId.Value
+                        && (p.JobFile == null || !allMappedJobFiles.Contains(p.JobFile))));
             }
             if (!string.IsNullOrWhiteSpace(jobFile))
             {
@@ -1358,36 +1731,82 @@ namespace PMSystem2.Api.Services
                 : summary?.Ng ?? 0;
             double overallYieldRate = totalInspected > 0 ? Math.Round((double)totalOk / totalInspected * 100.0, 2) : 0.0;
 
-            // 2. Time Trend (Hourly)
-            var hourlyGrouped = await scopeQuery
-                .GroupBy(p => new {
-                    Year = p.InspectTime.Year,
-                    Month = p.InspectTime.Month,
-                    Day = p.InspectTime.Day,
-                    Hour = p.InspectTime.Hour
-                })
-                .Select(g => new {
-                    g.Key.Year, g.Key.Month, g.Key.Day, g.Key.Hour,
-                    Total = g.Count(),
-                    Ok = g.Count(x => x.Result == "OK" || x.Result == "PASS"),
-                    Ng = !string.IsNullOrWhiteSpace(errorCode)
-                        ? g.Count(x => x.ErrorCode == errorCode && (x.Result == "NG" || x.Result == "FAIL"))
-                        : g.Count(x => x.Result == "NG" || x.Result == "FAIL")
-                })
-                .OrderBy(g => g.Year).ThenBy(g => g.Month).ThenBy(g => g.Day).ThenBy(g => g.Hour)
-                .ToListAsync();
+            // 2. Time Trend. Avoid returning tens of thousands of hourly points
+            // for year-scale filters: hour (<=48h), day, then month (>2 years).
+            var aggregationEnd = endDate.HasValue ? EnsureUtc(endDate.Value) : DateTime.UtcNow;
+            var aggregationStart = startDate.HasValue ? EnsureUtc(startDate.Value) : aggregationEnd.AddHours(-hours);
+            var aggregationSpan = aggregationEnd - aggregationStart;
+            List<HourlyStatDto> timeTrend;
+            if (aggregationSpan.TotalDays > 180)
+            {
+                var grouped = await scopeQuery.GroupBy(p => new { p.InspectTime.Year, p.InspectTime.Month })
+                    .Select(g => new { g.Key.Year, g.Key.Month, Total = g.Count(),
+                        Ok = g.Count(x => x.Result == "OK" || x.Result == "PASS"),
+                        Ng = !string.IsNullOrWhiteSpace(errorCode)
+                            ? g.Count(x => x.ErrorCode == errorCode && (x.Result == "NG" || x.Result == "FAIL"))
+                            : g.Count(x => x.Result == "NG" || x.Result == "FAIL") })
+                    .OrderBy(g => g.Year).ThenBy(g => g.Month).ToListAsync();
+                timeTrend = grouped.Select(g => BuildTrendPoint(
+                    new DateTime(g.Year, g.Month, 1, 0, 0, 0, DateTimeKind.Utc), g.Total, g.Ok, g.Ng, lineId, stationId)).ToList();
+            }
+            else if (aggregationSpan.TotalHours > 48)
+            {
+                var grouped = await scopeQuery.GroupBy(p => new { p.InspectTime.Year, p.InspectTime.Month, p.InspectTime.Day })
+                    .Select(g => new { g.Key.Year, g.Key.Month, g.Key.Day, Total = g.Count(),
+                        Ok = g.Count(x => x.Result == "OK" || x.Result == "PASS"),
+                        Ng = !string.IsNullOrWhiteSpace(errorCode)
+                            ? g.Count(x => x.ErrorCode == errorCode && (x.Result == "NG" || x.Result == "FAIL"))
+                            : g.Count(x => x.Result == "NG" || x.Result == "FAIL") })
+                    .OrderBy(g => g.Year).ThenBy(g => g.Month).ThenBy(g => g.Day).ToListAsync();
+                timeTrend = grouped.Select(g => BuildTrendPoint(
+                    new DateTime(g.Year, g.Month, g.Day, 0, 0, 0, DateTimeKind.Utc), g.Total, g.Ok, g.Ng, lineId, stationId)).ToList();
+            }
+            else
+            {
+                var grouped = await scopeQuery.GroupBy(p => new { p.InspectTime.Year, p.InspectTime.Month, p.InspectTime.Day, p.InspectTime.Hour })
+                    .Select(g => new { g.Key.Year, g.Key.Month, g.Key.Day, g.Key.Hour, Total = g.Count(),
+                        Ok = g.Count(x => x.Result == "OK" || x.Result == "PASS"),
+                        Ng = !string.IsNullOrWhiteSpace(errorCode)
+                            ? g.Count(x => x.ErrorCode == errorCode && (x.Result == "NG" || x.Result == "FAIL"))
+                            : g.Count(x => x.Result == "NG" || x.Result == "FAIL") })
+                    .OrderBy(g => g.Year).ThenBy(g => g.Month).ThenBy(g => g.Day).ThenBy(g => g.Hour).ToListAsync();
+                timeTrend = grouped.Select(g => BuildTrendPoint(
+                    new DateTime(g.Year, g.Month, g.Day, g.Hour, 0, 0, DateTimeKind.Utc), g.Total, g.Ok, g.Ng, lineId, stationId)).ToList();
+            }
 
-            var timeTrend = hourlyGrouped.Select(g => {
-                var dt = new DateTime(g.Year, g.Month, g.Day, g.Hour, 0, 0, DateTimeKind.Utc);
-                return new HourlyStatDto(
-                    dt,
-                    lineId ?? 0,
-                    stationId ?? 0,
-                    g.Total,
-                    g.Ok,
-                    g.Ng,
-                    g.Total > 0 ? Math.Round((double)g.Ok / g.Total * 100.0, 2) : 0.0
-                );
+            // Show which Line contributes to the overall defect rate in every
+            // time bucket. Total remains the complete production denominator;
+            // NG respects the currently selected defect filter, if any.
+            var hourlyLineGroups = await scopeQuery
+                .GroupBy(p => new { p.InspectTime.Year, p.InspectTime.Month, p.InspectTime.Day, p.InspectTime.Hour, p.StationId })
+                .Select(g => new
+                {
+                    g.Key.Year, g.Key.Month, g.Key.Day, g.Key.Hour, g.Key.StationId,
+                    Total = g.LongCount(),
+                    Ng = !string.IsNullOrWhiteSpace(errorCode)
+                        ? g.LongCount(x => x.ErrorCode == errorCode && (x.Result == "NG" || x.Result == "FAIL"))
+                        : g.LongCount(x => x.Result == "NG" || x.Result == "FAIL")
+                }).ToListAsync();
+            var contributionsByBucket = hourlyLineGroups
+                .GroupBy(x => new DateTime(x.Year, x.Month, x.Day, x.Hour, 0, 0, DateTimeKind.Utc))
+                .ToDictionary(g => g.Key, g =>
+                {
+                    long bucketTotal = g.Sum(x => x.Total);
+                    return g.GroupBy(x => stations.FirstOrDefault(s => s.Id == x.StationId)?.LineId ?? 0)
+                        .Select(lineGroup =>
+                        {
+                            long lineTotal = lineGroup.Sum(x => x.Total);
+                            long lineNg = lineGroup.Sum(x => x.Ng);
+                            return new LineDefectContributionDto(lineGroup.Key,
+                                lines.FirstOrDefault(l => l.Id == lineGroup.Key)?.Name ?? $"Line {lineGroup.Key}",
+                                lineTotal, lineNg,
+                                lineTotal > 0 ? Math.Round(lineNg * 100.0 / lineTotal, 4) : 0,
+                                bucketTotal > 0 ? Math.Round(lineNg * 100.0 / bucketTotal, 4) : 0);
+                        }).Where(x => x.NgCount > 0).OrderByDescending(x => x.ContributionRate).ToList();
+                });
+            timeTrend = timeTrend.Select(point => point with
+            {
+                LineContributions = contributionsByBucket.GetValueOrDefault(point.Bucket) ?? new List<LineDefectContributionDto>()
             }).ToList();
 
             // 3. Station Stats & Line Stats
@@ -1413,7 +1832,10 @@ namespace PMSystem2.Api.Services
                 var yieldRate = stStat.Total > 0 ? Math.Round((double)stStat.Ok / stStat.Total * 100.0, 2) : 0.0;
                 stationStats.Add(new StationYieldStatDto(stStat.StationId, stName, lId, lName, stStat.Total, stStat.Ok, stStat.Ng, yieldRate));
             }
-            stationStats = stationStats.OrderBy(r => r.YieldRate).ToList();
+            stationStats = stationStats
+                .OrderByDescending(r => r.Total > 0 ? (double)r.Ng / r.Total : 0.0)
+                .ThenByDescending(r => r.Ng)
+                .ToList();
 
             var lineGrouped = stationGrouped
                 .Select(stStat => {
@@ -1437,7 +1859,7 @@ namespace PMSystem2.Api.Services
             }
             lineStats = lineStats.OrderBy(r => r.LineName).ToList();
 
-            stationStats = stationStats.OrderBy(r => r.YieldRate).Take(10).ToList();
+            stationStats = stationStats.Take(10).ToList();
 
             // 4. Machine / Channel Stats
             var channelGrouped = await scopeQuery
@@ -1474,7 +1896,11 @@ namespace PMSystem2.Api.Services
                     yieldRate
                 ));
             }
-            machineStats = machineStats.OrderBy(r => r.YieldRate).Take(10).ToList();
+            machineStats = machineStats
+                .OrderByDescending(r => r.Total > 0 ? (double)r.Ng / r.Total : 0.0)
+                .ThenByDescending(r => r.Ng)
+                .Take(10)
+                .ToList();
 
             // 5. Defect Pareto Stats (Error Codes)
             var ngQuery = scopeQuery.Where(p => p.Result == "NG" || p.Result == "FAIL");
@@ -1576,10 +2002,169 @@ namespace PMSystem2.Api.Services
             );
             _memoryCache.Set(cacheKey, matrix, new MemoryCacheEntryOptions
             {
-                AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(2),
-                SlidingExpiration = TimeSpan.FromSeconds(45)
+                AbsoluteExpirationRelativeToNow = requestedSpan.TotalHours > 48
+                    ? TimeSpan.FromMinutes(15)
+                    : TimeSpan.FromMinutes(2),
+                SlidingExpiration = requestedSpan.TotalHours > 48
+                    ? TimeSpan.FromMinutes(5)
+                    : TimeSpan.FromSeconds(45)
             });
             return matrix;
+        }
+
+        private async Task<BiAnalyticsMatrixDto> GetBiMatrixFromDailyRollupAsync(
+            int? lineId, int? stationId, int? channelId, int? modelId, string? errorCode, string? jobFile,
+            DateTime startDate, DateTime endDate, IReadOnlyCollection<StationDto> stations,
+            IReadOnlyCollection<LineDto> lines, IReadOnlyCollection<ChannelDto> channels)
+        {
+            var fromDay = DateOnly.FromDateTime(startDate);
+            var toDay = DateOnly.FromDateTime(endDate);
+            var rollupQuery = _db.PcbAnalyticsDaily.AsNoTracking()
+                .Where(x => x.BucketDate >= fromDay && x.BucketDate <= toDay
+                    && x.ErrorCode != "DEFECT_UNSPECIFIED");
+            var unassignedJobs = _db.JobFileModelMappings.AsNoTracking()
+                .Where(x => x.ModelId == 0)
+                .Select(x => x.JobFile);
+            // The rollup stores a null PCB ModelId as 0, so use the Job File
+            // mapping to distinguish ordinary unmapped data from data explicitly
+            // assigned to the Unassigned Model.
+            rollupQuery = rollupQuery.Where(x => x.ModelId != 0 || !unassignedJobs.Contains(x.JobFile));
+            if (lineId.HasValue)
+            {
+                var ids = channels.Where(x => x.LineId == lineId.Value).Select(x => x.Id).ToList();
+                rollupQuery = rollupQuery.Where(x => ids.Contains(x.ChannelId));
+            }
+            if (stationId.HasValue)
+            {
+                var ids = channels.Where(x => x.StationId == stationId.Value).Select(x => x.Id).ToList();
+                rollupQuery = rollupQuery.Where(x => ids.Contains(x.ChannelId));
+            }
+            if (channelId.HasValue) rollupQuery = rollupQuery.Where(x => x.ChannelId == channelId.Value);
+            if (!string.IsNullOrWhiteSpace(jobFile)) rollupQuery = rollupQuery.Where(x => x.JobFile == jobFile);
+
+            var mappings = await _db.JobFileModelMappings.AsNoTracking().Include(x => x.Model)
+                .Where(x => x.ModelId != null && x.Model != null).ToListAsync();
+            if (modelId.HasValue)
+            {
+                var mappedJobs = mappings.Where(x => x.ModelId == modelId.Value).Select(x => x.JobFile).ToList();
+                var allMappedJobs = mappings.Select(x => x.JobFile).Distinct().ToList();
+                // Use the current manual mapping before the historical ModelId
+                // stored in the daily rollup. This prevents stale model IDs from
+                // mixing another model (for example IGM) into the selected model.
+                rollupQuery = rollupQuery.Where(x => mappedJobs.Contains(x.JobFile)
+                    || (x.ModelId == modelId.Value && !allMappedJobs.Contains(x.JobFile)));
+            }
+
+            // The rollup is already highly compressed. One read supplies every
+            // chart and avoids repeatedly scanning the production fact table.
+            var rows = await rollupQuery.ToListAsync();
+            var channelById = channels.GroupBy(x => x.Id).ToDictionary(g => g.Key, g => g.First());
+            var stationById = stations.GroupBy(x => x.Id).ToDictionary(g => g.Key, g => g.First());
+            int EffectiveStation(PcbAnalyticsDaily row) => channelById.TryGetValue(row.ChannelId, out var channel)
+                ? channel.StationId
+                : row.StationId;
+            int EffectiveLine(PcbAnalyticsDaily row)
+            {
+                if (channelById.TryGetValue(row.ChannelId, out var channel)) return channel.LineId;
+                return stationById.TryGetValue(row.StationId, out var station) ? station.LineId : 0;
+            }
+            bool IsOk(PcbAnalyticsDaily x) => x.Result is "OK" or "PASS";
+            bool IsNg(PcbAnalyticsDaily x) => x.Result is "NG" or "FAIL";
+            long total = rows.Sum(x => x.TotalCount);
+            long ok = rows.Where(IsOk).Sum(x => x.TotalCount);
+            long ng = rows.Where(x => IsNg(x) && (string.IsNullOrWhiteSpace(errorCode) || x.ErrorCode == errorCode))
+                .Sum(x => x.TotalCount);
+            double Yield(long t, long o) => t > 0 ? Math.Round(o * 100.0 / t, 2) : 0;
+
+            bool monthly = (endDate - startDate).TotalDays > 180;
+            var trendGroups = rows.GroupBy(x => monthly
+                    ? new DateOnly(x.BucketDate.Year, x.BucketDate.Month, 1)
+                    : x.BucketDate).OrderBy(g => g.Key).ToList();
+            var trend = trendGroups.Select(g =>
+                {
+                    long t = g.Sum(x => x.TotalCount);
+                    long o = g.Where(IsOk).Sum(x => x.TotalCount);
+                    long n = g.Where(x => IsNg(x) && (string.IsNullOrWhiteSpace(errorCode) || x.ErrorCode == errorCode)).Sum(x => x.TotalCount);
+                    var contributions = g.GroupBy(EffectiveLine)
+                        .Select(lineGroup =>
+                        {
+                            long lineTotal = lineGroup.Sum(x => x.TotalCount);
+                            long lineNg = lineGroup.Where(x => IsNg(x) && (string.IsNullOrWhiteSpace(errorCode) || x.ErrorCode == errorCode)).Sum(x => x.TotalCount);
+                            return new LineDefectContributionDto(lineGroup.Key,
+                                lines.FirstOrDefault(l => l.Id == lineGroup.Key)?.Name ?? $"Line {lineGroup.Key}",
+                                lineTotal, lineNg,
+                                lineTotal > 0 ? Math.Round(lineNg * 100.0 / lineTotal, 4) : 0,
+                                t > 0 ? Math.Round(lineNg * 100.0 / t, 4) : 0);
+                        }).Where(x => x.NgCount > 0).OrderByDescending(x => x.ContributionRate).ToList();
+                    return BuildTrendPoint(g.Key.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc), (int)Math.Min(int.MaxValue, t),
+                        (int)Math.Min(int.MaxValue, o), (int)Math.Min(int.MaxValue, n), lineId, stationId) with { LineContributions = contributions };
+                }).ToList();
+
+            var stationStats = rows.GroupBy(EffectiveStation).Select(g =>
+            {
+                stationById.TryGetValue(g.Key, out var station);
+                int lId = station?.LineId ?? 0;
+                long t = g.Sum(x => x.TotalCount); long o = g.Where(IsOk).Sum(x => x.TotalCount);
+                long n = g.Where(x => IsNg(x) && (string.IsNullOrWhiteSpace(errorCode) || x.ErrorCode == errorCode)).Sum(x => x.TotalCount);
+                return new StationYieldStatDto(g.Key, station?.Name ?? $"Station {g.Key}", lId,
+                    lines.FirstOrDefault(x => x.Id == lId)?.Name ?? $"Line {lId}", t, o, n, Yield(t, o));
+            }).OrderByDescending(x => x.Total > 0 ? (double)x.Ng / x.Total : 0.0)
+                .ThenByDescending(x => x.Ng)
+                .Take(10)
+                .ToList();
+
+            var lineStats = rows.GroupBy(EffectiveLine).Select(g =>
+            {
+                long t = g.Sum(x => x.TotalCount); long o = g.Where(IsOk).Sum(x => x.TotalCount);
+                long n = g.Where(x => IsNg(x) && (string.IsNullOrWhiteSpace(errorCode) || x.ErrorCode == errorCode)).Sum(x => x.TotalCount);
+                return new LineYieldStatDto(g.Key, lines.FirstOrDefault(x => x.Id == g.Key)?.Name ?? $"Line {g.Key}", t, o, n, Yield(t, o));
+            }).OrderBy(x => x.LineName).ToList();
+
+            var machineStats = rows.GroupBy(x => x.ChannelId).Select(g =>
+            {
+                channelById.TryGetValue(g.Key, out var channel);
+                stationById.TryGetValue(channel?.StationId ?? 0, out var station);
+                int lId = channel?.LineId ?? station?.LineId ?? 0;
+                long t = g.Sum(x => x.TotalCount); long o = g.Where(IsOk).Sum(x => x.TotalCount);
+                long n = g.Where(x => IsNg(x) && (string.IsNullOrWhiteSpace(errorCode) || x.ErrorCode == errorCode)).Sum(x => x.TotalCount);
+                return new ChannelYieldStatDto(g.Key, channel?.Name ?? $"Channel #{g.Key}", channel?.IpAddress ?? "",
+                    channel?.StationId ?? 0, station?.Name ?? "Unknown Station", lId,
+                    lines.FirstOrDefault(x => x.Id == lId)?.Name ?? "Unknown Line", t, o, n, Yield(t, o));
+            }).Where(x => x.Total >= 10)
+                .OrderByDescending(x => x.Total > 0 ? (double)x.Ng / x.Total : 0.0)
+                .ThenByDescending(x => x.Ng)
+                .Take(10)
+                .ToList();
+
+            var ngRows = rows.Where(IsNg).ToList();
+            long allNg = ngRows.Sum(x => x.TotalCount);
+            var defectStats = ngRows.GroupBy(x => string.IsNullOrWhiteSpace(x.ErrorCode) ? "DEFECT_UNSPECIFIED" : x.ErrorCode)
+                .Select(g => new DefectParetoStatDto(g.Key, g.Sum(x => x.TotalCount),
+                    allNg > 0 ? Math.Round(g.Sum(x => x.TotalCount) * 100.0 / allNg, 2) : 0))
+                .OrderByDescending(x => x.Count).Take(20).ToList();
+
+            var jobGroups = rows.GroupBy(x => string.IsNullOrWhiteSpace(x.JobFile) ? "DEFAULT_JOB" : x.JobFile)
+                .Select(g => new { Job = g.Key, Total = g.Sum(x => x.TotalCount), Ok = g.Where(IsOk).Sum(x => x.TotalCount),
+                    Ng = g.Where(x => IsNg(x) && (string.IsNullOrWhiteSpace(errorCode) || x.ErrorCode == errorCode)).Sum(x => x.TotalCount) }).ToList();
+            var jobStats = jobGroups.Select(g => new JobFileYieldStatDto(g.Job, g.Total, g.Ok, g.Ng,
+                    Yield(g.Total, g.Ok), g.Total > 0 ? Math.Round(g.Ng * 100.0 / g.Total, 2) : 0))
+                .Where(x => x.Total >= 10).OrderByDescending(x => x.DefectRate).ThenByDescending(x => x.Ng).Take(15).ToList();
+
+            var mappingByJob = mappings.Where(x => !string.IsNullOrWhiteSpace(x.JobFile))
+                .GroupBy(x => x.JobFile.Trim(), StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(g => g.Key, g => g.OrderByDescending(x => x.UpdatedAt).First(), StringComparer.OrdinalIgnoreCase);
+            var modelStats = jobGroups.Where(g => mappingByJob.ContainsKey(g.Job.Trim())).Select(g =>
+                {
+                    var m = mappingByJob[g.Job.Trim()]; return new { Id = m.ModelId!.Value,
+                        Name = m.Model?.Name ?? $"Model #{m.ModelId}", g.Total, g.Ok, g.Ng };
+                }).GroupBy(x => new { x.Id, x.Name }).Select(g =>
+                {
+                    long t = g.Sum(x => x.Total); long o = g.Sum(x => x.Ok); long n = g.Sum(x => x.Ng);
+                    return new ModelYieldStatDto(g.Key.Id, g.Key.Name, t, o, n, Yield(t, o), t > 0 ? Math.Round(n * 100.0 / t, 2) : 0);
+                }).Where(x => x.Total >= 10).OrderByDescending(x => x.DefectRate).ThenByDescending(x => x.Ng).ToList();
+
+            return new BiAnalyticsMatrixDto(total, ok, ng, Yield(total, ok), trend, lineStats, modelStats,
+                stationStats, machineStats, defectStats, jobStats);
         }
 
         private async Task EnsureJobFileMappingsAsync(IEnumerable<string?> jobFiles)
@@ -1595,6 +2180,33 @@ namespace PMSystem2.Api.Services
                     ON CONFLICT (job_file) DO NOTHING");
             }
         }
+
+        private IQueryable<PcbResult> ExcludeUnassignedModelData(IQueryable<PcbResult> query)
+        {
+            var unassignedJobs = _db.JobFileModelMappings.AsNoTracking()
+                .Where(x => x.ModelId == 0)
+                .Select(x => x.JobFile);
+
+            // An explicit PCB ModelId takes precedence over the Job File mapping.
+            // Exclude only records explicitly marked as Unassigned (Model 0), or
+            // records without ModelId whose Job File is mapped to Model 0.
+            return query.Where(x => (x.ErrorCode == null || x.ErrorCode != "DEFECT_UNSPECIFIED")
+                && x.ModelId != 0
+                && !(x.ModelId == null && x.JobFile != null && unassignedJobs.Contains(x.JobFile)));
+        }
+
+        /// <summary>
+        /// Trace-page date filters: the page sends the instant the user picked in the PC's own time
+        /// zone (ISO, UTC). With Npgsql legacy timestamps the database reads a DateTime parameter as
+        /// wall-clock time of the server time zone (the same way results are stored), so the instant
+        /// is passed as server local time; filtering then matches the times shown on the page.
+        /// </summary>
+        private static DateTime ToDbFilterTime(DateTime dt) => dt.Kind switch
+        {
+            DateTimeKind.Utc => DateTime.SpecifyKind(dt.ToLocalTime(), DateTimeKind.Unspecified),
+            DateTimeKind.Local => DateTime.SpecifyKind(dt, DateTimeKind.Unspecified),
+            _ => dt
+        };
 
         private static DateTime EnsureUtc(DateTime dt)
         {
@@ -1612,6 +2224,94 @@ namespace PMSystem2.Api.Services
         private static string? CleanDbText(string? value)
         {
             return value?.Replace("\0", string.Empty);
+        }
+
+        // Existing PCB results moved to another Channel by an upload, per (old, new) pair.
+        // A full log rescan can move thousands of rows, so the pair is reported at most
+        // once per interval with the count accumulated since the previous report.
+        private static readonly TimeSpan ReassignmentReportInterval = TimeSpan.FromMinutes(1);
+        private static readonly object ReassignmentLock = new();
+        private static readonly Dictionary<(int Old, int New), (DateTime LastReport, int Pending, string SamplePid, DateTime? SampleStart)> ReassignmentReports = new();
+
+        private void ReportChannelReassignment(int oldChannelId, int newChannelId, string pid, DateTime? startTime)
+        {
+            int count;
+            string samplePid;
+            DateTime? sampleStart;
+            lock (ReassignmentLock)
+            {
+                var key = (oldChannelId, newChannelId);
+                ReassignmentReports.TryGetValue(key, out var state);
+                if (state.Pending == 0) { state.SamplePid = pid; state.SampleStart = startTime; }
+                state.Pending++;
+                var now = DateTime.UtcNow;
+                if (now - state.LastReport < ReassignmentReportInterval)
+                {
+                    ReassignmentReports[key] = state;
+                    return;
+                }
+                count = state.Pending;
+                samplePid = state.SamplePid;
+                sampleStart = state.SampleStart;
+                ReassignmentReports[key] = (now, 0, string.Empty, null);
+            }
+            var from = _masterDataService.GetChannelHierarchy(oldChannelId);
+            var to = _masterDataService.GetChannelHierarchy(newChannelId);
+            _logger.LogWarning(
+                "[DEDUPLICATION] {Count} existing PCB result(s) moved from Channel {OldChannelId} ({OldChannel} / {OldStation}) to Channel {NewChannelId} ({NewChannel} / {NewStation}) since the last report; e.g. PID {Pid} started {StartTime:yyyy-MM-dd HH:mm:ss}. Two Backup_Log configurations may be uploading the same logs.",
+                count, oldChannelId, from?.ChannelName ?? "?", from?.StationName ?? "?",
+                newChannelId, to?.ChannelName ?? "?", to?.StationName ?? "?", samplePid, sampleStart);
+        }
+
+        internal static bool IsDeadlock(Exception ex)
+        {
+            for (Exception? current = ex; current != null; current = current.InnerException)
+                if (current is PostgresException { SqlState: PostgresErrorCodes.DeadlockDetected }) return true;
+            return false;
+        }
+
+        private static bool IsUniqueViolation(Exception ex)
+        {
+            for (Exception? current = ex; current != null; current = current.InnerException)
+                if (current is PostgresException { SqlState: PostgresErrorCodes.UniqueViolation }) return true;
+            return false;
+        }
+
+        /// <summary>
+        /// Returns the records that are already stored with the same PID, start time and
+        /// Channel and whose stored result would not change (same result, or stored OK).
+        /// The collector skips those instead of uploading them again. A record whose
+        /// Channel or result differs is not returned, so the upload can still correct it.
+        /// </summary>
+        public async Task<List<ExistingPcbKey>> FindExistingAsync(List<ExistingPcbQuery> keys)
+        {
+            var items = keys
+                .Where(k => !string.IsNullOrWhiteSpace(k.Pid) && k.StartTime.HasValue)
+                .Select(k => (Pid: CleanDbText(k.Pid)!.Trim(), Start: EnsureUtc(k.StartTime!.Value),
+                    Raw: k.StartTime!.Value, Result: NormalizePcbResult(k.Result), k.ChannelId))
+                .ToList();
+            if (items.Count == 0) return new List<ExistingPcbKey>();
+
+            var pids = items.Select(i => i.Pid).Distinct().ToList();
+            var minStart = items.Min(i => i.Start);
+            var maxStart = items.Max(i => i.Start);
+            // Same lookup shape as the batch duplicate check (IX_pcb_results_pid_start_time).
+            var rows = await _db.PcbResults.AsNoTracking()
+                .Where(p => pids.Contains(p.Pid) && p.StartTime.HasValue
+                    && p.StartTime.Value >= minStart && p.StartTime.Value <= maxStart)
+                .Select(p => new { p.Pid, Start = p.StartTime!.Value, p.ChannelId, p.Result })
+                .ToListAsync();
+            var byKey = rows.GroupBy(r => (r.Pid, r.Start)).ToDictionary(g => g.Key, g => g.ToList());
+
+            var existing = new List<ExistingPcbKey>();
+            foreach (var item in items)
+            {
+                if (byKey.TryGetValue((item.Pid, item.Start), out var found)
+                    && found.Any(f => f.ChannelId == item.ChannelId
+                        && (string.Equals(f.Result, item.Result, StringComparison.OrdinalIgnoreCase) || IsOkResult(f.Result))))
+                    existing.Add(new ExistingPcbKey(item.Pid, item.Raw));
+            }
+            return existing;
         }
 
         private static bool IsDatabaseCapacityFailure(Exception ex)
@@ -1660,12 +2360,17 @@ namespace PMSystem2.Api.Services
             limit = Math.Clamp(limit, 2, 50);
             var fromDate = MonthStartUtc();
             var normalizedJobFile = jobFile ?? string.Empty;
+            // The incremental engine already holds the latest samples for every
+            // active Channel/Job/Step; serve them so detail and overview agree.
+            if (!forceRefresh && _cpkEngine.TryGetAnalysis(channelId, normalizedJobFile, stepNumber, stepName, out var live))
+                return live;
             if (!forceRefresh)
             {
                 var cached = await _db.CpkResultCache.AsNoTracking().FirstOrDefaultAsync(c =>
                     c.ChannelId == channelId && c.JobFile == normalizedJobFile
                     && c.StepNumber == stepNumber && c.StepName == stepName && c.FromDate == fromDate);
-                if (cached != null)
+                if (cached != null && cached.SampleCount >= limit && cached.Cpk.HasValue
+                    && cached.CalculatedAt >= DateTime.UtcNow.AddMinutes(-5))
                 {
                     return new CpkAnalysisDto(channelId, stepNumber, stepName, cached.FromDate,
                         cached.SampleCount, cached.SpecMin, cached.SpecMax, cached.Mean,
@@ -1673,15 +2378,19 @@ namespace PMSystem2.Api.Services
                         JsonSerializer.Deserialize<List<CpkPointDto>>(cached.PointsJson) ?? new());
                 }
             }
-            var rows = await _db.TestSteps.AsNoTracking()
+            var measurementQuery = _db.TestSteps.AsNoTracking()
                 .Where(s => s.PcbResult != null
                     && s.PcbResult.ChannelId == channelId
                     && (s.PcbResult.Result == "OK" || s.PcbResult.Result == "PASS")
-                    && s.PcbResult.InspectTime >= fromDate
+                    // FAIL step rows of an OK PCB (retests) are out of spec by definition.
+                    && (s.Result == "OK" || s.Result == "PASS" || s.Result == "")
                     && s.StepNumber == stepNumber
                     && s.StepName == stepName
-                    && (string.IsNullOrEmpty(jobFile) || s.PcbResult.JobFile == jobFile))
+                    && (string.IsNullOrEmpty(jobFile) || s.PcbResult.JobFile == jobFile));
+            var rows = await measurementQuery
+                .Where(s => s.PcbResult!.InspectTime >= fromDate)
                 .OrderByDescending(s => s.PcbResult!.InspectTime)
+                .ThenByDescending(s => s.Id)
                 .Take(500)
                 .Select(s => new { s.PcbResult!.Pid, s.PcbResult.InspectTime, s.Value, s.SpecMin, s.SpecMax })
                 .ToListAsync();
@@ -1691,7 +2400,65 @@ namespace PMSystem2.Api.Services
                 .Where(x => x.Value.HasValue)
                 .Take(limit)
                 .ToList();
+            // Complete the latest sample with measurements before this month.
+            // Keep the same Channel/Job/Step filters for both periods.
+            if (numericRows.Count < limit)
+            {
+                var olderRows = await measurementQuery
+                    .Where(s => s.PcbResult!.InspectTime < fromDate)
+                    .OrderByDescending(s => s.PcbResult!.InspectTime)
+                    .ThenByDescending(s => s.Id)
+                    .Take(500)
+                    .Select(s => new { s.PcbResult!.Pid, s.PcbResult.InspectTime, s.Value, s.SpecMin, s.SpecMax })
+                    .ToListAsync();
+                numericRows.AddRange(olderRows
+                    .Select(r => new { Row = r, Value = ParseMeasurement(r.Value) })
+                    .Where(x => x.Value.HasValue)
+                    .Take(limit - numericRows.Count));
+            }
+            if (numericRows.Count < limit)
+            {
+                // Daily history can outlive imported measurements and monthly
+                // caches. Prefer a complete study over a newer empty snapshot.
+                var previous = await _db.CpkResultHistory.AsNoTracking()
+                    .Where(c => c.ChannelId == channelId && c.JobFile == normalizedJobFile
+                        && c.StepNumber == stepNumber && c.StepName == stepName
+                        && c.SampleCount >= limit && c.Cpk != null)
+                    .OrderByDescending(c => c.PeriodStart)
+                    .ThenByDescending(c => c.CalculationDate)
+                    .FirstOrDefaultAsync();
+                if (previous != null)
+                {
+                    var previousPoints = await _db.RawCpk.AsNoTracking()
+                        .Where(r => r.ChannelId == channelId && r.JobFile == normalizedJobFile
+                            && r.StepNumber == stepNumber && r.StepName == stepName
+                            && r.CalculationDate == previous.CalculationDate)
+                        .OrderBy(r => r.InspectTime).ThenBy(r => r.Id)
+                        .Select(r => new CpkPointDto(r.Pid ?? string.Empty, r.InspectTime, r.Value))
+                        .ToListAsync();
+                    return new CpkAnalysisDto(channelId, stepNumber, stepName, previous.PeriodStart,
+                        previous.SampleCount, previous.SpecMin, previous.SpecMax, previous.Mean,
+                        previous.StandardDeviation, previous.Cpl, previous.Cpu, previous.Cpk,
+                        previousPoints, IsHistoricalCpkPeriod(previous.PeriodStart, fromDate));
+                }
+                var previousCache = await _db.CpkResultCache.AsNoTracking()
+                    .Where(c => c.ChannelId == channelId && c.JobFile == normalizedJobFile
+                        && c.StepNumber == stepNumber && c.StepName == stepName
+                        && c.FromDate < fromDate && c.SampleCount >= limit && c.Cpk != null)
+                    .OrderByDescending(c => c.FromDate).FirstOrDefaultAsync();
+                if (previousCache != null)
+                {
+                    return new CpkAnalysisDto(channelId, stepNumber, stepName, previousCache.FromDate,
+                        previousCache.SampleCount, previousCache.SpecMin, previousCache.SpecMax, previousCache.Mean,
+                        previousCache.StandardDeviation, previousCache.Cpl, previousCache.Cpu, previousCache.Cpk,
+                        JsonSerializer.Deserialize<List<CpkPointDto>>(previousCache.PointsJson) ?? new(), true);
+                }
+            }
             var values = numericRows.Select(x => x.Value!.Value).ToList();
+            var periodStart = numericRows.Count > 0
+                ? numericRows.Min(x => x.Row.InspectTime) : fromDate;
+            var isHistorical = periodStart < fromDate;
+            if (!isHistorical) periodStart = fromDate;
             var specSource = numericRows.Select(x => x.Row)
                 .FirstOrDefault(r => ParseMeasurement(r.SpecMin).HasValue && ParseMeasurement(r.SpecMax).HasValue);
             double? specMin = ParseMeasurement(specSource?.SpecMin);
@@ -1701,7 +2468,7 @@ namespace PMSystem2.Api.Services
                 ? Math.Sqrt(values.Sum(v => Math.Pow(v - mean!.Value, 2)) / (values.Count - 1))
                 : null;
             double? cpl = null, cpu = null, cpk = null;
-            if (mean.HasValue && stdDev is > 0 && specMin.HasValue && specMax.HasValue)
+            if (values.Count >= 30 && mean.HasValue && stdDev is > 0 && specMin.HasValue && specMax.HasValue)
             {
                 cpl = (mean.Value - specMin.Value) / (3 * stdDev.Value);
                 cpu = (specMax.Value - mean.Value) / (3 * stdDev.Value);
@@ -1712,40 +2479,32 @@ namespace PMSystem2.Api.Services
                 .OrderBy(x => x.Row.InspectTime)
                 .Select(x => new CpkPointDto(x.Row.Pid, x.Row.InspectTime, x.Value!.Value))
                 .ToList();
-            var analysis = new CpkAnalysisDto(channelId, stepNumber, stepName, fromDate, values.Count,
-                specMin, specMax, mean, stdDev, cpl, cpu, cpk, points);
+            var analysis = new CpkAnalysisDto(channelId, stepNumber, stepName, periodStart, values.Count,
+                specMin, specMax, mean, stdDev, cpl, cpu, cpk, points, isHistorical);
             var cache = await _db.CpkResultCache.FirstOrDefaultAsync(c =>
                 c.ChannelId == channelId && c.JobFile == normalizedJobFile
-                && c.StepNumber == stepNumber && c.StepName == stepName && c.FromDate == fromDate);
+                && c.StepNumber == stepNumber && c.StepName == stepName && c.FromDate == periodStart);
             if (cache == null)
             {
                 cache = new CpkResultCache { ChannelId = channelId, JobFile = normalizedJobFile,
-                    StepNumber = stepNumber, StepName = stepName, FromDate = fromDate };
+                    StepNumber = stepNumber, StepName = stepName, FromDate = periodStart };
                 _db.CpkResultCache.Add(cache);
             }
             cache.SampleCount = values.Count; cache.SpecMin = specMin; cache.SpecMax = specMax;
             cache.Mean = mean; cache.StandardDeviation = stdDev; cache.Cpl = cpl; cache.Cpu = cpu; cache.Cpk = cpk;
             cache.PointsJson = JsonSerializer.Serialize(points); cache.CalculatedAt = DateTime.UtcNow;
             await _db.SaveChangesAsync();
-            _memoryCache.Remove("cpk-overview-latest-history");
             return analysis;
         }
 
-        public async Task<List<CpkCacheOverviewDto>> GetCpkOverviewAsync()
-        {
-            return await _memoryCache.GetOrCreateAsync("cpk-overview-latest-history", async entry =>
-            {
-                entry.AbsoluteExpirationRelativeToNow = TimeSpan.FromDays(1);
-                var latest = await _db.CpkResultHistory.FromSqlRaw(@"
-                    SELECT DISTINCT ON (channel_id, job_file, step_number, step_name) *
-                    FROM cpk_result_history
-                    ORDER BY channel_id, job_file, step_number, step_name, calculation_date DESC")
-                    .AsNoTracking().ToListAsync();
-                return latest.Select(c => new CpkCacheOverviewDto(c.ChannelId, c.JobFile, c.StepNumber,
-                    c.StepName, c.SampleCount, c.SpecMin, c.SpecMax, c.Mean,
-                    c.StandardDeviation, c.Cpl, c.Cpu, c.Cpk, c.CalculatedAt)).ToList();
-            }) ?? new List<CpkCacheOverviewDto>();
-        }
+        // Served from the in-memory snapshot maintained by CpkEngineService
+        // (no database query); updates are pushed via ReceiveCpkUpdate.
+        public Task<List<CpkCacheOverviewDto>> GetCpkOverviewAsync() =>
+            Task.FromResult(_cpkEngine.GetOverview());
+
+        private static bool IsHistoricalCpkPeriod(DateTime periodStart, DateTime monthStart) =>
+            periodStart.Year < monthStart.Year
+            || (periodStart.Year == monthStart.Year && periodStart.Month < monthStart.Month);
 
         private static DateTime MonthStartUtc()
         {
@@ -1753,42 +2512,135 @@ namespace PMSystem2.Api.Services
             return new DateTime(now.Year, now.Month, 1, 0, 0, 0, DateTimeKind.Utc);
         }
 
-        private async Task SyncCpkStepCatalogAsync(int stationId, string? jobFile, IEnumerable<TestStep> steps, CancellationToken cancellationToken = default)
-        {
-            var eligible = steps
-                .Where(s => !string.IsNullOrWhiteSpace(s.StepName)
-                    && !string.IsNullOrWhiteSpace(s.Value)
-                    && !string.IsNullOrWhiteSpace(s.SpecMin)
-                    && !string.IsNullOrWhiteSpace(s.SpecMax))
-                .GroupBy(s => new { s.StepNumber, s.StepName })
-                .Select(g => g.First());
+        private static HourlyStatDto BuildTrendPoint(DateTime bucket, int total, int ok, int ng,
+            int? lineId, int? stationId) => new(
+                bucket, lineId ?? 0, stationId ?? 0, total, ok, ng,
+                total > 0 ? Math.Round((double)ok / total * 100.0, 2) : 0.0);
 
-            foreach (var step in eligible)
+        private static bool IsNgResult(string? result) =>
+            string.Equals(result, "NG", StringComparison.OrdinalIgnoreCase);
+
+        private static bool IsOkResult(string? result) =>
+            string.Equals(result, "OK", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(result, "PASS", StringComparison.OrdinalIgnoreCase);
+
+        private static bool PreferIncomingResult(string? existingResult, string? incomingResult) =>
+            !IsOkResult(existingResult) && IsOkResult(incomingResult);
+
+        private static string NormalizePcbResult(string? result)
+        {
+            string normalized = (CleanDbText(result) ?? string.Empty).ToUpperInvariant();
+            return normalized switch
             {
-                await _db.Database.ExecuteSqlInterpolatedAsync($@"
-                    INSERT INTO cpk_step_catalog (station_id, job_file, step_number, step_name, step_type, updated_at)
-                    VALUES ({stationId}, {jobFile ?? string.Empty}, {step.StepNumber}, {step.StepName}, {step.StepType}, NOW())
-                    ON CONFLICT (station_id, job_file, step_number, step_name)
-                    DO UPDATE SET step_type = EXCLUDED.step_type, updated_at = NOW()", cancellationToken);
+                "PASS" => "OK",
+                "FAIL" or "CHECK" or "STOP" or "EJECT" or "TIMEOUT" or "GOTO_ERR" => "NG",
+                _ => normalized
+            };
+        }
+
+        private static bool IsNgStepResult(string? result) =>
+            string.Equals(result, "NG", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(result, "FAIL", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(result, "CHECK", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(result, "STOP", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(result, "TIMEOUT", StringComparison.OrdinalIgnoreCase);
+
+        private static bool ApplyParsedFields(PcbResult target, SubmitPcbRequest source, DateTime inspectTime)
+        {
+            var incoming = new PcbResult
+            {
+                JobFile = CleanDbText(source.JobFile),
+                ModelId = source.ModelId,
+                Fid = CleanDbText(source.Fid),
+                PcbaPartNo = CleanDbText(source.PcbaPartNo),
+                EndTime = EnsureUtc(source.EndTime),
+                TestTime = source.TestTime,
+                FilePath = CleanDbText(source.FilePath),
+                GmesStatus = CleanDbText(source.GmesStatus),
+                InspectTime = inspectTime
+            };
+            return ApplyParsedFields(target, incoming);
+        }
+
+        private static bool ApplyParsedFields(PcbResult target, PcbResult source)
+        {
+            bool changed = false;
+
+            void Set<T>(T current, T value, Action<T> assign)
+            {
+                if (EqualityComparer<T>.Default.Equals(current, value)) return;
+                assign(value);
+                changed = true;
+            }
+
+            Set(target.JobFile, source.JobFile, value => target.JobFile = value);
+            // Backup Log normally has no database ModelId. Preserve an existing
+            // manual/model-mapping value when the replay does not provide one.
+            if (source.ModelId.HasValue)
+                Set(target.ModelId, source.ModelId, value => target.ModelId = value);
+            Set(target.Fid, source.Fid, value => target.Fid = value);
+            Set(target.PcbaPartNo, source.PcbaPartNo, value => target.PcbaPartNo = value);
+            Set(target.EndTime, source.EndTime, value => target.EndTime = value);
+            Set(target.TestTime, source.TestTime, value => target.TestTime = value);
+            Set(target.FilePath, source.FilePath, value => target.FilePath = value);
+            Set(target.GmesStatus, source.GmesStatus, value => target.GmesStatus = value);
+            Set(target.InspectTime, source.InspectTime, value => target.InspectTime = value);
+
+            return changed;
+        }
+
+        private void ReplaceNgSteps(PcbResult existing, IReadOnlyCollection<TestStepInputDto>? incomingSteps, string? errorCode)
+        {
+            foreach (var oldStep in existing.TestSteps.Where(step => IsNgStepResult(step.Result)).ToList())
+            {
+                existing.TestSteps.Remove(oldStep);
+                _db.TestSteps.Remove(oldStep);
+            }
+
+            var incomingNgSteps = incomingSteps?.Where(step => IsNgStepResult(step.Result)).ToList()
+                                  ?? new List<TestStepInputDto>();
+            if (incomingNgSteps.Count == 0)
+            {
+                existing.TestSteps.Add(new TestStep
+                {
+                    PcbResultId = existing.Id,
+                    StepNumber = 1,
+                    StepName = !string.IsNullOrWhiteSpace(errorCode) ? errorCode : "DEFECT_UNSPECIFIED",
+                    StepType = "ERROR_CODE",
+                    Result = "NG",
+                    Value = "-",
+                    SpecMin = "-",
+                    SpecMax = "-"
+                });
+                return;
+            }
+
+            foreach (var step in incomingNgSteps)
+            {
+                existing.TestSteps.Add(new TestStep
+                {
+                    PcbResultId = existing.Id,
+                    StepType = CleanDbText(step.StepType),
+                    StepNumber = step.StepNumber,
+                    StepName = CleanDbText(step.StepName) ?? string.Empty,
+                    Result = "NG",
+                    Value = CleanDbText(step.Value),
+                    SpecMin = CleanDbText(step.SpecMin),
+                    SpecMax = CleanDbText(step.SpecMax)
+                });
             }
         }
 
-        private async Task TrySyncCpkStepCatalogAsync(int stationId, string? jobFile, IEnumerable<TestStep> steps)
+        private static TestStep CloneStep(TestStep source) => new()
         {
-            try
-            {
-                using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-                await SyncCpkStepCatalogAsync(stationId, jobFile, steps, timeout.Token);
-            }
-            catch (OperationCanceledException)
-            {
-                _logger.LogWarning("CPK catalog sync timed out for StationId={StationId}, JobFile={JobFile}; PCB data was saved successfully.", stationId, jobFile);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "CPK catalog sync skipped for StationId={StationId}, JobFile={JobFile}; PCB data was saved successfully.", stationId, jobFile);
-            }
-        }
+            StepType = source.StepType,
+            StepNumber = source.StepNumber,
+            StepName = source.StepName,
+            Result = "NG",
+            Value = source.Value,
+            SpecMin = source.SpecMin,
+            SpecMax = source.SpecMax
+        };
 
         private static double? ParseMeasurement(string? text)
         {

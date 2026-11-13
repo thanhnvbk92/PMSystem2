@@ -12,6 +12,8 @@ namespace PMSystem2.Api.Hubs
         Task ReceiveMachineStatusChanged(object status);
         Task ReceiveMachineAlert(object alert);
         Task ReceiveCommandStatus(object report);
+        /// <summary>Channels whose automatic CPK changed in the last engine flush.</summary>
+        Task ReceiveCpkUpdate(IReadOnlyList<CpkCacheOverviewDto> items);
     }
 
     public class ProductionHub : Hub<IProductionClient>

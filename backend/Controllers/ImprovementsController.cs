@@ -7,22 +7,40 @@ namespace PMSystem2.Api.Controllers;
 
 [ApiController]
 [Route("api/v1/improvements")]
-public class ImprovementsController(AppDbContext db) : ControllerBase
+public class ImprovementsController(AppDbContext db, IWebHostEnvironment environment) : ControllerBase
 {
     [HttpGet("top-defects")]
     public async Task<IActionResult> TopDefects([FromQuery] DateTime startDate, [FromQuery] DateTime endDate, [FromQuery] int limit = 5)
     {
         if (startDate >= endDate) return BadRequest(new { error = "Khoảng thời gian không hợp lệ." });
         limit = Math.Clamp(limit, 1, 20);
-        var grouped = await db.PcbResults.AsNoTracking()
-            .Where(p => p.InspectTime >= startDate.ToUniversalTime() && p.InspectTime <= endDate.ToUniversalTime()
-                && (p.Result == "NG" || p.Result == "FAIL"))
-            .GroupBy(p => new { Code = p.ErrorCode ?? "DEFECT_UNSPECIFIED", p.StationId })
-            .Select(g => new { g.Key.Code, g.Key.StationId, Count = g.LongCount() })
-            .ToListAsync();
+        var unassignedModelIds = await db.Models.AsNoTracking()
+            .Where(m => m.Name.ToLower() == "unassigned model" || m.Name.ToLower() == "unassigned")
+            .Select(m => m.Id).ToListAsync();
+        var startUtc = startDate.ToUniversalTime();
+        var endUtc = endDate.ToUniversalTime();
+        var grouped = await (
+            from p in db.PcbResults.AsNoTracking()
+            join mapping in db.JobFileModelMappings.AsNoTracking()
+                on p.JobFile equals mapping.JobFile into jobMappings
+            from mapping in jobMappings.DefaultIfEmpty()
+            where p.InspectTime >= startUtc && p.InspectTime <= endUtc
+                && (p.Result == "NG" || p.Result == "FAIL")
+            let effectiveModelId = unassignedModelIds.Contains(p.ModelId ?? 0) || p.ModelId == null
+                ? mapping.ModelId
+                : p.ModelId
+            group p by new
+            {
+                Code = p.ErrorCode ?? "DEFECT_UNSPECIFIED",
+                p.StationId,
+                ModelId = effectiveModelId
+            } into g
+            select new { g.Key.Code, g.Key.StationId, g.Key.ModelId, Count = g.LongCount() }
+        ).ToListAsync();
 
-        var topCodes = grouped.GroupBy(x => x.Code)
-            .Select(g => new { Code = g.Key, Count = g.Sum(x => x.Count), TopStation = g.OrderByDescending(x => x.Count).First() })
+        // Treat the same defect on different models as separate improvement targets.
+        var topCodes = grouped.GroupBy(x => new { x.Code, x.ModelId })
+            .Select(g => new { g.Key.Code, Count = g.Sum(x => x.Count), TopStation = g.OrderByDescending(x => x.Count).First() })
             .OrderByDescending(x => x.Count).Take(limit).ToList();
         var totalNg = grouped.Sum(x => x.Count);
         var stationIds = topCodes.Select(x => x.TopStation.StationId).Distinct().ToList();
@@ -31,6 +49,10 @@ public class ImprovementsController(AppDbContext db) : ControllerBase
         var lineIds = stationMap.Values.Select(s => s.LineId).Distinct().ToList();
         var lineMap = await db.Lines.AsNoTracking().Where(l => lineIds.Contains(l.Id))
             .ToDictionaryAsync(l => l.Id, l => l.Name);
+        var modelIds = topCodes.Where(x => x.TopStation.ModelId.HasValue)
+            .Select(x => x.TopStation.ModelId!.Value).Distinct().ToList();
+        var modelMap = await db.Models.AsNoTracking().Where(m => modelIds.Contains(m.Id))
+            .ToDictionaryAsync(m => m.Id, m => m.Name);
 
         return Ok(topCodes.Select(x => {
             stationMap.TryGetValue(x.TopStation.StationId, out var station);
@@ -38,6 +60,9 @@ public class ImprovementsController(AppDbContext db) : ControllerBase
             return new {
                 code = x.Code, count = x.Count, pct = totalNg > 0 ? Math.Round(x.Count * 100.0 / totalNg, 2) : 0,
                 stationId = station?.Id, stationName = station?.Name ?? $"Station #{x.TopStation.StationId}",
+                modelId = x.TopStation.ModelId,
+                modelName = x.TopStation.ModelId.HasValue && modelMap.TryGetValue(x.TopStation.ModelId.Value, out var modelName)
+                    ? modelName : "Chưa xác định",
                 lineId = lineId > 0 ? lineId : (int?)null,
                 lineName = lineId > 0 && lineMap.TryGetValue(lineId, out var lineName) ? lineName : "Chưa xác định"
             };
@@ -78,6 +103,11 @@ public class ImprovementsController(AppDbContext db) : ControllerBase
         if (item.StationId.HasValue) query = query.Where(p => p.StationId == item.StationId);
         else if (item.LineId.HasValue)
             query = from p in query join s in db.Stations on p.StationId equals s.Id where s.LineId == item.LineId select p;
+        if (item.ModelId.HasValue)
+        {
+            var mappedJobFiles = db.JobFileModelMappings.Where(m => m.ModelId == item.ModelId).Select(m => m.JobFile);
+            query = query.Where(p => p.ModelId == item.ModelId || (p.JobFile != null && mappedJobFiles.Contains(p.JobFile)));
+        }
 
         var daily = await query.GroupBy(p => p.InspectTime.Date)
             .Select(g => new
@@ -160,12 +190,26 @@ public class ImprovementsController(AppDbContext db) : ControllerBase
         NormalizePeriodDates(input);
         var error = Validate(input); if (error != null) return BadRequest(new { error });
         item.Title = input.Title.Trim(); item.ErrorCode = input.ErrorCode?.Trim(); item.LineId = input.LineId;
-        item.StationId = input.StationId; item.ProblemDescription = input.ProblemDescription; item.RootCause = input.RootCause;
+        item.StationId = input.StationId; item.ModelId = input.ModelId;
+        item.ProblemDescription = input.ProblemDescription; item.RootCause = input.RootCause;
         item.Owner = input.Owner; item.Status = input.Status; item.BaselineStart = input.BaselineStart; item.BaselineEnd = input.BaselineEnd;
         item.TrackingStart = input.TrackingStart; item.TrackingEnd = input.TrackingEnd; item.TargetReductionPercent = input.TargetReductionPercent;
         item.UpdatedAt = DateTime.UtcNow;
         await db.SaveChangesAsync();
         return Ok(new { item.Id, item.Code, item.UpdatedAt });
+    }
+
+    [HttpDelete("{id:long}")]
+    public async Task<IActionResult> Delete(long id)
+    {
+        var item = await db.Improvements.FindAsync(id);
+        if (item == null) return NotFound(new { error = "Không tìm thấy cải tiến." });
+
+        // ImprovementAction is configured with cascade delete, so deleting the
+        // improvement also removes its action history in the same transaction.
+        db.Improvements.Remove(item);
+        await db.SaveChangesAsync();
+        return NoContent();
     }
 
     [HttpPost("{id:long}/actions")]
@@ -182,8 +226,30 @@ public class ImprovementsController(AppDbContext db) : ControllerBase
     {
         var item = await db.ImprovementActions.FindAsync(actionId); if (item == null) return NotFound();
         item.Description = input.Description; item.Owner = input.Owner; item.Status = input.Status; item.DueDate = input.DueDate;
-        item.Evidence = input.Evidence; item.CompletedAt = input.Status == "DONE" ? input.CompletedAt ?? DateTime.UtcNow : null;
+        item.Evidence = input.Evidence; item.BeforeReport = input.BeforeReport; item.AfterReport = input.AfterReport;
+        item.BeforeImageUrl = input.BeforeImageUrl; item.AfterImageUrl = input.AfterImageUrl;
+        item.CompletedAt = input.Status == "DONE" ? input.CompletedAt ?? DateTime.UtcNow : null;
         await db.SaveChangesAsync(); return Ok(item);
+    }
+
+    [HttpPost("actions/images")]
+    [RequestSizeLimit(6 * 1024 * 1024)]
+    public async Task<IActionResult> UploadActionImage(IFormFile file)
+    {
+        if (file == null || file.Length == 0) return BadRequest(new { error = "Chưa chọn ảnh." });
+        if (file.Length > 5 * 1024 * 1024) return BadRequest(new { error = "Ảnh không được vượt quá 5 MB." });
+        var allowed = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { ".jpg", ".jpeg", ".png", ".webp" };
+        var extension = Path.GetExtension(file.FileName);
+        if (!allowed.Contains(extension) || !file.ContentType.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
+            return BadRequest(new { error = "Chỉ hỗ trợ ảnh JPG, PNG hoặc WEBP." });
+
+        var relativeFolder = Path.Combine("uploads", "improvements");
+        var folder = Path.Combine(environment.WebRootPath ?? Path.Combine(environment.ContentRootPath, "wwwroot"), relativeFolder);
+        Directory.CreateDirectory(folder);
+        var fileName = $"{Guid.NewGuid():N}{extension.ToLowerInvariant()}";
+        await using var stream = System.IO.File.Create(Path.Combine(folder, fileName));
+        await file.CopyToAsync(stream);
+        return Ok(new { url = $"/uploads/improvements/{fileName}" });
     }
 
     [HttpDelete("actions/{actionId:long}")]
@@ -222,10 +288,20 @@ public class ImprovementsController(AppDbContext db) : ControllerBase
     private async Task<object> ToDto(Improvement x)
     {
         var baseline = await Measure(x, x.BaselineStart, x.BaselineEnd);
-        var effectiveEnd = x.TrackingEnd > DateTime.UtcNow ? DateTime.UtcNow : x.TrackingEnd;
-        var tracking = effectiveEnd > x.TrackingStart ? await Measure(x, x.TrackingStart, effectiveEnd) : new Metric(0, 0, 0);
-        double? reduction = baseline.Rate > 0 ? (baseline.Rate - tracking.Rate) / baseline.Rate * 100 : null;
-        return new { x.Id, x.Code, x.Title, x.ErrorCode, x.LineId, x.StationId, x.ProblemDescription, x.RootCause,
+        var now = DateTime.UtcNow;
+        bool trackingStarted = now >= x.TrackingStart;
+        var effectiveEnd = x.TrackingEnd > now ? now : x.TrackingEnd;
+        var tracking = trackingStarted && effectiveEnd > x.TrackingStart
+            ? await Measure(x, x.TrackingStart, effectiveEnd)
+            : new Metric(0, 0, 0);
+        bool hasTrackingData = tracking.Total > 0;
+        // A future or empty tracking period is "not evaluated", not a 0% defect
+        // result. Otherwise baseline > 0 and tracking 0/0 incorrectly becomes a
+        // 100% reduction and marks the improvement as achieved.
+        double? reduction = trackingStarted && hasTrackingData && baseline.Rate > 0
+            ? (baseline.Rate - tracking.Rate) / baseline.Rate * 100
+            : null;
+        return new { x.Id, x.Code, x.Title, x.ErrorCode, x.LineId, x.StationId, x.ModelId, x.ProblemDescription, x.RootCause,
             x.Owner, x.Status, x.BaselineStart, x.BaselineEnd, x.TrackingStart, x.TrackingEnd, x.TargetReductionPercent,
             x.CreatedAt, x.UpdatedAt,
             actions = x.Actions.OrderBy(a => a.DueDate).Select(a => new
@@ -238,11 +314,16 @@ public class ImprovementsController(AppDbContext db) : ControllerBase
                 a.DueDate,
                 a.CompletedAt,
                 a.Evidence,
+                a.BeforeReport,
+                a.AfterReport,
+                a.BeforeImageUrl,
+                a.AfterImageUrl,
                 a.CreatedAt
             }).ToList(),
             baseline, tracking,
             reductionPercent = reduction, targetAchieved = reduction.HasValue && reduction >= x.TargetReductionPercent,
-            measurementComplete = DateTime.UtcNow >= x.TrackingEnd };
+            trackingStarted, hasTrackingData,
+            measurementComplete = now >= x.TrackingEnd };
     }
 
     private async Task<Metric> Measure(Improvement x, DateTime start, DateTime end)
@@ -250,6 +331,11 @@ public class ImprovementsController(AppDbContext db) : ControllerBase
         var q = db.PcbResults.AsNoTracking().Where(p => p.InspectTime >= start && p.InspectTime < end);
         if (x.StationId.HasValue) q = q.Where(p => p.StationId == x.StationId);
         else if (x.LineId.HasValue) q = from p in q join s in db.Stations on p.StationId equals s.Id where s.LineId == x.LineId select p;
+        if (x.ModelId.HasValue)
+        {
+            var mappedJobFiles = db.JobFileModelMappings.Where(m => m.ModelId == x.ModelId).Select(m => m.JobFile);
+            q = q.Where(p => p.ModelId == x.ModelId || (p.JobFile != null && mappedJobFiles.Contains(p.JobFile)));
+        }
         var counts = await q
             .GroupBy(_ => 1)
             .Select(g => new
