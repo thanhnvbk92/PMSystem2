@@ -17,7 +17,9 @@ const FrozenChart = memo(
   (previous, next) => previous.version === next.version
 );
 
-const compactNumberFormatter = new Intl.NumberFormat('vi-VN', {
+// Use internationally recognizable compact suffixes (K/M/B). The vi-VN
+// formatter emits "N" for "nghìn", which is ambiguous on a bilingual UI.
+const compactNumberFormatter = new Intl.NumberFormat('en-US', {
   notation: 'compact',
   maximumFractionDigits: 1,
 });
@@ -42,6 +44,7 @@ function Dashboard({
   const [stationYieldData, setStationYieldData] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
   const [chartLoadInfo, setChartLoadInfo] = useState({ durationMs: null, requests: {} });
+  const [qualityModes, setQualityModes] = useState(null);
   const latestHourlyStatsRef = useRef(hourlyStats);
   const latestSummaryRef = useRef(summary);
   const forceNextChartUpdateRef = useRef(true);
@@ -96,10 +99,12 @@ function Dashboard({
     try {
       const timed = async (name, request) => { const started = performance.now(); const data = await request(); return { name, data, durationMs: performance.now() - started }; };
       const results = await Promise.all([
-        timed('station', () => ProductionApi.getStationYieldStats(lineId || null, sDate || startDate, eDate || endDate))
+        timed('station', () => ProductionApi.getStationYieldStats(lineId || null, sDate || startDate, eDate || endDate)),
+        timed('qualityModes', () => ProductionApi.getQualityModes(lineId || null, null, sDate || startDate, eDate || endDate))
       ]);
       const byName = Object.fromEntries(results.map(x => [x.name, x]));
       const stationYields = byName.station.data;
+      setQualityModes(byName.qualityModes.data);
       const lineMap = new Map();
       (stationYields || []).forEach(station => {
         const key = station.lineId || 0;
@@ -231,11 +236,12 @@ function Dashboard({
 
   const timeSeriesData = getTimeSeriesData();
 
-  // 3. Quality Compliance Score Donut Data
+  // 3. Overall defect-rate donut data
+  const chartDefectRate = Math.max(0, Math.min(100, 100 - chartYieldRate));
   const donutData = useMemo(() => [
-    { name: 'Đạt Chuẩn (Pass)', value: parseFloat(chartYieldRate.toFixed(1)), color: '#8b5cf6' },
-    { name: 'Phát Sinh Lỗi (Defect)', value: parseFloat((100 - chartYieldRate).toFixed(1)), color: '#334155' }
-  ], [chartYieldRate]);
+    { name: 'Phát Sinh Lỗi (Defect)', value: parseFloat(chartDefectRate.toFixed(1)), color: '#f43f5e' },
+    { name: 'Đạt Chuẩn (Pass)', value: parseFloat(chartYieldRate.toFixed(1)), color: '#334155' }
+  ], [chartDefectRate, chartYieldRate]);
 
   // 4b. Line Production Volume & Pass Rate Data (Sorted Ascending)
   const lineVolumePassData = (() => {
@@ -284,21 +290,21 @@ function Dashboard({
     <div className="space-y-7 w-full animate-in fade-in duration-300 font-sans pb-8">
 
       {/* TOOLBAR / HEADER CONTROL ROW */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-800 pb-4">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-200 pb-4">
         <div className="flex items-center gap-3">
           {/* Time Range Selector */}
-          <div className="flex items-center bg-slate-900 border border-slate-700/80 rounded-xl px-3 py-1.5 text-xs text-slate-300 gap-2">
-            <Calendar className="w-3.5 h-3.5 text-slate-400" />
-            <span className="text-slate-400">Thời gian:</span>
+          <div className="flex items-center bg-slate-100 border border-slate-300 rounded-xl px-3 py-1.5 text-xs text-slate-700 gap-2">
+            <Calendar className="w-3.5 h-3.5 text-slate-600" />
+            <span className="text-slate-600">Thời gian:</span>
             <select
               value={selectedTimeRange}
               onChange={(e) => handleTimeRangeChange(e.target.value)}
-              className="bg-transparent text-white font-medium focus:outline-none cursor-pointer"
+              className="bg-transparent text-slate-900 font-medium focus:outline-none cursor-pointer"
             >
-              <option value="today" className="bg-slate-900">Hôm nay</option>
-              <option value="week" className="bg-slate-900">Tuần này</option>
-              <option value="month" className="bg-slate-900">Tháng này</option>
-              <option value="year" className="bg-slate-900">Năm nay</option>
+              <option value="today" className="bg-slate-100">Hôm nay</option>
+              <option value="week" className="bg-slate-100">Tuần này</option>
+              <option value="month" className="bg-slate-100">Tháng này</option>
+              <option value="year" className="bg-slate-100">Năm nay</option>
             </select>
           </div>
 
@@ -306,7 +312,7 @@ function Dashboard({
           <select
             value={selectedLineId}
             onChange={handleLineSelect}
-            className="bg-slate-900 border border-slate-700/80 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-purple-500 font-sans"
+            className="bg-slate-100 border border-slate-300 rounded-xl px-3 py-2 text-xs text-slate-900 focus:outline-none focus:border-purple-500 font-sans"
           >
             <option value="">Tất cả chuyền ({lines.length})</option>
             {[...lines].sort((a, b) => (a.name || '').localeCompare(b.name || '', undefined, { numeric: true, sensitivity: 'base' })).map(l => (
@@ -320,10 +326,10 @@ function Dashboard({
               setChartSummary(latestSummaryRef.current);
               fetchBackendData(selectedLineId ? parseInt(selectedLineId) : null, startDate, endDate);
             }}
-            className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors"
+            className="p-2 rounded-xl bg-slate-200 hover:bg-slate-300 text-slate-700 transition-colors"
             title="Tải lại dữ liệu"
           >
-            <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin text-purple-400' : ''}`} />
+            <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin text-purple-700' : ''}`} />
           </button>
         </div>
         <div className="flex flex-wrap items-center gap-2 text-[10px] font-mono">
@@ -332,9 +338,28 @@ function Dashboard({
         </div>
       </div>
 
+      {/* Three quality views: attempt-based Retest, station NTF and system-wide RTY. */}
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+        <div className="glass-panel border border-violet-500/20 p-5">
+          <div className="flex items-start justify-between"><div><div className="text-xs font-bold uppercase tracking-wider text-violet-700">Retest</div><div className="mt-1 text-[11px] text-slate-500">Mỗi lần test được tính là một lượt</div></div><RefreshCw className="h-5 w-5 text-violet-700"/></div>
+          <div className="mt-4 text-3xl font-black text-violet-700">{Number(qualityModes?.retestDefectRate ?? defectPct).toFixed(2)}%</div>
+          <div className="mt-2 text-xs text-slate-600">{Number(qualityModes?.retestNgAttempts ?? totalNg).toLocaleString()} NG / {Number(qualityModes?.retestAttempts ?? totalInspected).toLocaleString()} lượt test</div>
+        </div>
+        <div className="glass-panel border border-rose-500/20 p-5">
+          <div className="flex items-start justify-between"><div><div className="text-xs font-bold uppercase tracking-wider text-rose-700">NTF</div><div className="mt-1 text-[11px] text-slate-500">PID từng NG tại cùng Station</div></div><AlertTriangle className="h-5 w-5 text-rose-700"/></div>
+          <div className="mt-4 text-3xl font-black text-rose-700">{qualityModes ? `${Number(qualityModes.ntfRate).toFixed(2)}%` : '—'}</div>
+          <div className="mt-2 text-xs text-slate-600">{qualityModes ? `${Number(qualityModes.ntfNgPcbStations).toLocaleString()} NG / ${Number(qualityModes.ntfPcbStations).toLocaleString()} PID-Station` : 'Đang tính lịch sử PCB...'}</div>
+        </div>
+        <div className="glass-panel border border-emerald-500/20 p-5">
+          <div className="flex items-start justify-between"><div><div className="text-xs font-bold uppercase tracking-wider text-emerald-700">RTY</div><div className="mt-1 text-[11px] text-slate-500">PID không NG lần nào trên toàn hệ thống</div></div><Zap className="h-5 w-5 text-emerald-700"/></div>
+          <div className="mt-4 text-3xl font-black text-emerald-700">{qualityModes ? `${Number(qualityModes.rtyRate).toFixed(2)}%` : '—'}</div>
+          <div className="mt-2 text-xs text-slate-600">{qualityModes ? `${Number(qualityModes.rtyStraightThroughPcbs).toLocaleString()} chạy thẳng / ${Number(qualityModes.rtyPcbs).toLocaleString()} PCB` : 'Đang tính lịch sử PCB...'}</div>
+        </div>
+      </div>
+
       {/* SECTION 1: INCIDENTS & PRODUCTION OVERVIEW (4 KPI CARDS + FUNNEL CHART) */}
       <div className="space-y-3">
-        <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400 font-display">
+        <h3 className="text-xs font-bold uppercase tracking-wider text-slate-600 font-display">
           Production Overview
         </h3>
 
@@ -342,14 +367,14 @@ function Dashboard({
 
           {/* Card 1: Total Incident Costs / Inspected Volume */}
           <div className="glass-panel p-5 relative overflow-hidden flex flex-col justify-between">
-            <span className="text-xs font-semibold text-slate-400 font-display">Tổng Sản Lượng Kiểm Tra</span>
+            <span className="text-xs font-semibold text-slate-600 font-display">Tổng Sản Lượng Kiểm Tra</span>
             <div className="mt-3">
-              <span className="text-3xl font-extrabold text-white font-mono tracking-tight">
+              <span title={totalInspected.toLocaleString('en-US')} className="text-3xl font-extrabold text-slate-900 font-mono tracking-tight">
                 {compactNumberFormatter.format(totalInspected)}
               </span>
               <div className="flex items-center gap-2 mt-2 text-[11px] font-mono">
-                <span className="text-emerald-400 font-semibold">Tự động</span>
-                <span className="text-slate-400">cập nhật DB</span>
+                <span className="text-emerald-700 font-semibold">Tự động</span>
+                <span className="text-slate-600">cập nhật DB</span>
               </div>
             </div>
             <div className="absolute bottom-0 left-0 right-0 h-1 bg-purple-500"></div>
@@ -357,14 +382,14 @@ function Dashboard({
 
           {/* Card 2: Passed OK Volume */}
           <div className="glass-panel p-5 relative overflow-hidden flex flex-col justify-between">
-            <span className="text-xs font-semibold text-slate-400 font-display">Sản Phẩm Đạt Chuẩn (OK)</span>
+            <span className="text-xs font-semibold text-slate-600 font-display">Sản Phẩm Đạt Chuẩn (OK)</span>
             <div className="mt-3">
-              <span className="text-3xl font-extrabold text-emerald-400 font-mono tracking-tight">
+              <span className="text-3xl font-extrabold text-emerald-700 font-mono tracking-tight">
                 {totalOk.toLocaleString()}
               </span>
               <div className="flex items-center gap-2 mt-2 text-[11px] font-mono">
-                <span className="text-emerald-400 font-semibold">{passPct}%</span>
-                <span className="text-slate-400">Pass Rate</span>
+                <span className="text-emerald-700 font-semibold">{passPct}%</span>
+                <span className="text-slate-600">Pass Rate</span>
               </div>
             </div>
             <div className="absolute bottom-0 left-0 right-0 h-1 bg-emerald-500"></div>
@@ -372,14 +397,14 @@ function Dashboard({
 
           {/* Card 3: Defects Count */}
           <div className="glass-panel p-5 relative overflow-hidden flex flex-col justify-between">
-            <span className="text-xs font-semibold text-slate-400 font-display">Sản Phẩm Lỗi (NG)</span>
+            <span className="text-xs font-semibold text-slate-600 font-display">Sản Phẩm Lỗi (NG)</span>
             <div className="mt-3">
-              <span className="text-3xl font-extrabold text-rose-400 font-mono tracking-tight">
+              <span className="text-3xl font-extrabold text-rose-700 font-mono tracking-tight">
                 {totalNg.toLocaleString()}
               </span>
               <div className="flex items-center gap-2 mt-2 text-[11px] font-mono">
-                <span className="text-rose-400 font-semibold">-{defectPct}%</span>
-                <span className="text-slate-400">Defect Ratio</span>
+                <span className="text-rose-700 font-semibold">-{defectPct}%</span>
+                <span className="text-slate-600">Defect Ratio</span>
               </div>
             </div>
             <div className="absolute bottom-0 left-0 right-0 h-1 bg-rose-500"></div>
@@ -387,23 +412,23 @@ function Dashboard({
 
           {/* Card 4: First Pass Yield Rate */}
           <div className="glass-panel p-5 relative overflow-hidden flex flex-col justify-between">
-            <span className="text-xs font-semibold text-slate-400 font-display">Tỷ Lệ Yield Thật (FPY)</span>
+            <span className="text-xs font-semibold text-slate-600 font-display">Tỷ Lệ Yield Thật (FPY)</span>
             <div className="mt-3">
-              <span className="text-3xl font-extrabold text-purple-300 font-mono tracking-tight">
+              <span className="text-3xl font-extrabold text-purple-700 font-mono tracking-tight">
                 {yieldRate.toFixed(1)}%
               </span>
               <div className="flex items-center gap-2 mt-2 text-[11px] font-mono">
-                <span className="text-purple-400 font-semibold">{passPct}%</span>
-                <span className="text-slate-400">Tỷ lệ Đạt</span>
+                <span className="text-purple-700 font-semibold">{passPct}%</span>
+                <span className="text-slate-600">Tỷ lệ Đạt</span>
               </div>
             </div>
             <div className="absolute bottom-0 left-0 right-0 h-1 bg-indigo-500"></div>
           </div>
 
-          {/* Card 5: Quality Compliance Score */}
+          {/* Card 5: Overall Defect Rate */}
           <div className="glass-panel p-4 flex flex-col justify-between">
-            <span className="text-xs font-semibold text-slate-400 font-display text-center">
-              Chỉ Số Tuân Thủ Chất Lượng
+            <span className="text-xs font-semibold text-slate-600 font-display text-center">
+              Tỷ Lệ Lỗi Tổng Thể
             </span>
             <div className="h-24 w-full relative flex items-center justify-center">
               <FrozenChart version={chartSummary}>
@@ -427,8 +452,8 @@ function Dashboard({
                 </ResponsiveContainer>
               </FrozenChart>
               <div className="absolute inset-0 flex items-center justify-center">
-                <span className="text-xl font-extrabold text-purple-300 font-mono tracking-tight">
-                  {chartYieldRate.toFixed(0)}%
+                <span className="text-xl font-extrabold text-rose-700 font-mono tracking-tight">
+                  {chartDefectRate.toFixed(1)}%
                 </span>
               </div>
             </div>
@@ -439,7 +464,7 @@ function Dashboard({
 
       {/* SECTION 2: INCIDENTS AND INJURIES OVERVIEW (3 CHARTS ROW) */}
       <div className="space-y-3">
-        <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400 font-display">
+        <h3 className="text-xs font-bold uppercase tracking-wider text-slate-600 font-display">
           Incidents and Quality Overview
         </h3>
 
@@ -448,7 +473,7 @@ function Dashboard({
           {/* Chart 1: Pass Rate & Output Volume Trend over time */}
           <div className="glass-panel p-5 space-y-3">
             <div className="flex justify-between items-center">
-              <h4 className="text-xs font-bold text-white uppercase tracking-wider font-display">
+              <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider font-display">
                 Sản Lượng &amp; Tỉ Lệ Pass Theo Thời Gian
               </h4>
               <div className="flex items-center gap-3 text-[10px] font-mono">
@@ -461,10 +486,10 @@ function Dashboard({
               <FrozenChart version={chartHourlyStats}>
               <ResponsiveContainer width="100%" height="100%">
                 <ComposedChart data={timeSeriesData} margin={{ top: 10, right: 10, left: -20, bottom: 15 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
+                  <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
                   <XAxis
                     dataKey="time"
-                    stroke="#94a3b8"
+                    stroke="#475569"
                     fontSize={9}
                     tickLine={false}
                     angle={-35}
@@ -473,16 +498,16 @@ function Dashboard({
                     interval={selectedTimeRange === 'today' ? 1 : 0}
                   />
                   <YAxis yAxisId="left" stroke="#64748b" fontSize={10} tickLine={false} />
-                  <YAxis yAxisId="right" orientation="right" stroke="#34d399" fontSize={10} tickLine={false} unit="%" domain={[80, 100]} />
+                  <YAxis yAxisId="right" orientation="right" stroke="#047857" fontSize={10} tickLine={false} unit="%" domain={[80, 100]} />
                   <Tooltip
-                    contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '12px', fontSize: '11px' }}
+                    contentStyle={{ backgroundColor: '#ffffff', borderColor: '#e2e8f0', borderRadius: '12px', fontSize: '11px' }}
                     formatter={(value, name) => {
                       if (name === "Tỉ lệ Pass (%)") return [`${value}%`, name];
                       return [value.toLocaleString(), name];
                     }}
                   />
                   <Bar yAxisId="left" dataKey="Total" name="Sản lượng" fill="#8b5cf6" opacity={0.85} radius={[4, 4, 0, 0]} barSize={18} />
-                  <Line yAxisId="right" type="monotone" dataKey="Yield" name="Tỉ lệ Pass (%)" stroke="#34d399" strokeWidth={2.5} dot={{ r: 3, fill: '#34d399' }} />
+                  <Line yAxisId="right" type="monotone" dataKey="Yield" name="Tỉ lệ Pass (%)" stroke="#047857" strokeWidth={2.5} dot={{ r: 3, fill: '#047857' }} />
                 </ComposedChart>
               </ResponsiveContainer>
               </FrozenChart>
@@ -492,7 +517,7 @@ function Dashboard({
           {/* Chart 2: Production Volume & Pass Rate by Line Chart */}
           <div className="glass-panel p-5 space-y-3">
             <div className="flex justify-between items-center">
-              <h4 className="text-xs font-bold text-white uppercase tracking-wider font-display">
+              <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider font-display">
                 Sản Lượng &amp; Tỉ Lệ Pass Theo Line
               </h4>
               <div className="flex items-center gap-3 text-[10px] font-mono">
@@ -505,10 +530,10 @@ function Dashboard({
               <FrozenChart version={lineYieldData}>
               <ResponsiveContainer width="100%" height="100%">
                 <ComposedChart data={lineVolumePassData} margin={{ top: 10, right: 10, left: -15, bottom: 15 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
+                  <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
                   <XAxis
                     dataKey="lineName"
-                    stroke="#94a3b8"
+                    stroke="#475569"
                     fontSize={9}
                     tickLine={false}
                     interval={0}
@@ -517,16 +542,16 @@ function Dashboard({
                     height={35}
                   />
                   <YAxis yAxisId="left" stroke="#64748b" fontSize={10} tickLine={false} />
-                  <YAxis yAxisId="right" orientation="right" stroke="#c084fc" fontSize={10} tickLine={false} unit="%" domain={[85, 100]} />
+                  <YAxis yAxisId="right" orientation="right" stroke="#7e22ce" fontSize={10} tickLine={false} unit="%" domain={[85, 100]} />
                   <Tooltip
-                    contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '12px', fontSize: '11px' }}
+                    contentStyle={{ backgroundColor: '#ffffff', borderColor: '#e2e8f0', borderRadius: '12px', fontSize: '11px' }}
                     formatter={(value, name) => {
                       if (name === "Tỉ lệ Pass (%)") return [`${value}%`, name];
                       return [typeof value === 'number' ? value.toLocaleString() : value, name];
                     }}
                   />
                   <Bar yAxisId="left" dataKey="Total" name="Sản lượng" fill="#06b6d4" opacity={0.85} radius={[4, 4, 0, 0]} barSize={22} />
-                  <Line yAxisId="right" type="monotone" dataKey="Yield" name="Tỉ lệ Pass (%)" stroke="#c084fc" strokeWidth={2.5} dot={{ r: 4, fill: '#c084fc' }} />
+                  <Line yAxisId="right" type="monotone" dataKey="Yield" name="Tỉ lệ Pass (%)" stroke="#7e22ce" strokeWidth={2.5} dot={{ r: 4, fill: '#7e22ce' }} />
                 </ComposedChart>
               </ResponsiveContainer>
               </FrozenChart>
@@ -536,7 +561,7 @@ function Dashboard({
           {/* Chart 3: Top 10 Stations with Lowest Pass Rate */}
           <div className="glass-panel p-5 space-y-3">
             <div className="flex justify-between items-center">
-              <h4 className="text-xs font-bold text-white uppercase tracking-wider font-display">
+              <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider font-display">
                 Sản Lượng &amp; Tỉ Lệ Pass Theo Station (Top 10 Thấp Nhất)
               </h4>
               <div className="flex items-center gap-3 text-[10px] font-mono">
@@ -549,10 +574,10 @@ function Dashboard({
               <FrozenChart version={stationYieldData}>
               <ResponsiveContainer width="100%" height="100%">
                 <ComposedChart data={stationVolumePassData} margin={{ top: 10, right: 10, left: -15, bottom: 15 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
+                  <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
                   <XAxis
                     dataKey="stationName"
-                    stroke="#94a3b8"
+                    stroke="#475569"
                     fontSize={9}
                     tickLine={false}
                     interval={0}
@@ -561,16 +586,16 @@ function Dashboard({
                     height={45}
                   />
                   <YAxis yAxisId="left" stroke="#64748b" fontSize={10} tickLine={false} />
-                  <YAxis yAxisId="right" orientation="right" stroke="#fb7185" fontSize={10} tickLine={false} unit="%" domain={[80, 100]} />
+                  <YAxis yAxisId="right" orientation="right" stroke="#be123c" fontSize={10} tickLine={false} unit="%" domain={[80, 100]} />
                   <Tooltip
-                    contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '12px', fontSize: '11px' }}
+                    contentStyle={{ backgroundColor: '#ffffff', borderColor: '#e2e8f0', borderRadius: '12px', fontSize: '11px' }}
                     formatter={(value, name) => {
                       if (name === "Tỉ lệ Pass (%)") return [`${value}%`, name];
                       return [typeof value === 'number' ? value.toLocaleString() : value, name];
                     }}
                   />
                   <Bar yAxisId="left" dataKey="Total" name="Sản lượng" fill="#f59e0b" opacity={0.85} radius={[4, 4, 0, 0]} barSize={18} />
-                  <Line yAxisId="right" type="monotone" dataKey="Yield" name="Tỉ lệ Pass (%)" stroke="#fb7185" strokeWidth={2.5} dot={{ r: 4, fill: '#fb7185' }} />
+                  <Line yAxisId="right" type="monotone" dataKey="Yield" name="Tỉ lệ Pass (%)" stroke="#be123c" strokeWidth={2.5} dot={{ r: 4, fill: '#be123c' }} />
                 </ComposedChart>
               </ResponsiveContainer>
               </FrozenChart>
@@ -586,7 +611,7 @@ function Dashboard({
 
 function LoadTimeBadge({ loading, label, value, details = {} }) {
   const detailText = Object.entries(details).map(([key, ms]) => `${key}: ${(ms / 1000).toFixed(2)}s`).join(' · ');
-  return <span title={detailText || undefined} className={`rounded-lg border px-2.5 py-1.5 ${loading ? 'border-amber-500/30 bg-amber-500/10 text-amber-300' : 'border-slate-700 bg-slate-900/70 text-slate-400'}`}>
+  return <span title={detailText || undefined} className={`rounded-lg border px-2.5 py-1.5 ${loading ? 'border-amber-500/30 bg-amber-500/10 text-amber-700' : 'border-slate-300 bg-slate-100/70 text-slate-600'}`}>
     <Clock className={`mr-1 inline h-3 w-3 ${loading ? 'animate-pulse' : ''}`} />
     {label}: {loading ? 'đang tải...' : value == null ? '—' : `${(value / 1000).toFixed(2)}s`}
   </span>;

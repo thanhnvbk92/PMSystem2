@@ -1,15 +1,50 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   Search, RefreshCw, Eye, ShieldCheck, 
   X, FileSpreadsheet, Download, AlertTriangle, Calendar, Clock
 } from 'lucide-react';
 import { ProductionApi } from '../services/api';
 
+function MultiCheckboxSelect({ label, options, selectedIds, onChange }) {
+  const ref = useRef(null);
+  const selected = new Set(selectedIds);
+  const summary = selectedIds.length === 0 ? `Tất cả ${label} (${options.length})` : selectedIds.length === 1
+    ? options.find(item => item.id === selectedIds[0])?.label || `1 ${label}`
+    : `Đã chọn ${selectedIds.length} ${label}`;
+
+  useEffect(() => {
+    const close = event => { if (ref.current?.open && !ref.current.contains(event.target)) ref.current.removeAttribute('open'); };
+    document.addEventListener('pointerdown', close);
+    return () => document.removeEventListener('pointerdown', close);
+  }, []);
+
+  return (
+    <details ref={ref} className="relative z-[60] min-w-52">
+      <summary className="list-none cursor-pointer select-none bg-slate-50/90 border border-slate-300 rounded-xl px-3.5 py-2.5 text-xs text-slate-900 hover:border-blue-500 flex items-center justify-between gap-3">
+        <span className="truncate">{summary}</span><span className="text-slate-500 text-[10px]">▼</span>
+      </summary>
+      <div className="absolute left-0 top-full mt-1 z-[70] w-full min-w-64 max-h-72 overflow-y-auto rounded-xl border border-slate-300 bg-slate-50 p-2 shadow-2xl custom-scrollbar">
+        <label className="flex cursor-pointer items-center gap-2 rounded-lg px-2 py-2 text-xs text-slate-800 hover:bg-slate-200">
+          <input type="checkbox" checked={selectedIds.length === 0} onChange={() => onChange([])} className="h-4 w-4 accent-blue-500" />
+          <span>Tất cả {label} ({options.length})</span>
+        </label>
+        <div className="my-1 border-t border-slate-200" />
+        {options.map(option => <label key={option.id} className="flex cursor-pointer items-center gap-2 rounded-lg px-2 py-2 text-xs text-slate-700 hover:bg-slate-200 hover:text-slate-900">
+          <input type="checkbox" checked={selected.has(option.id)} onChange={() => onChange(selected.has(option.id) ? selectedIds.filter(id => id !== option.id) : [...selectedIds, option.id])} className="h-4 w-4 accent-blue-500" />
+          <span className="truncate" title={option.label}>{option.label}</span>
+        </label>)}
+      </div>
+    </details>
+  );
+}
+
 export default function PcbSearch({ lines, stations, channels = [], onFilterChange }) {
-  const [selectedLine, setSelectedLine] = useState('');
-  const [selectedStation, setSelectedStation] = useState('');
+  const [selectedLines, setSelectedLines] = useState([]);
+  const [selectedStations, setSelectedStations] = useState([]);
+  const [selectedChannels, setSelectedChannels] = useState([]);
   const [resultFilter, setResultFilter] = useState('ALL'); // ALL, OK, NG
   const [searchPid, setSearchPid] = useState('');
+  const [searchFid, setSearchFid] = useState('');
   const [searchError, setSearchError] = useState('');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
@@ -23,13 +58,13 @@ export default function PcbSearch({ lines, stations, channels = [], onFilterChan
   const [searchExecutionTime, setSearchExecutionTime] = useState(null);
 
   // Execute server-side search across full PostgreSQL database with execution timer
-  const executeSearch = async (lineId, stationId, pid, error, filter, start, end) => {
+  const executeSearch = async (lineIds, stationIds, channelIds, pid, fid, error, filter, start, end) => {
     setIsSearching(true);
     const startTime = performance.now();
     try {
       const formattedStart = start ? new Date(start).toISOString() : null;
       const formattedEnd = end ? new Date(end).toISOString() : null;
-      const data = await ProductionApi.getLatest(500, lineId, stationId, pid, error, filter, formattedStart, formattedEnd);
+      const data = await ProductionApi.getLatest(500, null, null, pid, fid, error, filter, formattedStart, formattedEnd, lineIds, stationIds, channelIds);
       const endTime = performance.now();
       setSearchExecutionTime((endTime - startTime).toFixed(1));
       setSearchResults(data || []);
@@ -41,9 +76,7 @@ export default function PcbSearch({ lines, stations, channels = [], onFilterChan
   };
 
   const handleManualSearch = () => {
-    const lineId = selectedLine ? parseInt(selectedLine) : null;
-    const stationId = selectedStation ? parseInt(selectedStation) : null;
-    executeSearch(lineId, stationId, searchPid, searchError, resultFilter, startDate, endDate);
+    executeSearch(selectedLines, selectedStations, selectedChannels, searchPid, searchFid, searchError, resultFilter, startDate, endDate);
   };
 
   // Run search on initial component mount
@@ -51,24 +84,27 @@ export default function PcbSearch({ lines, stations, channels = [], onFilterChan
     handleManualSearch();
   }, []);
 
-  const handleLineChange = (e) => {
-    const val = e.target.value;
-    setSelectedLine(val);
-    setSelectedStation('');
-    onFilterChange(val ? parseInt(val) : null, null);
+  const handleLineChange = values => {
+    setSelectedLines(values);
+    const validStations = new Set(stations.filter(station => values.length === 0 || values.includes(station.lineId)).map(station => station.id));
+    setSelectedStations(current => current.filter(id => validStations.has(id)));
+    setSelectedChannels(current => current.filter(id => channels.some(channel => channel.id === id && (values.length === 0 || values.includes(channel.lineId)))));
+    onFilterChange(null, null);
   };
 
-  const handleStationChange = (e) => {
-    const val = e.target.value;
-    setSelectedStation(val);
-    onFilterChange(selectedLine ? parseInt(selectedLine) : null, val ? parseInt(val) : null);
+  const handleStationChange = values => {
+    setSelectedStations(values);
+    setSelectedChannels(current => current.filter(id => channels.some(channel => channel.id === id && (values.length === 0 || values.includes(channel.stationId)))));
+    onFilterChange(null, null);
   };
 
   const resetFilters = () => {
-    setSelectedLine('');
-    setSelectedStation('');
+    setSelectedLines([]);
+    setSelectedStations([]);
+    setSelectedChannels([]);
     setResultFilter('ALL');
     setSearchPid('');
+    setSearchFid('');
     setSearchError('');
     setStartDate('');
     setEndDate('');
@@ -112,9 +148,53 @@ export default function PcbSearch({ lines, stations, channels = [], onFilterChan
     setEndDate(toLocalIso(now));
   };
 
-  const filteredStations = selectedLine 
-    ? stations.filter(s => s.lineId === parseInt(selectedLine))
-    : stations;
+  const filteredStations = selectedLines.length > 0 ? stations.filter(station => selectedLines.includes(station.lineId)) : stations;
+  const filteredChannels = channels.filter(channel =>
+    (selectedLines.length === 0 || selectedLines.includes(channel.lineId)) &&
+    (selectedStations.length === 0 || selectedStations.includes(channel.stationId)));
+
+  // Download test steps (value + spec) as CSV: one row per step, for the given PCB records
+  const downloadStepsCsv = (logs, fileTag) => {
+    if (!logs || logs.length === 0) return;
+    const escape = (v) => `"${(v ?? '').toString().replace(/"/g, '""')}"`;
+    const pad = (n) => String(n).padStart(2, '0');
+    const formatTime = (value) => {
+      const d = new Date(value);
+      return isNaN(d) ? '' : `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+    };
+    const headers = [
+      "Thời gian kiểm tra", "Mã PCB (PID)", "FID", "Dây chuyền", "Trạm", "Channel", "IP Máy", "JobFile",
+      "Kết quả PCB", "Step #", "Tên step", "Phân loại", "Giá trị đo", "Spec Min", "Spec Max", "Kết quả step"
+    ];
+    const rows = [];
+    logs.forEach(l => {
+      const channelIp = l.channelIp || (channels && channels.find(c => c.id === l.channelId)?.ipAddress) || '';
+      const base = [formatTime(l.inspectTime), l.pid, l.fid, l.lineName, l.stationName, l.channelName, channelIp, l.jobFile, l.result];
+      (l.steps || []).forEach((s, idx) => {
+        rows.push([
+          ...base,
+          s.stepNumber ?? s.step_number ?? idx + 1,
+          s.stepName ?? s.step_name,
+          s.stepType ?? s.step_type,
+          s.value ?? s.val,
+          s.specMin ?? s.spec_min,
+          s.specMax ?? s.spec_max,
+          s.result
+        ].map(escape).join(","));
+      });
+    });
+    const csvContent = "﻿" + [headers.join(","), ...rows].join("\n");
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.setAttribute("href", url);
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+    link.setAttribute("download", `PMSystem_Steps_${fileTag}_${timestamp}.csv`.replace(/[\\/:*?"<>|]/g, '_'));
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
 
   // Export filtered search results to CSV (Local Client Export)
   const exportToCsv = () => {
@@ -217,22 +297,25 @@ export default function PcbSearch({ lines, stations, channels = [], onFilterChan
   // Export full filtered dataset directly from PostgreSQL backend (Unlimited with warning for > 3000 rows)
   const handleServerExportCsv = async () => {
     setIsExportingServer(true);
-    const lineId = selectedLine ? parseInt(selectedLine) : null;
-    const stationId = selectedStation ? parseInt(selectedStation) : null;
     const formattedStart = startDate ? new Date(startDate).toISOString() : null;
     const formattedEnd = endDate ? new Date(endDate).toISOString() : null;
 
     try {
       // 1. Get total record count for current filter
-      const count = await ProductionApi.getExportCount(lineId, stationId, searchPid, searchError, resultFilter, formattedStart, formattedEnd);
+      const count = await ProductionApi.getExportCount(
+        null, null, searchPid, searchFid, searchError, resultFilter,
+        formattedStart, formattedEnd, selectedLines, selectedStations, selectedChannels
+      );
       
       // 2. Warn if large dataset (> 3000 rows)
       if (count > 3000) {
         setExportWarningModal({
           count,
-          lineId,
-          stationId,
+          lineIds: selectedLines,
+          stationIds: selectedStations,
+          channelIds: selectedChannels,
           searchPid,
+          searchFid,
           searchError,
           resultFilter,
           startDate: formattedStart,
@@ -240,7 +323,10 @@ export default function PcbSearch({ lines, stations, channels = [], onFilterChan
         });
       } else {
         // Download all matching rows directly
-        await ProductionApi.downloadExportCsv(null, lineId, stationId, searchPid, searchError, resultFilter, formattedStart, formattedEnd);
+        await ProductionApi.downloadExportCsv(
+          null, null, null, searchPid, searchFid, searchError, resultFilter,
+          formattedStart, formattedEnd, selectedLines, selectedStations, selectedChannels
+        );
       }
     } catch (err) {
       console.error('Lỗi xuất CSV từ server:', err);
@@ -251,11 +337,14 @@ export default function PcbSearch({ lines, stations, channels = [], onFilterChan
 
   const confirmDownloadAll = async () => {
     if (!exportWarningModal) return;
-    const { lineId, stationId, searchPid, searchError, resultFilter, startDate: start, endDate: end } = exportWarningModal;
+    const { lineIds, stationIds, channelIds, searchPid, searchFid, searchError, resultFilter, startDate: start, endDate: end } = exportWarningModal;
     setExportWarningModal(null);
     setIsExportingServer(true);
     try {
-      await ProductionApi.downloadExportCsv(null, lineId, stationId, searchPid, searchError, resultFilter, start, end);
+      await ProductionApi.downloadExportCsv(
+        null, null, null, searchPid, searchFid, searchError, resultFilter,
+        start, end, lineIds, stationIds, channelIds
+      );
     } catch (err) {
       console.error('Lỗi xuất dữ liệu lớn CSV:', err);
     } finally {
@@ -270,43 +359,50 @@ export default function PcbSearch({ lines, stations, channels = [], onFilterChan
     <div className="space-y-6 w-full animate-in fade-in duration-300">
       
       {/* FILTER & SEARCH CONTROL BAR */}
-      <div className="glass-panel p-6 w-full space-y-4">
-        <div className="flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-4">
+      <div className="glass-panel relative z-20 p-6 w-full space-y-4">
+        <div className="flex flex-col gap-4">
           
-          {/* PID Barcode Search Input & Search Button */}
-          <div className="flex items-center gap-2 flex-1 min-w-[320px]">
-            <div className="relative flex-1">
-              <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+          {/* PID Barcode Search Input & Search Button: own full-width row so PID stays readable */}
+          <div className="flex flex-col md:flex-row md:items-center gap-2 w-full">
+            <div className="relative md:flex-[2] min-w-0">
+              <Search className="w-5 h-5 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-600" />
               <input
                 type="text"
-                placeholder="Nhập mã vạch PCB (PID Barcode)... (Nhấn Enter hoặc bấm Tìm kiếm)"
+                placeholder="Nhập PID (mã vạch PCB), nhấn Enter để tìm..."
+                title="Nhập mã vạch PCB (PID Barcode), nhấn Enter hoặc bấm Tìm kiếm"
                 value={searchPid}
                 onChange={(e) => setSearchPid(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && handleManualSearch()}
-                className="w-full bg-slate-950/90 border border-slate-700/80 rounded-xl pl-10 pr-8 py-2.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 font-mono shadow-inner"
+                className="w-full bg-slate-50/90 border border-slate-300 rounded-xl pl-11 pr-9 py-3 text-sm text-slate-900 placeholder-slate-500 focus:outline-none focus:border-blue-500 font-mono shadow-inner"
               />
               {searchPid && (
                 <button 
                   onClick={() => setSearchPid('')}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-white"
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-900"
                 >
                   <X className="w-4 h-4" />
                 </button>
               )}
             </div>
 
-            <div className="relative flex-1">
-              <AlertTriangle className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-rose-400" />
+            <div className="relative md:flex-1 min-w-0">
+              <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-violet-700" />
+              <input type="text" placeholder="Nhập FID..." value={searchFid} onChange={(e) => setSearchFid(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleManualSearch()} className="w-full bg-slate-50/90 border border-slate-300 rounded-xl pl-10 pr-9 py-3 text-sm text-slate-900 placeholder-slate-500 focus:outline-none focus:border-violet-500 font-mono shadow-inner" />
+              {searchFid && <button onClick={() => setSearchFid('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-900"><X className="w-4 h-4" /></button>}
+            </div>
+
+            <div className="relative md:flex-1 min-w-0">
+              <AlertTriangle className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-rose-700" />
               <input
                 type="text"
                 placeholder="Tên hoặc mã lỗi (ví dụ READ_FID)..."
                 value={searchError}
                 onChange={(e) => setSearchError(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && handleManualSearch()}
-                className="w-full bg-slate-950/90 border border-slate-700/80 rounded-xl pl-10 pr-8 py-2.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-rose-500 font-mono shadow-inner"
+                className="w-full bg-slate-50/90 border border-slate-300 rounded-xl pl-10 pr-9 py-3 text-sm text-slate-900 placeholder-slate-500 focus:outline-none focus:border-rose-500 font-mono shadow-inner"
               />
               {searchError && (
-                <button onClick={() => setSearchError('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-white">
+                <button onClick={() => setSearchError('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-900">
                   <X className="w-4 h-4" />
                 </button>
               )}
@@ -316,46 +412,43 @@ export default function PcbSearch({ lines, stations, channels = [], onFilterChan
             <button
               onClick={handleManualSearch}
               disabled={isSearching}
-              className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white text-xs font-bold flex items-center gap-2 transition-all shadow-lg shadow-blue-600/30 font-sans disabled:opacity-50 whitespace-nowrap active:scale-95"
+              className="px-6 py-3 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white text-sm font-bold justify-center flex items-center gap-2 transition-all shadow-lg shadow-blue-600/30 font-sans disabled:opacity-50 whitespace-nowrap active:scale-95"
               title="Bấm để kích hoạt tìm kiếm PCB trong cơ sở dữ liệu"
             >
-              {isSearching ? <RefreshCw className="w-4 h-4 animate-spin text-white" /> : <Search className="w-4 h-4 text-white" />}
+              {isSearching ? <RefreshCw className="w-4 h-4 animate-spin text-slate-900" /> : <Search className="w-4 h-4 text-slate-900" />}
               <span>Tìm kiếm</span>
             </button>
           </div>
 
           <div className="flex flex-wrap items-center gap-3">
             
-            {/* Line Filter */}
-            <select
-              value={selectedLine}
+            <MultiCheckboxSelect
+              label="Dây chuyền"
+              options={[...lines].sort((a, b) => (a.name || '').localeCompare(b.name || '', undefined, { numeric: true, sensitivity: 'base' })).map(line => ({ id: line.id, label: line.name }))}
+              selectedIds={selectedLines}
               onChange={handleLineChange}
-              className="bg-slate-950/90 border border-slate-700/80 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-blue-500 font-sans"
-            >
-              <option value="">Tất cả Dây Chuyền (Lines)</option>
-              {[...lines].sort((a, b) => (a.name || '').localeCompare(b.name || '', undefined, { numeric: true, sensitivity: 'base' })).map(l => (
-                <option key={l.id} value={l.id}>{l.name}</option>
-              ))}
-            </select>
+            />
 
-            {/* Station Filter */}
-            <select
-              value={selectedStation}
+            <MultiCheckboxSelect
+              label="Trạm"
+              options={filteredStations.map(station => ({ id: station.id, label: `${station.name} (${station.lineName || ''})` }))}
+              selectedIds={selectedStations}
               onChange={handleStationChange}
-              className="bg-slate-950/90 border border-slate-700/80 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-blue-500 font-sans"
-            >
-              <option value="">Tất cả Trạm (Stations)</option>
-              {filteredStations.map(s => (
-                <option key={s.id} value={s.id}>{s.name} ({s.lineName})</option>
-              ))}
-            </select>
+            />
+
+            <MultiCheckboxSelect
+              label="Channel"
+              options={filteredChannels.map(channel => ({ id: channel.id, label: channel.name || `Channel #${channel.id}` }))}
+              selectedIds={selectedChannels}
+              onChange={setSelectedChannels}
+            />
 
             {/* Result Filter Toggle Buttons */}
-            <div className="flex items-center bg-slate-950/90 p-1 rounded-xl border border-slate-800">
+            <div className="flex items-center bg-slate-50/90 p-1 rounded-xl border border-slate-200">
               <button
                 onClick={() => setResultFilter('ALL')}
                 className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all font-sans ${
-                  resultFilter === 'ALL' ? 'bg-slate-800 text-white' : 'text-slate-400 hover:text-white'
+                  resultFilter === 'ALL' ? 'bg-slate-200 text-slate-900' : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
                 Tất cả
@@ -363,7 +456,7 @@ export default function PcbSearch({ lines, stations, channels = [], onFilterChan
               <button
                 onClick={() => setResultFilter('OK')}
                 className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all font-sans ${
-                  resultFilter === 'OK' ? 'bg-emerald-600/30 text-emerald-300 border border-emerald-500/40' : 'text-slate-400 hover:text-emerald-400'
+                  resultFilter === 'OK' ? 'bg-emerald-600/30 text-emerald-700 border border-emerald-500/40' : 'text-slate-600 hover:text-emerald-700'
                 }`}
               >
                 Chỉ OK
@@ -371,7 +464,7 @@ export default function PcbSearch({ lines, stations, channels = [], onFilterChan
               <button
                 onClick={() => setResultFilter('NG')}
                 className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all font-sans ${
-                  resultFilter === 'NG' ? 'bg-rose-600/30 text-rose-300 border border-rose-500/40' : 'text-slate-400 hover:text-rose-400'
+                  resultFilter === 'NG' ? 'bg-rose-600/30 text-rose-700 border border-rose-500/40' : 'text-slate-600 hover:text-rose-700'
                 }`}
               >
                 Chỉ NG
@@ -383,29 +476,39 @@ export default function PcbSearch({ lines, stations, channels = [], onFilterChan
               <button
                 onClick={exportToCsv}
                 disabled={searchResults.length === 0}
-                className="px-3.5 py-2.5 rounded-xl bg-emerald-950/60 hover:bg-emerald-900/80 text-emerald-300 border border-emerald-700/60 text-xs font-semibold flex items-center gap-2 transition-all disabled:opacity-50 disabled:cursor-not-allowed font-sans shadow-sm"
+                className="px-3.5 py-2.5 rounded-xl bg-emerald-50/60 hover:bg-emerald-100/80 text-emerald-700 border border-emerald-700/60 text-xs font-semibold flex items-center gap-2 transition-all disabled:opacity-50 disabled:cursor-not-allowed font-sans shadow-sm"
                 title="Xuất nhanh dữ liệu đang hiển thị ra file CSV"
               >
-                <FileSpreadsheet className="w-4 h-4 text-emerald-400" />
+                <FileSpreadsheet className="w-4 h-4 text-emerald-700" />
                 Xuất CSV ({searchResults.length})
+              </button>
+
+              <button
+                onClick={() => downloadStepsCsv(searchResults, `${searchResults.length}PCB`)}
+                disabled={searchResults.length === 0}
+                className="px-3.5 py-2.5 rounded-xl bg-violet-50/60 hover:bg-violet-100/80 text-violet-700 border border-violet-700/60 text-xs font-semibold flex items-center gap-2 transition-all disabled:opacity-50 disabled:cursor-not-allowed font-sans shadow-sm"
+                title="Tải giá trị đo và spec của từng step của các PCB đang hiển thị (mỗi step 1 dòng)"
+              >
+                <Download className="w-4 h-4 text-violet-700" />
+                Tải Steps ({searchResults.length})
               </button>
 
               <button
                 onClick={handleServerExportCsv}
                 disabled={isExportingServer}
-                className="px-3.5 py-2.5 rounded-xl bg-blue-950/60 hover:bg-blue-900/80 text-blue-300 border border-blue-700/60 text-xs font-semibold flex items-center gap-2 transition-all disabled:opacity-50 disabled:cursor-not-allowed font-sans shadow-sm"
+                className="px-3.5 py-2.5 rounded-xl bg-blue-50/60 hover:bg-blue-100/80 text-blue-700 border border-blue-700/60 text-xs font-semibold flex items-center gap-2 transition-all disabled:opacity-50 disabled:cursor-not-allowed font-sans shadow-sm"
                 title="Tải file báo cáo CSV đầy đủ từ Server PostgreSQL"
               >
-                <Download className="w-4 h-4 text-blue-400" />
+                <Download className="w-4 h-4 text-blue-700" />
                 {isExportingServer ? 'Đang xuất...' : 'Tải CSV Server'}
               </button>
             </div>
 
             {/* Reset Filters */}
-            {(selectedLine || selectedStation || resultFilter !== 'ALL' || searchPid || searchError || startDate || endDate) && (
+            {(selectedLines.length > 0 || selectedStations.length > 0 || selectedChannels.length > 0 || resultFilter !== 'ALL' || searchPid || searchFid || searchError || startDate || endDate) && (
               <button
                 onClick={resetFilters}
-                className="p-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold flex items-center gap-1 transition-colors"
+                className="p-2.5 rounded-xl bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs font-semibold flex items-center gap-1 transition-colors"
                 title="Reset tất cả bộ lọc"
               >
                 <RefreshCw className="w-4 h-4" />
@@ -415,21 +518,21 @@ export default function PcbSearch({ lines, stations, channels = [], onFilterChan
         </div>
 
         {/* DATE & TIME RANGE FILTER ROW WITH POPUP PICKER */}
-        <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-slate-800/80">
+        <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-slate-200">
           <div className="flex flex-wrap items-center gap-3">
-            <div className="flex items-center gap-1.5 text-xs text-slate-400 font-sans font-medium">
-              <Calendar className="w-4 h-4 text-blue-400" />
+            <div className="flex items-center gap-1.5 text-xs text-slate-600 font-sans font-medium">
+              <Calendar className="w-4 h-4 text-blue-700" />
               <span>Khoảng thời gian:</span>
             </div>
 
             {/* Date and time are separate so operators can type the hour directly. */}
-            <div className="flex items-center gap-2 bg-slate-950/90 border border-slate-700/80 rounded-xl px-3 py-1.5 text-xs text-white">
-              <span className="text-slate-400 text-[11px] font-sans">Từ:</span>
+            <div className="flex items-center gap-2 bg-slate-50/90 border border-slate-300 rounded-xl px-3 py-1.5 text-xs text-slate-900">
+              <span className="text-slate-600 text-[11px] font-sans">Từ:</span>
               <input
                 type="date"
                 value={startDate.slice(0, 10)}
                 onChange={(e) => setStartDate(e.target.value ? `${e.target.value}T${startDate.slice(11, 16) || '00:00'}` : '')}
-                className="bg-transparent text-xs text-white focus:outline-none font-mono [color-scheme:dark]"
+                className="bg-transparent text-xs text-slate-900 focus:outline-none font-mono [color-scheme:light]"
               />
               <div className="flex items-center gap-1 font-mono">
                 <select
@@ -437,7 +540,7 @@ export default function PcbSearch({ lines, stations, channels = [], onFilterChan
                   disabled={!startDate}
                   value={startDate.slice(11, 13)}
                   onChange={(e) => setStartDate(`${startDate.slice(0, 10)}T${e.target.value}:${startDate.slice(14, 16) || '00'}`)}
-                  className="bg-slate-900 rounded px-1 py-0.5 text-xs text-white disabled:opacity-40"
+                  className="bg-slate-100 rounded px-1 py-0.5 text-xs text-slate-900 disabled:opacity-40"
                 >
                   {Array.from({ length: 24 }, (_, hour) => String(hour).padStart(2, '0')).map(hour => <option key={hour} value={hour}>{hour}</option>)}
                 </select>
@@ -447,20 +550,20 @@ export default function PcbSearch({ lines, stations, channels = [], onFilterChan
                   disabled={!startDate}
                   value={startDate.slice(14, 16)}
                   onChange={(e) => setStartDate(`${startDate.slice(0, 10)}T${startDate.slice(11, 13) || '00'}:${e.target.value}`)}
-                  className="bg-slate-900 rounded px-1 py-0.5 text-xs text-white disabled:opacity-40"
+                  className="bg-slate-100 rounded px-1 py-0.5 text-xs text-slate-900 disabled:opacity-40"
                 >
                   {Array.from({ length: 60 }, (_, minute) => String(minute).padStart(2, '0')).map(minute => <option key={minute} value={minute}>{minute}</option>)}
                 </select>
               </div>
             </div>
 
-            <div className="flex items-center gap-2 bg-slate-950/90 border border-slate-700/80 rounded-xl px-3 py-1.5 text-xs text-white">
-              <span className="text-slate-400 text-[11px] font-sans">Đến:</span>
+            <div className="flex items-center gap-2 bg-slate-50/90 border border-slate-300 rounded-xl px-3 py-1.5 text-xs text-slate-900">
+              <span className="text-slate-600 text-[11px] font-sans">Đến:</span>
               <input
                 type="date"
                 value={endDate.slice(0, 10)}
                 onChange={(e) => setEndDate(e.target.value ? `${e.target.value}T${endDate.slice(11, 16) || '23:59'}` : '')}
-                className="bg-transparent text-xs text-white focus:outline-none font-mono [color-scheme:dark]"
+                className="bg-transparent text-xs text-slate-900 focus:outline-none font-mono [color-scheme:light]"
               />
               <div className="flex items-center gap-1 font-mono">
                 <select
@@ -468,7 +571,7 @@ export default function PcbSearch({ lines, stations, channels = [], onFilterChan
                   disabled={!endDate}
                   value={endDate.slice(11, 13)}
                   onChange={(e) => setEndDate(`${endDate.slice(0, 10)}T${e.target.value}:${endDate.slice(14, 16) || '59'}`)}
-                  className="bg-slate-900 rounded px-1 py-0.5 text-xs text-white disabled:opacity-40"
+                  className="bg-slate-100 rounded px-1 py-0.5 text-xs text-slate-900 disabled:opacity-40"
                 >
                   {Array.from({ length: 24 }, (_, hour) => String(hour).padStart(2, '0')).map(hour => <option key={hour} value={hour}>{hour}</option>)}
                 </select>
@@ -478,7 +581,7 @@ export default function PcbSearch({ lines, stations, channels = [], onFilterChan
                   disabled={!endDate}
                   value={endDate.slice(14, 16)}
                   onChange={(e) => setEndDate(`${endDate.slice(0, 10)}T${endDate.slice(11, 13) || '23'}:${e.target.value}`)}
-                  className="bg-slate-900 rounded px-1 py-0.5 text-xs text-white disabled:opacity-40"
+                  className="bg-slate-100 rounded px-1 py-0.5 text-xs text-slate-900 disabled:opacity-40"
                 >
                   {Array.from({ length: 60 }, (_, minute) => String(minute).padStart(2, '0')).map(minute => <option key={minute} value={minute}>{minute}</option>)}
                 </select>
@@ -489,21 +592,21 @@ export default function PcbSearch({ lines, stations, channels = [], onFilterChan
             <div className="flex items-center gap-1.5">
               <button
                 onClick={setPresetToday}
-                className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-sans transition-colors"
+                className="px-2.5 py-1.5 rounded-lg bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs font-sans transition-colors"
                 title="Lọc dữ liệu kiểm tra trong ngày hôm nay"
               >
                 Hôm nay
               </button>
               <button
                 onClick={setPresetLast24h}
-                className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-sans transition-colors"
+                className="px-2.5 py-1.5 rounded-lg bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs font-sans transition-colors"
                 title="Lọc dữ liệu 24 giờ vừa qua"
               >
                 24h qua
               </button>
               <button
                 onClick={setPresetLast7Days}
-                className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-sans transition-colors"
+                className="px-2.5 py-1.5 rounded-lg bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs font-sans transition-colors"
                 title="Lọc dữ liệu 7 ngày vừa qua"
               >
                 7 ngày qua
@@ -511,7 +614,7 @@ export default function PcbSearch({ lines, stations, channels = [], onFilterChan
               {(startDate || endDate) && (
                 <button
                   onClick={() => { setStartDate(''); setEndDate(''); }}
-                  className="px-2.5 py-1.5 rounded-lg bg-rose-950/50 hover:bg-rose-900/60 text-rose-300 border border-rose-800/50 text-xs font-sans transition-colors"
+                  className="px-2.5 py-1.5 rounded-lg bg-rose-50/50 hover:bg-rose-100/60 text-rose-700 border border-rose-800/50 text-xs font-sans transition-colors"
                   title="Xóa bộ lọc ngày giờ"
                 >
                   Xóa ngày giờ
@@ -522,21 +625,21 @@ export default function PcbSearch({ lines, stations, channels = [], onFilterChan
         </div>
 
         {/* Quick Result Summary Badges & Search Duration Counter */}
-        <div className="flex flex-wrap items-center justify-between text-xs font-mono pt-2 border-t border-slate-800/80 gap-3">
+        <div className="flex flex-wrap items-center justify-between text-xs font-mono pt-2 border-t border-slate-200 gap-3">
           <div className="flex items-center gap-4">
-            <span className="text-slate-400 font-sans">
-              Kết quả từ CSDL PostgreSQL: <strong className="text-white font-mono">{searchResults.length}</strong> bản ghi {isSearching && <span className="text-blue-400 animate-pulse font-sans">(Đang truy vấn...)</span>}
+            <span className="text-slate-600 font-sans">
+              Kết quả từ CSDL PostgreSQL: <strong className="text-slate-900 font-mono">{searchResults.length}</strong> bản ghi {isSearching && <span className="text-blue-700 animate-pulse font-sans">(Đang truy vấn...)</span>}
             </span>
-            <span className="text-emerald-400 font-semibold font-sans">● OK: {okCount}</span>
-            <span className="text-rose-400 font-semibold font-sans">● NG: {ngCount}</span>
+            <span className="text-emerald-700 font-semibold font-sans">● OK: {okCount}</span>
+            <span className="text-rose-700 font-semibold font-sans">● NG: {ngCount}</span>
           </div>
 
           {/* Search Timer Badge */}
           {searchExecutionTime !== null && (
-            <div className="flex items-center gap-1.5 px-3 py-1 rounded-xl bg-blue-950/60 border border-blue-800/60 text-blue-300 text-xs font-mono shadow-sm" title="Thời gian xử lý truy vấn dữ liệu từ PostgreSQL Server">
-              <Clock className="w-3.5 h-3.5 text-blue-400" />
-              <span className="font-sans text-slate-400">Thời gian tìm kiếm:</span>
-              <strong className="text-white font-mono">{searchExecutionTime} ms</strong>
+            <div className="flex items-center gap-1.5 px-3 py-1 rounded-xl bg-blue-50/60 border border-blue-800/60 text-blue-700 text-xs font-mono shadow-sm" title="Thời gian xử lý truy vấn dữ liệu từ PostgreSQL Server">
+              <Clock className="w-3.5 h-3.5 text-blue-700" />
+              <span className="font-sans text-slate-600">Thời gian tìm kiếm:</span>
+              <strong className="text-slate-900 font-mono">{searchExecutionTime} ms</strong>
             </div>
           )}
         </div>
@@ -544,12 +647,13 @@ export default function PcbSearch({ lines, stations, channels = [], onFilterChan
 
       {/* RESULTS TABLE */}
       <div className="glass-panel p-6 w-full space-y-4">
-        <div className="overflow-x-auto rounded-xl border border-white/10">
+        <div className="overflow-x-auto rounded-xl border border-slate-200">
           <table className="w-full text-left text-xs">
-            <thead className="bg-slate-950/90 text-slate-400 uppercase font-semibold font-display tracking-wider border-b border-slate-800">
+            <thead className="bg-slate-50/90 text-slate-600 uppercase font-semibold font-display tracking-wider border-b border-slate-200">
               <tr>
                 <th className="p-3.5">Thời gian kiểm tra</th>
                 <th className="p-3.5">Mã PCB (PID Barcode)</th>
+                <th className="p-3.5">FID</th>
                 <th className="p-3.5">Dây chuyền</th>
                 <th className="p-3.5">Trạm / Channel</th>
                 <th className="p-3.5">Jobfile</th>
@@ -558,26 +662,27 @@ export default function PcbSearch({ lines, stations, channels = [], onFilterChan
                 <th className="p-3.5 text-right">Chi tiết Test Steps</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-800/60 font-mono">
+            <tbody className="divide-y divide-slate-200 font-mono">
               {searchResults && searchResults.length > 0 ? (
                 searchResults.map((log) => {
                   const isOk = log.result === 'OK' || log.result === 'PASS';
                   const machineIp = log.channelIp || (channels && channels.find(c => c.id === log.channelId)?.ipAddress) || '-';
                   return (
-                    <tr key={log.id} className="hover:bg-slate-800/50 transition-colors">
-                      <td className="p-3.5 text-slate-400 whitespace-nowrap">
+                    <tr key={log.id} className="hover:bg-slate-200/50 transition-colors">
+                      <td className="p-3.5 text-slate-600 whitespace-nowrap">
                         {new Date(log.inspectTime).toLocaleString('vi-VN')}
                       </td>
-                      <td className="p-3.5 text-white font-bold tracking-wide">{log.pid}</td>
-                      <td className="p-3.5 text-slate-300 font-sans">{log.lineName}</td>
-                      <td className="p-3.5 text-slate-300 font-sans">
+                      <td className="p-3.5 text-slate-900 font-bold tracking-wide">{log.pid}</td>
+                      <td className="p-3.5 text-violet-700 font-mono text-xs">{log.fid || '-'}</td>
+                      <td className="p-3.5 text-slate-700 font-sans">{log.lineName}</td>
+                      <td className="p-3.5 text-slate-700 font-sans">
                         {log.stationName} <span className="text-slate-500 font-mono text-[11px]">({log.channelName})</span>
                       </td>
-                      <td className="p-3.5 text-slate-300 font-mono text-[11px] max-w-[220px] truncate" title={log.jobFile || ''}>
+                      <td className="p-3.5 text-slate-700 font-mono text-[11px] max-w-[220px] truncate" title={log.jobFile || ''}>
                         {log.jobFile || '-'}
                       </td>
-                      <td className="p-3.5 text-slate-300 font-mono text-xs">
-                        <span className="px-2 py-1 rounded bg-slate-900 border border-slate-800 text-blue-300">{machineIp}</span>
+                      <td className="p-3.5 text-slate-700 font-mono text-xs">
+                        <span className="px-2 py-1 rounded bg-slate-100 border border-slate-200 text-blue-700">{machineIp}</span>
                       </td>
                       <td className="p-3.5 text-center">
                         {isOk ? (
@@ -589,7 +694,7 @@ export default function PcbSearch({ lines, stations, channels = [], onFilterChan
                       <td className="p-3.5 text-right">
                         <button
                           onClick={() => setActiveModalItem(log)}
-                          className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-blue-400 hover:text-blue-300 text-xs font-sans transition-colors inline-flex items-center gap-1.5 font-medium"
+                          className="px-3 py-1.5 rounded-lg bg-slate-200 hover:bg-slate-300 text-blue-700 hover:text-blue-700 text-xs font-sans transition-colors inline-flex items-center gap-1.5 font-medium"
                         >
                           <Eye className="w-3.5 h-3.5" /> Xem Steps
                         </button>
@@ -599,9 +704,9 @@ export default function PcbSearch({ lines, stations, channels = [], onFilterChan
                 })
               ) : (
                 <tr>
-                  <td colSpan={8} className="p-12 text-center text-slate-500 font-sans space-y-2">
+                  <td colSpan={9} className="p-12 text-center text-slate-500 font-sans space-y-2">
                     <Search className="w-8 h-8 mx-auto text-slate-600 mb-2" />
-                    <p className="text-sm font-semibold text-slate-400">Không tìm thấy bản ghi PCB phù hợp</p>
+                    <p className="text-sm font-semibold text-slate-600">Không tìm thấy bản ghi PCB phù hợp</p>
                     <p className="text-xs text-slate-600">Thử thay đổi từ khóa PID hoặc điều chỉnh lại các bộ lọc Dây chuyền / Trạm kiểm tra.</p>
                   </td>
                 </tr>
@@ -613,17 +718,17 @@ export default function PcbSearch({ lines, stations, channels = [], onFilterChan
 
       {/* INSPECTION TEST STEPS DETAILED MODAL */}
       {activeModalItem && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-200">
-          <div className="glass-panel max-w-3xl w-full p-6 space-y-5 border border-white/20 shadow-2xl">
-            <div className="flex justify-between items-start border-b border-slate-800 pb-4">
+        <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-200">
+          <div className="glass-panel max-w-3xl w-full p-6 space-y-5 border border-slate-200 shadow-2xl">
+            <div className="flex justify-between items-start border-b border-slate-200 pb-4">
               <div>
-                <h3 className="text-xl font-bold text-white flex items-center gap-2 font-display">
-                  Chi Tiết Bước Kiểm Tra PCB: <span className="text-blue-400 font-mono">{activeModalItem.pid}</span>
+                <h3 className="text-xl font-bold text-slate-900 flex items-center gap-2 font-display">
+                  Chi Tiết Bước Kiểm Tra PCB: <span className="text-blue-700 font-mono">{activeModalItem.pid}</span>
                 </h3>
-                <p className="text-xs text-slate-400 mt-1 font-sans">
+                <p className="text-xs text-slate-600 mt-1 font-sans">
                   Trạm: {activeModalItem.stationName} ({activeModalItem.lineName}) - Channel: {activeModalItem.channelName}
                   {(activeModalItem.channelIp || (channels && channels.find(c => c.id === activeModalItem.channelId)?.ipAddress)) && (
-                    <span className="ml-2 px-1.5 py-0.5 rounded bg-blue-950 text-blue-300 font-mono text-[11px] border border-blue-800/50">
+                    <span className="ml-2 px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 font-mono text-[11px] border border-blue-800/50">
                       IP: {activeModalItem.channelIp || channels.find(c => c.id === activeModalItem.channelId)?.ipAddress}
                     </span>
                   )}
@@ -631,28 +736,28 @@ export default function PcbSearch({ lines, stations, channels = [], onFilterChan
               </div>
               <button
                 onClick={() => setActiveModalItem(null)}
-                className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+                className="p-1 rounded-lg text-slate-600 hover:text-slate-900 hover:bg-slate-200 transition-colors"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs font-sans">
-              <div className="p-3 rounded-xl bg-slate-950/80 border border-slate-800">
-                <span className="text-slate-400 block mb-0.5">Kết quả Tổng thể:</span>
-                <span className={activeModalItem.result === 'OK' || activeModalItem.result === 'PASS' ? 'text-emerald-400 font-bold text-sm' : 'text-rose-400 font-bold text-sm'}>
+              <div className="p-3 rounded-xl bg-slate-50/80 border border-slate-200">
+                <span className="text-slate-600 block mb-0.5">Kết quả Tổng thể:</span>
+                <span className={activeModalItem.result === 'OK' || activeModalItem.result === 'PASS' ? 'text-emerald-700 font-bold text-sm' : 'text-rose-700 font-bold text-sm'}>
                   {activeModalItem.result} {activeModalItem.errorCode ? `(${activeModalItem.errorCode})` : ''}
                 </span>
               </div>
-              <div className="p-3 rounded-xl bg-slate-950/80 border border-slate-800">
-                <span className="text-slate-400 block mb-0.5">Thời gian kiểm tra:</span>
-                <span className="text-slate-200 font-mono font-medium text-xs">
+              <div className="p-3 rounded-xl bg-slate-50/80 border border-slate-200">
+                <span className="text-slate-600 block mb-0.5">Thời gian kiểm tra:</span>
+                <span className="text-slate-800 font-mono font-medium text-xs">
                   {new Date(activeModalItem.inspectTime).toLocaleString('vi-VN')}
                 </span>
               </div>
-              <div className="p-3 rounded-xl bg-slate-950/80 border border-slate-800">
-                <span className="text-slate-400 block mb-0.5">Jobfile:</span>
-                <span className="text-slate-200 font-mono font-medium text-xs break-all">
+              <div className="p-3 rounded-xl bg-slate-50/80 border border-slate-200">
+                <span className="text-slate-600 block mb-0.5">Jobfile:</span>
+                <span className="text-slate-800 font-mono font-medium text-xs break-all">
                   {activeModalItem.jobFile || '-'}
                 </span>
               </div>
@@ -673,14 +778,25 @@ export default function PcbSearch({ lines, stations, channels = [], onFilterChan
 
               return (
                 <div className="space-y-3">
-                  <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wider flex items-center gap-1.5 font-display">
-                    <ShieldCheck className="w-4 h-4 text-blue-400" />
-                    Danh Sách Tham Số Đo Đạc ({modalSteps.length} Steps)
-                  </h4>
-                  <div className="max-h-64 overflow-y-auto border border-slate-800/80 rounded-xl bg-slate-950/80">
+                  <div className="flex items-center justify-between gap-2">
+                    <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider flex items-center gap-1.5 font-display">
+                      <ShieldCheck className="w-4 h-4 text-blue-700" />
+                      Danh Sách Tham Số Đo Đạc ({modalSteps.length} Steps)
+                    </h4>
+                    {activeModalItem.steps && activeModalItem.steps.length > 0 && (
+                      <button
+                        onClick={() => downloadStepsCsv([activeModalItem], activeModalItem.pid || 'PCB')}
+                        className="px-2.5 py-1.5 rounded-lg bg-violet-50/60 hover:bg-violet-100/80 text-violet-700 border border-violet-700/60 text-[11px] font-semibold flex items-center gap-1.5 transition-colors font-sans"
+                        title="Tải giá trị đo và spec của các step của PCB này"
+                      >
+                        <Download className="w-3.5 h-3.5" /> Tải Steps
+                      </button>
+                    )}
+                  </div>
+                  <div className="max-h-64 overflow-y-auto border border-slate-200 rounded-xl bg-slate-50/80">
                     {modalSteps.length > 0 ? (
                       <table className="w-full text-left text-xs">
-                        <thead className="bg-slate-900/90 text-slate-400 uppercase font-semibold text-[11px] border-b border-slate-800 sticky top-0 font-display">
+                        <thead className="bg-slate-100/90 text-slate-600 uppercase font-semibold text-[11px] border-b border-slate-200 sticky top-0 font-display">
                           <tr>
                             <th className="p-2.5 text-center w-10">#</th>
                             <th className="p-2.5">Tên bước / Linh kiện</th>
@@ -690,7 +806,7 @@ export default function PcbSearch({ lines, stations, channels = [], onFilterChan
                             <th className="p-2.5 text-center">Kết quả</th>
                           </tr>
                         </thead>
-                        <tbody className="divide-y divide-slate-800/60 font-mono">
+                        <tbody className="divide-y divide-slate-200 font-mono">
                           {modalSteps.map((step, idx) => {
                             const isStepNg = step.result !== 'OK' && step.result !== 'PASS';
                             const name = step.stepName ?? step.step_name ?? '';
@@ -705,19 +821,19 @@ export default function PcbSearch({ lines, stations, channels = [], onFilterChan
                             const displayVal = (rawVal !== null && rawVal !== undefined && String(rawVal).trim() !== '' && String(rawVal).trim() !== '-') ? rawVal : '-';
 
                             return (
-                              <tr key={idx} className={`transition-colors ${isStepNg ? 'bg-rose-950/40 hover:bg-rose-900/50' : 'hover:bg-slate-900/50'}`}>
+                              <tr key={idx} className={`transition-colors ${isStepNg ? 'bg-rose-50/40 hover:bg-rose-100/50' : 'hover:bg-slate-100/50'}`}>
                                 <td className="p-2.5 text-center text-slate-500">{step.stepNumber || step.step_number || idx + 1}</td>
-                                <td className={`p-2.5 font-sans font-medium ${isStepNg ? 'text-rose-300 font-semibold flex items-center gap-1.5' : 'text-slate-200'}`}>
+                                <td className={`p-2.5 font-sans font-medium ${isStepNg ? 'text-rose-700 font-semibold flex items-center gap-1.5' : 'text-slate-800'}`}>
                                   {isStepNg && <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-pulse"></span>}
                                   {name}
                                 </td>
-                                <td className="p-2.5 text-slate-400 font-sans text-[11px]">
-                                  <span className="px-1.5 py-0.5 rounded bg-slate-800 text-slate-300">{displayStepType}</span>
+                                <td className="p-2.5 text-slate-600 font-sans text-[11px]">
+                                  <span className="px-1.5 py-0.5 rounded bg-slate-200 text-slate-700">{displayStepType}</span>
                                 </td>
-                                <td className={`p-2.5 text-right font-bold ${isStepNg ? 'text-rose-400' : 'text-blue-400'}`}>
+                                <td className={`p-2.5 text-right font-bold ${isStepNg ? 'text-rose-700' : 'text-blue-700'}`}>
                                   {displayVal}
                                 </td>
-                                <td className="p-2.5 text-center text-slate-400 text-[11px]">
+                                <td className="p-2.5 text-center text-slate-600 text-[11px]">
                                   {hasSpec ? `${minVal ?? '-'} ~ ${maxVal ?? '-'}` : '-'}
                                 </td>
                                 <td className="p-2.5 text-center">
@@ -731,9 +847,9 @@ export default function PcbSearch({ lines, stations, channels = [], onFilterChan
                         </tbody>
                       </table>
                     ) : (
-                      <div className="p-6 text-center text-slate-400 text-xs space-y-1 font-sans">
-                        <p className="text-emerald-400 font-semibold text-sm">Bo mạch kiểm tra ĐẠT (PASS/OK)</p>
-                        <p className="text-xs text-slate-400">Tất cả các bước kiểm tra quy chuẩn đều đạt yêu cầu.</p>
+                      <div className="p-6 text-center text-slate-600 text-xs space-y-1 font-sans">
+                        <p className="text-emerald-700 font-semibold text-sm">Bo mạch kiểm tra ĐẠT (PASS/OK)</p>
+                        <p className="text-xs text-slate-600">Tất cả các bước kiểm tra quy chuẩn đều đạt yêu cầu.</p>
                       </div>
                     )}
                   </div>
@@ -755,44 +871,44 @@ export default function PcbSearch({ lines, stations, channels = [], onFilterChan
 
       {/* Large Data Warning Modal */}
       {exportWarningModal && (
-        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-50 flex items-center justify-center p-4">
-          <div className="bg-slate-900 border border-amber-500/40 rounded-2xl p-6 max-w-md w-full shadow-2xl space-y-4 animate-in zoom-in-95 duration-200">
-            <div className="flex items-center gap-3 text-amber-400">
+        <div className="fixed inset-0 bg-slate-50/80 backdrop-blur-md z-50 flex items-center justify-center p-4">
+          <div className="bg-slate-100 border border-amber-500/40 rounded-2xl p-6 max-w-md w-full shadow-2xl space-y-4 animate-in zoom-in-95 duration-200">
+            <div className="flex items-center gap-3 text-amber-700">
               <div className="p-3 bg-amber-500/10 rounded-xl border border-amber-500/20">
                 <AlertTriangle className="w-6 h-6" />
               </div>
               <div>
-                <h3 className="text-base font-bold text-white">Cảnh Báo Dữ Liệu Lớn</h3>
-                <p className="text-xs text-amber-400/90 font-mono">
+                <h3 className="text-base font-bold text-slate-900">Cảnh Báo Dữ Liệu Lớn</h3>
+                <p className="text-xs text-amber-700/90 font-mono">
                   Phát hiện {exportWarningModal.count.toLocaleString('vi-VN')} bản ghi
                 </p>
               </div>
             </div>
 
-            <p className="text-xs text-slate-300 leading-relaxed font-sans">
-              Bộ lọc tìm kiếm hiện tại chứa tổng cộng <strong className="text-amber-300 font-mono">{exportWarningModal.count.toLocaleString('vi-VN')}</strong> dòng dữ liệu kiểm tra sản xuất. 
+            <p className="text-xs text-slate-700 leading-relaxed font-sans">
+              Bộ lọc tìm kiếm hiện tại chứa tổng cộng <strong className="text-amber-700 font-mono">{exportWarningModal.count.toLocaleString('vi-VN')}</strong> dòng dữ liệu kiểm tra sản xuất. 
               Việc tải toàn bộ dữ liệu có thể tốn vài giây xử lý và khởi tạo tập tin CSV lớn.
             </p>
 
-            <div className="bg-slate-950/60 p-3 rounded-xl border border-white/5 text-[11px] text-slate-400 space-y-1.5 font-mono">
+            <div className="bg-slate-50/60 p-3 rounded-xl border border-slate-200 text-[11px] text-slate-600 space-y-1.5 font-mono">
               <div className="flex justify-between">
                 <span>Tổng số bản ghi:</span>
-                <span className="text-white font-semibold">{exportWarningModal.count.toLocaleString('vi-VN')} dòng</span>
+                <span className="text-slate-900 font-semibold">{exportWarningModal.count.toLocaleString('vi-VN')} dòng</span>
               </div>
               <div className="flex justify-between">
                 <span>Kích thước file ước tính:</span>
-                <span className="text-emerald-400 font-semibold">~{(exportWarningModal.count * 0.22 / 1024).toFixed(1)} MB</span>
+                <span className="text-emerald-700 font-semibold">~{(exportWarningModal.count * 0.22 / 1024).toFixed(1)} MB</span>
               </div>
               <div className="flex justify-between">
                 <span>Giới hạn tải xuống:</span>
-                <span className="text-amber-300 font-semibold">Không giới hạn (Tải hết)</span>
+                <span className="text-amber-700 font-semibold">Không giới hạn (Tải hết)</span>
               </div>
             </div>
 
             <div className="flex items-center justify-end gap-3 pt-2">
               <button
                 onClick={() => setExportWarningModal(null)}
-                className="px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold transition-colors font-sans"
+                className="px-4 py-2.5 rounded-xl bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs font-semibold transition-colors font-sans"
               >
                 Hủy bỏ
               </button>

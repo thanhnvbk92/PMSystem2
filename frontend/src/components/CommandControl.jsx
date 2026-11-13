@@ -824,17 +824,17 @@ export default function CommandControl({ lines = [], stations = [], channels = [
     const execStatus = executionStatuses[node.id];
 
     let IconComponent = Globe;
-    let badgeColor = 'bg-blue-500/10 text-blue-400 border-blue-500/20';
+    let badgeColor = 'bg-blue-500/10 text-blue-700 border-blue-500/20';
 
     if (node.type === 'line') {
       IconComponent = Layers;
-      badgeColor = 'bg-purple-500/10 text-purple-400 border-purple-500/20';
+      badgeColor = 'bg-purple-500/10 text-purple-700 border-purple-500/20';
     } else if (node.type === 'station') {
       IconComponent = Server;
-      badgeColor = 'bg-amber-500/10 text-amber-400 border-amber-500/20';
+      badgeColor = 'bg-amber-500/10 text-amber-700 border-amber-500/20';
     } else if (node.type === 'channel') {
       IconComponent = Cpu;
-      badgeColor = 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20';
+      badgeColor = 'bg-emerald-500/10 text-emerald-700 border-emerald-500/20';
     }
 
     return (
@@ -847,10 +847,10 @@ export default function CommandControl({ lines = [], stations = [], channels = [
           style={{ paddingLeft: `${depth * 16 + 8}px` }}
           className={`flex items-center justify-between py-2 px-2.5 my-0.5 rounded-lg text-xs cursor-pointer transition-all ${
             checkStatus === 'checked'
-              ? 'bg-amber-500/15 border border-amber-500/40 text-white font-medium shadow-sm'
+              ? 'bg-amber-500/15 border border-amber-500/40 text-slate-900 font-medium shadow-sm'
               : checkStatus === 'indeterminate'
-              ? 'bg-amber-500/5 border border-amber-500/20 text-amber-200'
-              : 'hover:bg-slate-800/60 text-slate-300 hover:text-slate-100 border border-transparent'
+              ? 'bg-amber-500/5 border border-amber-500/20 text-amber-700'
+              : 'hover:bg-slate-200/60 text-slate-700 hover:text-slate-900 border border-transparent'
           }`}
         >
           <div className="flex items-center gap-2 min-w-0 flex-1">
@@ -858,7 +858,7 @@ export default function CommandControl({ lines = [], stations = [], channels = [
               <button
                 type="button"
                 onClick={(e) => toggleExpandNode(node.id, e)}
-                className="w-4 h-4 rounded hover:bg-white/10 flex items-center justify-center text-slate-400 hover:text-white transition-colors flex-shrink-0"
+                className="w-4 h-4 rounded hover:bg-slate-100 flex items-center justify-center text-slate-600 hover:text-slate-900 transition-colors flex-shrink-0"
               >
                 {isExpanded ? (
                   <ChevronDown className="w-3.5 h-3.5" />
@@ -878,20 +878,20 @@ export default function CommandControl({ lines = [], stations = [], channels = [
               title={checkStatus === 'checked' ? 'Bỏ chọn' : 'Chọn nút này'}
             >
               {checkStatus === 'checked' ? (
-                <CheckSquare className="w-4 h-4 text-amber-400 flex-shrink-0" />
+                <CheckSquare className="w-4 h-4 text-amber-700 flex-shrink-0" />
               ) : checkStatus === 'indeterminate' ? (
-                <MinusSquare className="w-4 h-4 text-amber-400/80 flex-shrink-0" />
+                <MinusSquare className="w-4 h-4 text-amber-700/80 flex-shrink-0" />
               ) : (
-                <Square className="w-4 h-4 text-slate-500 hover:text-slate-300 flex-shrink-0" />
+                <Square className="w-4 h-4 text-slate-500 hover:text-slate-700 flex-shrink-0" />
               )}
             </button>
 
             {/* Icon & Online Status Indicator for Channel */}
             <div className="relative flex items-center flex-shrink-0">
-              <IconComponent className={`w-4 h-4 ${selected ? 'text-amber-400' : 'text-slate-400'}`} />
+              <IconComponent className={`w-4 h-4 ${selected ? 'text-amber-700' : 'text-slate-600'}`} />
               {node.type === 'channel' && (
                 <span
-                  className={`absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full border border-slate-900 ${
+                  className={`absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full border border-slate-200 ${
                     node.isOnline
                       ? 'bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.8)] animate-pulse'
                       : 'bg-slate-600'
@@ -916,20 +916,20 @@ export default function CommandControl({ lines = [], stations = [], channels = [
             {execStatus && (
               <>
                 {execStatus.status === 'sending' && (
-                  <span className="text-[10px] bg-amber-500/20 text-amber-300 border border-amber-500/30 px-2 py-0.5 rounded flex items-center gap-1 font-mono animate-pulse">
-                    <RefreshCw className="w-2.5 h-2.5 animate-spin text-amber-400" />
+                  <span className="text-[10px] bg-amber-500/20 text-amber-700 border border-amber-500/30 px-2 py-0.5 rounded flex items-center gap-1 font-mono animate-pulse">
+                    <RefreshCw className="w-2.5 h-2.5 animate-spin text-amber-700" />
                     Đang gửi
                   </span>
                 )}
                 {execStatus.status === 'success' && (
-                  <span className="text-[10px] bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-2 py-0.5 rounded flex items-center gap-1 font-mono" title={execStatus.message}>
-                    <CheckCircle2 className="w-2.5 h-2.5 text-emerald-400" />
+                  <span className="text-[10px] bg-emerald-500/20 text-emerald-700 border border-emerald-500/30 px-2 py-0.5 rounded flex items-center gap-1 font-mono" title={execStatus.message}>
+                    <CheckCircle2 className="w-2.5 h-2.5 text-emerald-700" />
                     Đã nhận ({execStatus.timestamp})
                   </span>
                 )}
                 {execStatus.status === 'error' && (
-                  <span className="text-[10px] bg-rose-500/20 text-rose-300 border border-rose-500/30 px-2 py-0.5 rounded flex items-center gap-1 font-mono" title={execStatus.message}>
-                    <XCircle className="w-2.5 h-2.5 text-rose-400" />
+                  <span className="text-[10px] bg-rose-500/20 text-rose-700 border border-rose-500/30 px-2 py-0.5 rounded flex items-center gap-1 font-mono" title={execStatus.message}>
+                    <XCircle className="w-2.5 h-2.5 text-rose-700" />
                     Thất bại
                   </span>
                 )}
@@ -941,8 +941,8 @@ export default function CommandControl({ lines = [], stations = [], channels = [
               <span
                 className={`text-[9px] font-mono px-1.5 py-0.5 rounded border uppercase ${
                   node.isOnline
-                    ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
-                    : 'bg-slate-800 text-slate-500 border-slate-700'
+                    ? 'bg-emerald-500/10 text-emerald-700 border-emerald-500/20'
+                    : 'bg-slate-200 text-slate-500 border-slate-300'
                 }`}
               >
                 {node.isOnline ? 'Online' : 'Offline'}
@@ -956,12 +956,12 @@ export default function CommandControl({ lines = [], stations = [], channels = [
               </span>
             )}
 
-            {selected && <Check className="w-3.5 h-3.5 text-amber-400" />}
+            {selected && <Check className="w-3.5 h-3.5 text-amber-700" />}
           </div>
         </div>
 
         {hasChildren && isExpanded && (
-          <div className="border-l border-white/5 ml-3">
+          <div className="border-l border-slate-200 ml-3">
             {node.children.map((child) => renderTreeNode(child, depth + 1))}
           </div>
         )}
@@ -976,14 +976,14 @@ export default function CommandControl({ lines = [], stations = [], channels = [
         <div
           className={`fixed bottom-6 right-6 z-50 p-4 rounded-xl shadow-2xl backdrop-blur-xl border flex items-center gap-3 transition-all animate-bounce ${
             notification.type === 'success'
-              ? 'bg-emerald-950/90 border-emerald-500/40 text-emerald-200'
-              : 'bg-rose-950/90 border-rose-500/40 text-rose-200'
+              ? 'bg-emerald-50/90 border-emerald-500/40 text-emerald-700'
+              : 'bg-rose-50/90 border-rose-500/40 text-rose-700'
           }`}
         >
           {notification.type === 'success' ? (
-            <CheckCircle2 className="w-5 h-5 text-emerald-400 flex-shrink-0" />
+            <CheckCircle2 className="w-5 h-5 text-emerald-700 flex-shrink-0" />
           ) : (
-            <XCircle className="w-5 h-5 text-rose-400 flex-shrink-0" />
+            <XCircle className="w-5 h-5 text-rose-700 flex-shrink-0" />
           )}
           <span className="text-sm font-medium">{notification.text}</span>
         </div>
@@ -994,13 +994,13 @@ export default function CommandControl({ lines = [], stations = [], channels = [
         
         {/* Left Column (5 Cols): Scope / Target Selection with Embedded TreeView */}
         <div className="lg:col-span-5 space-y-6">
-          <div className="glass-card p-5 rounded-2xl border border-white/10 relative flex flex-col">
-            <div className="flex items-center justify-between mb-3 border-b border-white/5 pb-2.5">
-              <h2 className="text-sm font-semibold text-slate-200 flex items-center gap-2">
-                <Sliders className="w-4 h-4 text-amber-400" />
+          <div className="glass-card p-5 rounded-2xl border border-slate-200 relative flex flex-col">
+            <div className="flex items-center justify-between mb-3 border-b border-slate-200 pb-2.5">
+              <h2 className="text-sm font-semibold text-slate-800 flex items-center gap-2">
+                <Sliders className="w-4 h-4 text-amber-700" />
                 1. Chọn Phạm Vi Nhận Lệnh (TreeView)
               </h2>
-              <span className="text-[11px] text-slate-400 font-mono">
+              <span className="text-[11px] text-slate-600 font-mono">
                 {targetedChannels.length} / {channels.length} máy đã chọn
               </span>
             </div>
@@ -1008,8 +1008,8 @@ export default function CommandControl({ lines = [], stations = [], channels = [
             {/* Combobox Selectors for Line and Station */}
             <div className="grid grid-cols-2 gap-3 mb-3">
               <div>
-                <label className="block text-xs font-medium text-slate-300 mb-1 flex items-center gap-1.5">
-                  <Layers className="w-3.5 h-3.5 text-purple-400" />
+                <label className="block text-xs font-medium text-slate-700 mb-1 flex items-center gap-1.5">
+                  <Layers className="w-3.5 h-3.5 text-purple-700" />
                   Chọn Line
                 </label>
                 <select
@@ -1027,7 +1027,7 @@ export default function CommandControl({ lines = [], stations = [], channels = [
                       setCheckedNodeIds({ 'root-all': true });
                     }
                   }}
-                  className="w-full bg-slate-900/90 border border-white/10 focus:border-amber-500/80 rounded-xl px-3 py-2 text-xs text-slate-200 focus:outline-none transition-all"
+                  className="w-full bg-slate-100/90 border border-slate-200 focus:border-amber-500/80 rounded-xl px-3 py-2 text-xs text-slate-800 focus:outline-none transition-all"
                 >
                   <option value="">-- Tất cả Line (Broadcast All) --</option>
                   {(lines || []).map((l) => (
@@ -1039,8 +1039,8 @@ export default function CommandControl({ lines = [], stations = [], channels = [
               </div>
 
               <div>
-                <label className="block text-xs font-medium text-slate-300 mb-1 flex items-center gap-1.5">
-                  <Server className="w-3.5 h-3.5 text-amber-400" />
+                <label className="block text-xs font-medium text-slate-700 mb-1 flex items-center gap-1.5">
+                  <Server className="w-3.5 h-3.5 text-amber-700" />
                   Chọn Station
                 </label>
                 <select
@@ -1062,7 +1062,7 @@ export default function CommandControl({ lines = [], stations = [], channels = [
                       setCheckedNodeIds({ 'root-all': true });
                     }
                   }}
-                  className="w-full bg-slate-900/90 border border-white/10 focus:border-amber-500/80 rounded-xl px-3 py-2 text-xs text-slate-200 focus:outline-none transition-all"
+                  className="w-full bg-slate-100/90 border border-slate-200 focus:border-amber-500/80 rounded-xl px-3 py-2 text-xs text-slate-800 focus:outline-none transition-all"
                 >
                   <option value="">-- Tất cả Station --</option>
                   {filteredStations.map((s) => (
@@ -1075,22 +1075,22 @@ export default function CommandControl({ lines = [], stations = [], channels = [
             </div>
 
             {/* Permanent Inline TreeView Container */}
-            <div className="bg-slate-950/80 border border-white/10 rounded-xl p-3 flex flex-col space-y-2">
+            <div className="bg-slate-50/80 border border-slate-200 rounded-xl p-3 flex flex-col space-y-2">
               {/* Search Bar */}
               <div className="relative">
-                <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                <Search className="w-3.5 h-3.5 text-slate-600 absolute left-3 top-1/2 -translate-y-1/2" />
                 <input
                   type="text"
                   value={treeSearch}
                   onChange={(e) => setTreeSearch(e.target.value)}
                   placeholder="Tìm Line, Station, Channel hoặc MAC..."
-                  className="w-full bg-slate-900/90 border border-white/10 focus:border-amber-500 text-xs text-slate-200 pl-8 pr-8 py-2 rounded-xl focus:outline-none"
+                  className="w-full bg-slate-100/90 border border-slate-200 focus:border-amber-500 text-xs text-slate-800 pl-8 pr-8 py-2 rounded-xl focus:outline-none"
                 />
                 {treeSearch && (
                   <button
                     type="button"
                     onClick={() => setTreeSearch('')}
-                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white"
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-600 hover:text-slate-900"
                   >
                     <X className="w-3.5 h-3.5" />
                   </button>
@@ -1098,23 +1098,23 @@ export default function CommandControl({ lines = [], stations = [], channels = [
               </div>
 
               {/* Expand / Collapse & Check / Uncheck Actions Toolbar */}
-              <div className="flex items-center justify-between text-[11px] text-slate-400 px-2 py-1.5 border-b border-white/5 bg-slate-900/40 rounded-lg">
+              <div className="flex items-center justify-between text-[11px] text-slate-600 px-2 py-1.5 border-b border-slate-200 bg-slate-100/40 rounded-lg">
                 <div className="flex items-center gap-2">
                   <button
                     type="button"
                     onClick={handleCheckAll}
-                    className="flex items-center gap-1 px-2 py-0.5 rounded hover:bg-amber-500/10 hover:text-amber-400 transition-colors"
+                    className="flex items-center gap-1 px-2 py-0.5 rounded hover:bg-amber-500/10 hover:text-amber-700 transition-colors"
                   >
-                    <CheckCheck className="w-3.5 h-3.5 text-amber-400" />
+                    <CheckCheck className="w-3.5 h-3.5 text-amber-700" />
                     <span>Chọn tất cả</span>
                   </button>
                   <span>•</span>
                   <button
                     type="button"
                     onClick={handleUncheckAll}
-                    className="flex items-center gap-1 px-2 py-0.5 rounded hover:bg-rose-500/10 hover:text-rose-400 transition-colors"
+                    className="flex items-center gap-1 px-2 py-0.5 rounded hover:bg-rose-500/10 hover:text-rose-700 transition-colors"
                   >
-                    <XSquare className="w-3.5 h-3.5 text-rose-400" />
+                    <XSquare className="w-3.5 h-3.5 text-rose-700" />
                     <span>Bỏ chọn</span>
                   </button>
                 </div>
@@ -1122,7 +1122,7 @@ export default function CommandControl({ lines = [], stations = [], channels = [
                   <button
                     type="button"
                     onClick={handleExpandAll}
-                    className="hover:text-amber-400 transition-colors"
+                    className="hover:text-amber-700 transition-colors"
                   >
                     Mở rộng
                   </button>
@@ -1130,7 +1130,7 @@ export default function CommandControl({ lines = [], stations = [], channels = [
                   <button
                     type="button"
                     onClick={handleCollapseAll}
-                    className="hover:text-amber-400 transition-colors"
+                    className="hover:text-amber-700 transition-colors"
                   >
                     Thu gọn
                   </button>
@@ -1144,18 +1144,18 @@ export default function CommandControl({ lines = [], stations = [], channels = [
             </div>
 
             {/* Target Description Summary */}
-            <div className="mt-3 p-3 bg-slate-900/50 border border-white/5 rounded-xl flex items-center justify-between text-xs">
-              <span className="text-slate-400 font-medium">Phạm vi đã chọn:</span>
-              <span className="text-amber-300 font-semibold">{getTargetDescription()}</span>
+            <div className="mt-3 p-3 bg-slate-100/50 border border-slate-200 rounded-xl flex items-center justify-between text-xs">
+              <span className="text-slate-600 font-medium">Phạm vi đã chọn:</span>
+              <span className="text-amber-700 font-semibold">{getTargetDescription()}</span>
             </div>
 
             {/* Broadcast Alert when Target Mode is 'all' */}
             {targetMode === 'all' && (
-              <div className="mt-2.5 p-3 bg-amber-500/10 border border-amber-500/30 rounded-xl text-xs text-amber-300 flex items-start gap-2.5">
-                <ShieldAlert className="w-4 h-4 text-amber-400 flex-shrink-0 mt-0.5" />
+              <div className="mt-2.5 p-3 bg-amber-500/10 border border-amber-500/30 rounded-xl text-xs text-amber-700 flex items-start gap-2.5">
+                <ShieldAlert className="w-4 h-4 text-amber-700 flex-shrink-0 mt-0.5" />
                 <div>
                   <span className="font-semibold block mb-0.5">Chế độ Broadcast Toàn Mạng</span>
-                  Lệnh sẽ được phát tới tất cả <strong className="text-white">{channels.length} máy collector</strong> hiện có trong cây thiết bị.
+                  Lệnh sẽ được phát tới tất cả <strong className="text-slate-900">{channels.length} máy collector</strong> hiện có trong cây thiết bị.
                 </div>
               </div>
             )}
@@ -1164,26 +1164,26 @@ export default function CommandControl({ lines = [], stations = [], channels = [
 
         {/* Right Column (7 Cols): Command Form & Execution Console */}
         <div className="lg:col-span-7 space-y-6">
-          <div className="glass-card p-6 rounded-2xl border border-white/10">
-            <div className="flex items-center justify-between mb-4 border-b border-white/5 pb-3">
-              <h2 className="text-sm font-semibold text-slate-200 flex items-center gap-2">
-                <Zap className="w-4 h-4 text-amber-400" />
+          <div className="glass-card p-6 rounded-2xl border border-slate-200">
+            <div className="flex items-center justify-between mb-4 border-b border-slate-200 pb-3">
+              <h2 className="text-sm font-semibold text-slate-800 flex items-center gap-2">
+                <Zap className="w-4 h-4 text-amber-700" />
                 2. Soạn Lệnh & Nội Dung Lệnh
               </h2>
-              <div className="text-xs text-amber-400 font-mono flex items-center gap-1.5 bg-amber-500/10 px-2.5 py-1 rounded-full border border-amber-500/20">
+              <div className="text-xs text-amber-700 font-mono flex items-center gap-1.5 bg-amber-500/10 px-2.5 py-1 rounded-full border border-amber-500/20">
                 <Radio className="w-3.5 h-3.5 animate-pulse" />
                 {getTargetDescription()}
               </div>
             </div>
 
             {/* Action Command Tabs */}
-            <div className="flex flex-wrap border-b border-white/10 mb-5 gap-x-4 gap-y-2">
+            <div className="flex flex-wrap border-b border-slate-200 mb-5 gap-x-4 gap-y-2">
               <button
                 onClick={() => setActiveCommandTab('change-model')}
                 className={`pb-3 text-xs font-medium transition-all relative flex items-center gap-2 ${
                   activeCommandTab === 'change-model'
-                    ? 'text-amber-400 border-b-2 border-amber-400'
-                    : 'text-slate-400 hover:text-slate-200'
+                    ? 'text-amber-700 border-b-2 border-amber-400'
+                    : 'text-slate-600 hover:text-slate-800'
                 }`}
               >
                 <RotateCcw className="w-3.5 h-3.5" />
@@ -1194,8 +1194,8 @@ export default function CommandControl({ lines = [], stations = [], channels = [
                 onClick={() => setActiveCommandTab('update')}
                 className={`pb-3 text-xs font-medium transition-all relative flex items-center gap-2 ${
                   activeCommandTab === 'update'
-                    ? 'text-amber-400 border-b-2 border-amber-400'
-                    : 'text-slate-400 hover:text-slate-200'
+                    ? 'text-amber-700 border-b-2 border-amber-400'
+                    : 'text-slate-600 hover:text-slate-800'
                 }`}
               >
                 <RefreshCw className="w-3.5 h-3.5" />
@@ -1206,8 +1206,8 @@ export default function CommandControl({ lines = [], stations = [], channels = [
                 onClick={() => setActiveCommandTab('restart')}
                 className={`pb-3 text-xs font-medium transition-all relative flex items-center gap-2 ${
                   activeCommandTab === 'restart'
-                    ? 'text-amber-400 border-b-2 border-amber-400'
-                    : 'text-slate-400 hover:text-slate-200'
+                    ? 'text-amber-700 border-b-2 border-amber-400'
+                    : 'text-slate-600 hover:text-slate-800'
                 }`}
               >
                 <Zap className="w-3.5 h-3.5" />
@@ -1218,8 +1218,8 @@ export default function CommandControl({ lines = [], stations = [], channels = [
                 onClick={() => setActiveCommandTab('custom')}
                 className={`pb-3 text-xs font-medium transition-all relative flex items-center gap-2 ${
                   activeCommandTab === 'custom'
-                    ? 'text-amber-400 border-b-2 border-amber-400'
-                    : 'text-slate-400 hover:text-slate-200'
+                    ? 'text-amber-700 border-b-2 border-amber-400'
+                    : 'text-slate-600 hover:text-slate-800'
                 }`}
               >
                 <Terminal className="w-3.5 h-3.5" />
@@ -1230,12 +1230,12 @@ export default function CommandControl({ lines = [], stations = [], channels = [
                 onClick={() => setActiveCommandTab('cmd-exec')}
                 className={`pb-3 text-xs font-medium transition-all relative flex items-center gap-2 ${
                   activeCommandTab === 'cmd-exec'
-                    ? 'text-amber-400 border-b-2 border-amber-400'
-                    : 'text-slate-400 hover:text-slate-200'
+                    ? 'text-amber-700 border-b-2 border-amber-400'
+                    : 'text-slate-600 hover:text-slate-800'
                 }`}
               >
-                <Terminal className="w-3.5 h-3.5 text-rose-400" />
-                <span className="text-amber-300 font-semibold">Chạy CMD Admin</span>
+                <Terminal className="w-3.5 h-3.5 text-rose-700" />
+                <span className="text-amber-700 font-semibold">Chạy CMD Admin</span>
               </button>
             </div>
 
@@ -1245,8 +1245,8 @@ export default function CommandControl({ lines = [], stations = [], channels = [
               {activeCommandTab === 'change-model' && (
                 <div className="space-y-4">
                   <div>
-                    <label className="block text-xs font-medium text-slate-300 mb-1">
-                      Tên Model Mới (New Model Name) <span className="text-amber-400">*</span>
+                    <label className="block text-xs font-medium text-slate-700 mb-1">
+                      Tên Model Mới (New Model Name) <span className="text-amber-700">*</span>
                     </label>
                     <input
                       type="text"
@@ -1259,14 +1259,14 @@ export default function CommandControl({ lines = [], stations = [], channels = [
 
                   {/* Model Quick Chips */}
                   <div>
-                    <div className="text-[11px] text-slate-400 mb-1.5">Gợi ý Model phổ biến:</div>
+                    <div className="text-[11px] text-slate-600 mb-1.5">Gợi ý Model phổ biến:</div>
                     <div className="flex flex-wrap gap-2">
                       {modelPresets.map((preset) => (
                         <button
                           key={preset}
                           type="button"
                           onClick={() => setModelName(preset)}
-                          className="px-2.5 py-1 rounded-lg bg-slate-900 border border-white/10 text-xs font-mono text-slate-300 hover:border-amber-500/50 hover:text-amber-300 transition-colors"
+                          className="px-2.5 py-1 rounded-lg bg-slate-100 border border-slate-200 text-xs font-mono text-slate-700 hover:border-amber-500/50 hover:text-amber-700 transition-colors"
                         >
                           {preset}
                         </button>
@@ -1274,9 +1274,9 @@ export default function CommandControl({ lines = [], stations = [], channels = [
                     </div>
                   </div>
 
-                  <div className="p-3 bg-slate-900/60 rounded-xl border border-white/5 text-xs text-slate-400 space-y-1">
-                    <p className="flex items-center gap-1.5 text-slate-300 font-semibold">
-                      <Info className="w-3.5 h-3.5 text-blue-400" />
+                  <div className="p-3 bg-slate-100/60 rounded-xl border border-slate-200 text-xs text-slate-600 space-y-1">
+                    <p className="flex items-center gap-1.5 text-slate-700 font-semibold">
+                      <Info className="w-3.5 h-3.5 text-blue-700" />
                       Ghi chú thao tác Đổi Model:
                     </p>
                     <p>
@@ -1290,7 +1290,7 @@ export default function CommandControl({ lines = [], stations = [], channels = [
               {activeCommandTab === 'update' && (
                 <div className="space-y-4">
                   <div>
-                    <label className="block text-xs font-medium text-slate-300 mb-1">
+                    <label className="block text-xs font-medium text-slate-700 mb-1">
                       Đường dẫn Update XML (không bắt buộc)
                     </label>
                     <input
@@ -1302,19 +1302,19 @@ export default function CommandControl({ lines = [], stations = [], channels = [
                     />
                   </div>
 
-                  <label className="flex items-center gap-2 cursor-pointer text-xs text-slate-300">
+                  <label className="flex items-center gap-2 cursor-pointer text-xs text-slate-700">
                     <input
                       type="checkbox"
                       checked={updateForce}
                       onChange={(e) => setUpdateForce(e.target.checked)}
-                      className="w-4 h-4 rounded bg-slate-900 border-white/20 text-amber-500 focus:ring-amber-400"
+                      className="w-4 h-4 rounded bg-slate-100 border-slate-200 text-amber-500 focus:ring-amber-400"
                     />
                     <span>Ép kiểm tra và thực hiện cập nhật</span>
                   </label>
 
-                  <div className="p-3 bg-amber-500/10 border border-amber-500/30 rounded-xl text-xs text-amber-200 space-y-1">
-                    <p className="flex items-center gap-1.5 font-semibold text-amber-300">
-                      <ShieldAlert className="w-4 h-4 text-amber-400" />
+                  <div className="p-3 bg-amber-500/10 border border-amber-500/30 rounded-xl text-xs text-amber-700 space-y-1">
+                    <p className="flex items-center gap-1.5 font-semibold text-amber-700">
+                      <ShieldAlert className="w-4 h-4 text-amber-700" />
                       Cảnh báo cập nhật:
                     </p>
                     <p>Client sẽ kiểm tra phiên bản, tải bản cập nhật nếu có và có thể tự đóng ứng dụng để hoàn tất cài đặt.</p>
@@ -1326,7 +1326,7 @@ export default function CommandControl({ lines = [], stations = [], channels = [
               {activeCommandTab === 'restart' && (
                 <div className="space-y-4">
                   <div>
-                    <label className="block text-xs font-medium text-slate-300 mb-1">
+                    <label className="block text-xs font-medium text-slate-700 mb-1">
                       Thời Gian Chờ Khởi Động Lại (Delay in milliseconds)
                     </label>
                     <input
@@ -1346,8 +1346,8 @@ export default function CommandControl({ lines = [], stations = [], channels = [
                         onClick={() => setDelayMs(d)}
                         className={`px-3 py-1 rounded-lg text-xs font-mono border transition-colors ${
                           Number(delayMs) === d
-                            ? 'bg-amber-500/20 border-amber-500/50 text-amber-300'
-                            : 'bg-slate-900 border-white/10 text-slate-400 hover:text-slate-200'
+                            ? 'bg-amber-500/20 border-amber-500/50 text-amber-700'
+                            : 'bg-slate-100 border-slate-200 text-slate-600 hover:text-slate-800'
                         }`}
                       >
                         {d}ms ({d / 1000}s)
@@ -1355,9 +1355,9 @@ export default function CommandControl({ lines = [], stations = [], channels = [
                     ))}
                   </div>
 
-                  <div className="p-3 bg-amber-500/10 border border-amber-500/30 rounded-xl text-xs text-amber-200 space-y-1">
-                    <p className="flex items-center gap-1.5 font-semibold text-amber-300">
-                      <ShieldAlert className="w-4 h-4 text-amber-400" />
+                  <div className="p-3 bg-amber-500/10 border border-amber-500/30 rounded-xl text-xs text-amber-700 space-y-1">
+                    <p className="flex items-center gap-1.5 font-semibold text-amber-700">
+                      <ShieldAlert className="w-4 h-4 text-amber-700" />
                       Cảnh báo thực thi:
                     </p>
                     <p>
@@ -1371,8 +1371,8 @@ export default function CommandControl({ lines = [], stations = [], channels = [
               {activeCommandTab === 'custom' && (
                 <div className="space-y-4">
                   <div>
-                    <label className="block text-xs font-medium text-slate-300 mb-1">
-                      Tên Lệnh (Command Action String) <span className="text-amber-400">*</span>
+                    <label className="block text-xs font-medium text-slate-700 mb-1">
+                      Tên Lệnh (Command Action String) <span className="text-amber-700">*</span>
                     </label>
                     <input
                       type="text"
@@ -1384,7 +1384,7 @@ export default function CommandControl({ lines = [], stations = [], channels = [
                   </div>
 
                   <div>
-                    <label className="block text-xs font-medium text-slate-300 mb-1">
+                    <label className="block text-xs font-medium text-slate-700 mb-1">
                       Dữ Liệu JSON (Payload Data - JSON format)
                     </label>
                     <textarea
@@ -1402,21 +1402,21 @@ export default function CommandControl({ lines = [], stations = [], channels = [
               {activeCommandTab === 'cmd-exec' && (
                 <div className="space-y-4">
                   <div>
-                    <label className="block text-xs font-medium text-slate-300 mb-1">
-                      Câu lệnh CMD (Command Line) <span className="text-rose-400">*</span>
+                    <label className="block text-xs font-medium text-slate-700 mb-1">
+                      Câu lệnh CMD (Command Line) <span className="text-rose-700">*</span>
                     </label>
                     <input
                       type="text"
                       value={cmdCommandLine}
                       onChange={(e) => setCmdCommandLine(e.target.value)}
                       placeholder="Ví dụ: ipconfig /all, systeminfo, tasklist..."
-                      className="input-field text-sm w-full font-mono text-emerald-400 bg-slate-950 border-amber-500/30"
+                      className="input-field text-sm w-full font-mono text-emerald-700 bg-slate-50 border-amber-500/30"
                     />
                   </div>
 
                   {/* Preset CMD Quick Buttons */}
                   <div>
-                    <span className="text-[11px] text-slate-400 block mb-1.5 font-medium">Gợi ý lệnh CMD phổ biến:</span>
+                    <span className="text-[11px] text-slate-600 block mb-1.5 font-medium">Gợi ý lệnh CMD phổ biến:</span>
                     <div className="flex flex-wrap gap-1.5">
                       {[
                         { label: 'Kiểm tra IP (ipconfig)', cmd: 'ipconfig /all' },
@@ -1430,7 +1430,7 @@ export default function CommandControl({ lines = [], stations = [], channels = [
                           key={idx}
                           type="button"
                           onClick={() => setCmdCommandLine(preset.cmd)}
-                          className="px-2.5 py-1 text-[11px] font-mono bg-slate-800/80 hover:bg-amber-500/20 hover:text-amber-300 text-slate-300 rounded-lg border border-white/10 transition-all"
+                          className="px-2.5 py-1 text-[11px] font-mono bg-slate-200/80 hover:bg-amber-500/20 hover:text-amber-700 text-slate-700 rounded-lg border border-slate-200 transition-all"
                         >
                           {preset.label}
                         </button>
@@ -1440,7 +1440,7 @@ export default function CommandControl({ lines = [], stations = [], channels = [
 
                   <div className="grid grid-cols-3 gap-3 pt-1">
                     <div>
-                      <label className="block text-xs font-medium text-slate-300 mb-1">
+                      <label className="block text-xs font-medium text-slate-700 mb-1">
                         Timeout (giây)
                       </label>
                       <input
@@ -1453,23 +1453,23 @@ export default function CommandControl({ lines = [], stations = [], channels = [
                       />
                     </div>
                     <div className="flex items-center pt-5">
-                      <label className="flex items-center gap-2 cursor-pointer text-xs text-slate-300">
+                      <label className="flex items-center gap-2 cursor-pointer text-xs text-slate-700">
                         <input
                           type="checkbox"
                           checked={cmdRunAsAdmin}
                           onChange={(e) => setCmdRunAsAdmin(e.target.checked)}
-                          className="w-4 h-4 rounded bg-slate-900 border-white/20 text-amber-500 focus:ring-amber-400"
+                          className="w-4 h-4 rounded bg-slate-100 border-slate-200 text-amber-500 focus:ring-amber-400"
                         />
                         <span>Quyền Administrator</span>
                       </label>
                     </div>
                     <div className="flex items-center pt-5">
-                      <label className="flex items-center gap-2 cursor-pointer text-xs text-slate-300">
+                      <label className="flex items-center gap-2 cursor-pointer text-xs text-slate-700">
                         <input
                           type="checkbox"
                           checked={cmdShowWindow}
                           onChange={(e) => setCmdShowWindow(e.target.checked)}
-                          className="w-4 h-4 rounded bg-slate-900 border-white/20 text-amber-500 focus:ring-amber-400"
+                          className="w-4 h-4 rounded bg-slate-100 border-slate-200 text-amber-500 focus:ring-amber-400"
                         />
                         <span>Hiển thị cửa sổ CMD</span>
                       </label>
@@ -1502,15 +1502,15 @@ export default function CommandControl({ lines = [], stations = [], channels = [
           </div>
 
           {/* Real-time Command Execution Log Console */}
-          <div className="glass-card p-6 rounded-2xl border border-white/10">
-            <div className="flex items-center justify-between mb-4 border-b border-white/5 pb-3">
-              <h2 className="text-sm font-semibold text-slate-200 flex items-center gap-2">
-                <Terminal className="w-4 h-4 text-emerald-400" />
+          <div className="glass-card p-6 rounded-2xl border border-slate-200">
+            <div className="flex items-center justify-between mb-4 border-b border-slate-200 pb-3">
+              <h2 className="text-sm font-semibold text-slate-800 flex items-center gap-2">
+                <Terminal className="w-4 h-4 text-emerald-700" />
                 3. Nhật Ký Phát Lệnh (Command Console Log)
               </h2>
               <button
                 onClick={() => setCommandHistory([])}
-                className="text-[11px] text-slate-400 hover:text-rose-400 flex items-center gap-1 transition-colors"
+                className="text-[11px] text-slate-600 hover:text-rose-700 flex items-center gap-1 transition-colors"
                 title="Xóa nhật ký"
               >
                 <Trash2 className="w-3.5 h-3.5" />
@@ -1518,7 +1518,7 @@ export default function CommandControl({ lines = [], stations = [], channels = [
               </button>
             </div>
 
-            <div className="bg-slate-950 rounded-xl p-4 border border-white/10 font-mono text-xs max-h-60 overflow-y-auto space-y-2.5 custom-scrollbar">
+            <div className="bg-slate-50 rounded-xl p-4 border border-slate-200 font-mono text-xs max-h-60 overflow-y-auto space-y-2.5 custom-scrollbar">
               {commandHistory.length === 0 ? (
                 <div className="text-slate-600 text-center py-4 italic">
                   Chưa có lịch sử phát lệnh nào trong phiên làm việc này.
@@ -1527,11 +1527,11 @@ export default function CommandControl({ lines = [], stations = [], channels = [
                 commandHistory.map((item) => (
                   <div
                     key={item.id}
-                    className="p-2.5 rounded-lg bg-slate-900/80 border border-white/5 flex flex-col gap-1 text-[11px]"
+                    className="p-2.5 rounded-lg bg-slate-100/80 border border-slate-200 flex flex-col gap-1 text-[11px]"
                   >
-                    <div className="flex items-center justify-between text-slate-400 border-b border-white/5 pb-1">
+                    <div className="flex items-center justify-between text-slate-600 border-b border-slate-200 pb-1">
                       <div className="flex items-center gap-2">
-                        <span className="text-amber-400 font-bold">{item.command}</span>
+                        <span className="text-amber-700 font-bold">{item.command}</span>
                         <span className="text-slate-500">[{item.id}]</span>
                       </div>
                       <div className="flex items-center gap-2">
@@ -1539,23 +1539,23 @@ export default function CommandControl({ lines = [], stations = [], channels = [
                         {item.status === 'success' ? (
                           <span className="badge badge-ok text-[10px]">SUCCESS</span>
                         ) : item.status === 'sending' ? (
-                          <span className="px-2 py-0.5 rounded-full border border-amber-500/40 bg-amber-500/10 text-amber-300 text-[10px]">PENDING</span>
+                          <span className="px-2 py-0.5 rounded-full border border-amber-500/40 bg-amber-500/10 text-amber-700 text-[10px]">PENDING</span>
                         ) : (
                           <span className="badge badge-ng text-[10px]">FAILED</span>
                         )}
                       </div>
                     </div>
-                    <div className="text-slate-300 mt-0.5">
+                    <div className="text-slate-700 mt-0.5">
                       <span className="text-slate-500">Target: </span>
-                      <span className="text-cyan-300 font-semibold">{item.targetText}</span>
+                      <span className="text-cyan-700 font-semibold">{item.targetText}</span>
                     </div>
                     {item.detail && (
-                      <div className="text-slate-400">
+                      <div className="text-slate-600">
                         <span className="text-slate-500">Payload: </span>
-                        <span className="text-slate-300">{item.detail}</span>
+                        <span className="text-slate-700">{item.detail}</span>
                       </div>
                     )}
-                    <div className="text-slate-400 italic bg-slate-950/60 p-1.5 rounded mt-0.5 border border-white/5">
+                    <div className="text-slate-600 italic bg-slate-50/60 p-1.5 rounded mt-0.5 border border-slate-200">
                       {item.response}
                     </div>
                   </div>

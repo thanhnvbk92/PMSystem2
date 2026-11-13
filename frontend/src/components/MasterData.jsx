@@ -1,12 +1,41 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   Database, Plus, RefreshCw, Layers, Cpu, Radio, Building2, Pencil, Trash2, X, Search, Filter,
-  AlertTriangle, GitMerge, Box, Tag, Sliders, HardDrive, ArrowUpDown, ArrowUp, ArrowDown, Gauge, Save, FileText
+  AlertTriangle, GitMerge, Box, Tag, Sliders, HardDrive, ArrowUpDown, ArrowUp, ArrowDown, FileText, Download
 } from 'lucide-react';
-import { MasterDataApi, ProductionApi } from '../services/api';
+import { MasterDataApi } from '../services/api';
+
+const csvCell = (value) => {
+  if (value === null || value === undefined) return '""';
+  let text = typeof value === 'object' ? JSON.stringify(value) : String(value);
+  // Prevent Excel from evaluating imported master data as a formula.
+  if (/^[=+\-@]/.test(text)) text = `'${text}`;
+  return `"${text.replace(/"/g, '""')}"`;
+};
+
+const exportCsv = (data, title) => {
+  if (!data?.length) return;
+  const headers = [...new Set(data.flatMap(item => Object.keys(item || {})))];
+  const rows = data.map(item => headers.map(key => csvCell(item?.[key])).join(','));
+  const content = `\uFEFF${headers.map(csvCell).join(',')}\r\n${rows.join('\r\n')}`;
+  const blob = new Blob([content], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const safeTitle = String(title || 'MasterData').replace(/[^a-zA-Z0-9_-]+/g, '_');
+  link.href = url;
+  link.download = `PMSystem_${safeTitle}_${timestamp}.csv`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+};
 
 // --- Custom Hook for Multi-column Sort & Filtering ---
-function useTableSortAndFilter(data, initialSortKey = 'id', initialSortDir = 'asc') {
+// `exactColumns`: columns filtered by a dropdown. They match the whole value
+// (so "Line 1-1" does not also match "Line 1-10") and their dropdown options
+// are narrowed by every other active filter (cascading filters).
+function useTableSortAndFilter(data, initialSortKey = 'id', initialSortDir = 'asc', exactColumns = []) {
   const [sortKey, setSortKey] = useState(initialSortKey);
   const [sortDir, setSortDir] = useState(initialSortDir);
   const [columnFilters, setColumnFilters] = useState({});
@@ -39,8 +68,12 @@ function useTableSortAndFilter(data, initialSortKey = 'id', initialSortDir = 'as
     setSortDir(initialSortDir);
   };
 
-  const processedData = useMemo(() => {
-    let result = [...(data || [])];
+  const exactKey = exactColumns.join('|');
+  const exactSet = useMemo(() => new Set(exactKey ? exactKey.split('|') : []), [exactKey]);
+
+  // Applies the global search and every column filter except `skipKey`.
+  const applyFilters = useCallback((items, skipKey = null) => {
+    let result = [...(items || [])];
 
     // Global Search Across All Values
     if (globalSearch.trim()) {
@@ -54,15 +87,36 @@ function useTableSortAndFilter(data, initialSortKey = 'id', initialSortDir = 'as
 
     // Column Level Specific Filters
     Object.entries(columnFilters).forEach(([colKey, filterVal]) => {
+      if (colKey === skipKey) return;
       if (filterVal && String(filterVal).trim() !== '') {
         const fq = String(filterVal).toLowerCase().trim();
+        const exact = exactSet.has(colKey);
         result = result.filter(item => {
           const val = item[colKey];
           if (val === null || val === undefined) return false;
-          return String(val).toLowerCase().includes(fq);
+          const text = String(val).toLowerCase().trim();
+          return exact ? text === fq : text.includes(fq);
         });
       }
     });
+    return result;
+  }, [columnFilters, globalSearch, exactSet]);
+
+  // Distinct values of `colKey` among rows that pass all *other* filters.
+  // The currently selected value is always kept so the dropdown never loses it.
+  const optionsFor = useCallback((colKey) => {
+    const values = new Set();
+    applyFilters(data, colKey).forEach(item => {
+      const val = item[colKey];
+      if (val !== null && val !== undefined && String(val).trim() !== '') values.add(String(val));
+    });
+    const selected = columnFilters[colKey];
+    if (selected && String(selected).trim() !== '') values.add(String(selected));
+    return [...values].sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }));
+  }, [applyFilters, data, columnFilters]);
+
+  const processedData = useMemo(() => {
+    const result = applyFilters(data);
 
     // Sorting Logic
     if (sortKey) {
@@ -83,7 +137,7 @@ function useTableSortAndFilter(data, initialSortKey = 'id', initialSortDir = 'as
     }
 
     return result;
-  }, [data, sortKey, sortDir, columnFilters, globalSearch]);
+  }, [data, sortKey, sortDir, applyFilters]);
 
   const activeFilterCount = Object.values(columnFilters).filter(v => v && String(v).trim() !== '').length + (globalSearch.trim() ? 1 : 0);
 
@@ -97,6 +151,7 @@ function useTableSortAndFilter(data, initialSortKey = 'id', initialSortDir = 'as
     setGlobalSearch,
     clearAllFilters,
     activeFilterCount,
+    optionsFor,
     processedData
   };
 }
@@ -107,16 +162,16 @@ function ThSort({ label, colKey, tableState, className = '' }) {
   return (
     <th
       onClick={() => tableState.handleSort(colKey)}
-      className={`p-3 cursor-pointer hover:bg-slate-800/80 hover:text-white select-none transition-colors ${className}`}
+      className={`p-3 cursor-pointer hover:bg-slate-200/80 hover:text-slate-900 select-none transition-colors ${className}`}
       title={`Click để sắp xếp theo ${label}`}
     >
       <div className="flex items-center justify-between gap-1.5">
         <span>{label}</span>
         {isSorted ? (
           tableState.sortDir === 'asc' ? (
-            <ArrowUp className="w-3.5 h-3.5 text-blue-400 shrink-0" />
+            <ArrowUp className="w-3.5 h-3.5 text-blue-700 shrink-0" />
           ) : (
-            <ArrowDown className="w-3.5 h-3.5 text-blue-400 shrink-0" />
+            <ArrowDown className="w-3.5 h-3.5 text-blue-700 shrink-0" />
           )
         ) : (
           <ArrowUpDown className="w-3 h-3 text-slate-600 shrink-0 opacity-40 hover:opacity-100" />
@@ -129,74 +184,49 @@ function ThSort({ label, colKey, tableState, className = '' }) {
 // --- Table Filter Toolbar Component ---
 function TableToolbar({ tableState, totalCount, title }) {
   return (
-    <div className="flex flex-wrap items-center justify-between gap-3 bg-slate-900/60 p-3 rounded-xl border border-white/10 mb-3">
+    <div className="flex flex-wrap items-center justify-between gap-3 bg-slate-100/60 p-3 rounded-xl border border-slate-200 mb-3">
       <div className="relative flex-1 min-w-[200px]">
-        <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+        <Search className="w-3.5 h-3.5 text-slate-600 absolute left-3 top-1/2 -translate-y-1/2" />
         <input
           type="text"
           placeholder={`Tìm kiếm ${title}...`}
           value={tableState.globalSearch}
           onChange={e => tableState.setGlobalSearch(e.target.value)}
-          className="w-full bg-slate-950/80 border border-slate-700/80 rounded-xl pl-9 pr-8 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 transition-colors"
+          className="w-full bg-slate-50/80 border border-slate-300 rounded-xl pl-9 pr-8 py-1.5 text-xs text-slate-900 placeholder-slate-500 focus:outline-none focus:border-blue-500 transition-colors"
         />
         {tableState.globalSearch && (
-          <button onClick={() => tableState.setGlobalSearch('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white">
+          <button onClick={() => tableState.setGlobalSearch('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-600 hover:text-slate-900">
             <X className="w-3 h-3" />
           </button>
         )}
       </div>
 
       <div className="flex items-center gap-3">
-        <span className="text-xs text-slate-400 font-mono">
-          Hiển thị: <strong className="text-blue-400">{tableState.processedData.length}</strong> / {totalCount}
+        <span className="text-xs text-slate-600 font-mono">
+          Hiển thị: <strong className="text-blue-700">{tableState.processedData.length}</strong> / {totalCount}
         </span>
         {tableState.activeFilterCount > 0 && (
           <button
             onClick={tableState.clearAllFilters}
-            className="flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-semibold rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/20 transition-all shadow-sm"
+            className="flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-semibold rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-700 border border-rose-500/20 transition-all shadow-sm"
           >
             <X className="w-3 h-3" />
             <span>Xóa lọc ({tableState.activeFilterCount})</span>
           </button>
         )}
+        <button
+          type="button"
+          onClick={() => exportCsv(tableState.processedData, title)}
+          disabled={tableState.processedData.length === 0}
+          className="flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-semibold rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-700 border border-emerald-500/20 transition-all shadow-sm disabled:opacity-40 disabled:cursor-not-allowed"
+          title="Export dữ liệu đang hiển thị ra CSV"
+        >
+          <Download className="w-3 h-3" />
+          <span>Export CSV</span>
+        </button>
       </div>
     </div>
   );
-}
-
-function CpkRuleRow({ station, onSave, saving }) {
-  const [steps, setSteps] = useState([]);
-  const [jobFile, setJobFile] = useState(station.cpkJobFile || '');
-  const [stepValue, setStepValue] = useState(station.cpkStepName ? `${station.cpkStepNumber}|${station.cpkStepName}` : '');
-  const [loadingSteps, setLoadingSteps] = useState(true);
-
-  useEffect(() => {
-    ProductionApi.getStationCpkSteps(station.id).then(setSteps).catch(() => setSteps([])).finally(() => setLoadingSteps(false));
-  }, [station.id]);
-  useEffect(() => {
-    setJobFile(station.cpkJobFile || '');
-    setStepValue(station.cpkStepName ? `${station.cpkStepNumber}|${station.cpkStepName}` : '');
-  }, [station.cpkStepNumber, station.cpkStepName, station.cpkJobFile]);
-
-  const jobFiles = useMemo(() => [...new Set(steps.map(s => s.jobFile || ''))].sort((a, b) => a.localeCompare(b, undefined, { numeric: true })), [steps]);
-  const filteredSteps = useMemo(() => steps.filter(s => (s.jobFile || '') === jobFile), [steps, jobFile]);
-
-  const save = () => {
-    const selected = filteredSteps.find(s => `${s.stepNumber}|${s.stepName}` === stepValue);
-    onSave(station.id, { ...station, cpkStepNumber: selected?.stepNumber ?? null, cpkStepName: selected?.stepName ?? '', cpkJobFile: selected?.jobFile ?? '' });
-  };
-  return <div className="grid md:grid-cols-[minmax(180px,1fr)_minmax(220px,1.2fr)_minmax(260px,1.5fr)_120px] gap-3 items-center p-4 rounded-xl border border-white/10 bg-slate-950/50">
-    <div><div className="font-bold text-sm">#{station.id} {station.name}</div><div className="text-[11px] text-slate-500">{station.lineName}</div></div>
-    <select value={jobFile} disabled={loadingSteps || saving} onChange={e => { setJobFile(e.target.value); setStepValue(''); }} className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2.5 text-xs text-white disabled:opacity-50">
-      <option value="">{loadingSteps ? '-- Đang tải Job File --' : '-- Chọn Job File --'}</option>
-      {jobFiles.filter(Boolean).map(item => <option key={item} value={item}>{item}</option>)}
-    </select>
-    <select value={stepValue} disabled={!jobFile || loadingSteps || saving} onChange={e => setStepValue(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2.5 text-xs text-white disabled:opacity-50">
-      <option value="">-- Chọn Step CPK --</option>
-      {filteredSteps.map(s => <option key={`${s.stepNumber}|${s.stepName}`} value={`${s.stepNumber}|${s.stepName}`}>#{s.stepNumber} - {s.stepName}</option>)}
-    </select>
-    <button onClick={save} disabled={saving || loadingSteps || !jobFile || !stepValue} className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-fuchsia-600 hover:bg-fuchsia-500 disabled:opacity-50 text-white text-xs font-bold"><Save className="w-3.5 h-3.5"/>Lưu</button>
-  </div>;
 }
 
 export default function MasterData({
@@ -209,9 +239,16 @@ export default function MasterData({
   channels = [],
   deviceTypes = [],
   devices = [],
-  onRefresh
+  onRefresh,
+  // When the Master Data module sidebar picks the section, it passes it here and the
+  // tab bar below is hidden; without it the page keeps its own tabs.
+  subTab,
+  onSubTabChange,
+  hideTabBar = false
 }) {
-  const [activeSubTab, setActiveSubTab] = useState('lines');
+  const [innerSubTab, setInnerSubTab] = useState('lines');
+  const activeSubTab = subTab ?? innerSubTab;
+  const setActiveSubTab = onSubTabChange ?? setInnerSubTab;
 
   // Synced local state for instant optimistic UI feedback
   const [localBuyers, setLocalBuyers] = useState(buyers);
@@ -242,17 +279,19 @@ export default function MasterData({
 
   // Table State Hooks for Sorting & Filtering
   const linesTable = useTableSortAndFilter(localLines, 'name', 'asc');
-  const stationsTable = useTableSortAndFilter(localStations, 'id', 'asc');
-  const channelsTable = useTableSortAndFilter(localChannels, 'id', 'asc');
-  const modelGroupsTable = useTableSortAndFilter(localModelGroups, 'id', 'asc');
-  const modelsTable = useTableSortAndFilter(localModels, 'id', 'asc');
+  const stationsTable = useTableSortAndFilter(localStations, 'id', 'asc', ['lineName', 'modelGroupName', 'stationTypeName']);
+  const channelsTable = useTableSortAndFilter(localChannels, 'id', 'asc', ['lineName', 'stationName']);
+  const modelGroupsTable = useTableSortAndFilter(localModelGroups, 'id', 'asc', ['buyerName']);
+  const modelsTable = useTableSortAndFilter(localModels, 'id', 'asc', ['modelGroupName']);
   const [jobMappingPage, setJobMappingPage] = useState({ items: [], page: 1, pageSize: 50, totalCount: 0, filteredCount: 0, unmappedCount: 0, totalPages: 1 });
   const [jobMappingSearch, setJobMappingSearch] = useState('');
   const [jobMappingStatus, setJobMappingStatus] = useState('all');
   const [jobMappingPageNumber, setJobMappingPageNumber] = useState(1);
   const [jobMappingsLoading, setJobMappingsLoading] = useState(false);
+  const [jobMappingsExporting, setJobMappingsExporting] = useState(false);
   const [selectedJobMappingIds, setSelectedJobMappingIds] = useState([]);
   const [bulkJobMappingModelId, setBulkJobMappingModelId] = useState('');
+  const [bulkJobMappingMessage, setBulkJobMappingMessage] = useState(null);
   const loadJobMappings = useCallback(async () => {
     setJobMappingsLoading(true);
     try {
@@ -272,7 +311,7 @@ export default function MasterData({
   const allCurrentJobFilesSelected = currentJobPageIds.length > 0 && currentJobPageIds.every(id => selectedJobMappingIds.includes(id));
   const stationTypesTable = useTableSortAndFilter(localStationTypes, 'id', 'asc');
   const deviceTypesTable = useTableSortAndFilter(localDeviceTypes, 'id', 'asc');
-  const devicesTable = useTableSortAndFilter(localDevices, 'id', 'asc');
+  const devicesTable = useTableSortAndFilter(localDevices, 'id', 'asc', ['channelName', 'deviceTypeName']);
   const buyersTable = useTableSortAndFilter(localBuyers, 'id', 'asc');
 
   // Create Forms State
@@ -325,16 +364,59 @@ export default function MasterData({
 
   const handleSaveJobMapping = async (e) => { e.preventDefault(); if (!jobMappingForm.jobFile.trim() || !jobMappingForm.modelId) return; const saved = await handleAction(async () => { await MasterDataApi.saveJobFileModelMapping({ ...jobMappingForm, modelId: parseInt(jobMappingForm.modelId) }); setJobMappingForm(current => ({ ...current, jobFile: '', remark: '' })); }); if (saved) await loadJobMappings(); };
   const handleDeleteJobMapping = async (id, jobFile) => { if (window.confirm(`Xóa mapping Job File "${jobFile}"?`)) { const saved = await handleAction(async () => { await MasterDataApi.deleteJobFileModelMapping(id); }); if (saved) await loadJobMappings(); } };
-  const toggleJobMappingSelection = (id) => setSelectedJobMappingIds(current => current.includes(id) ? current.filter(x => x !== id) : [...current, id]);
+  const toggleJobMappingSelection = (id) => {
+    setBulkJobMappingMessage(null);
+    setSelectedJobMappingIds(current => current.includes(id) ? current.filter(x => x !== id) : [...current, id]);
+  };
   const toggleCurrentJobMappingPage = () => setSelectedJobMappingIds(current => allCurrentJobFilesSelected
     ? current.filter(id => !currentJobPageIds.includes(id))
     : [...new Set([...current, ...currentJobPageIds])]);
   const handleBulkSaveJobMappings = async () => {
-    if (!bulkJobMappingModelId || selectedJobMappingIds.length === 0) return;
-    const saved = await handleAction(() => MasterDataApi.bulkSaveJobFileModelMappings({ ids: selectedJobMappingIds, modelId: parseInt(bulkJobMappingModelId) }));
-    if (saved) {
+    if (bulkJobMappingModelId === '' || selectedJobMappingIds.length === 0) return;
+    const ids = selectedJobMappingIds.map(Number).filter(Number.isInteger);
+    setLoading(true);
+    setBulkJobMappingMessage(null);
+    try {
+      const result = await MasterDataApi.bulkSaveJobFileModelMappings({
+        ids,
+        modelId: Number(bulkJobMappingModelId)
+      });
+      if (result?.updated !== ids.length) {
+        throw new Error(`Chỉ cập nhật được ${result?.updated ?? 0}/${ids.length} Job File.`);
+      }
       setSelectedJobMappingIds([]);
       await loadJobMappings();
+      setBulkJobMappingMessage({ type: 'success', text: `Đã gán Model cho ${result.updated} Job File.` });
+    } catch (err) {
+      const detail = err.response?.data?.error
+        || Object.values(err.response?.data?.errors || {}).flat().join(' ')
+        || err.message;
+      setBulkJobMappingMessage({ type: 'error', text: detail || 'Không thể gán Model hàng loạt.' });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleExportJobMappings = async () => {
+    setJobMappingsExporting(true);
+    try {
+      const requestPage = page => MasterDataApi.getJobFileModelMappings({
+        page,
+        pageSize: 200,
+        search: jobMappingSearch || undefined,
+        status: jobMappingStatus
+      });
+      const firstPage = await requestPage(1);
+      const items = [...(firstPage.items || [])];
+      for (let page = 2; page <= firstPage.totalPages; page += 1) {
+        const nextPage = await requestPage(page);
+        items.push(...(nextPage.items || []));
+      }
+      exportCsv(items, 'Job_Model_Mapping');
+    } catch (err) {
+      alert(err.response?.data?.error || err.message || 'Không thể export Job File mapping.');
+    } finally {
+      setJobMappingsExporting(false);
     }
   };
 
@@ -392,11 +474,10 @@ export default function MasterData({
   return (
     <div className="space-y-6">
       {/* Sub Tabs Bar */}
-      <div className="flex border-b border-white/10 space-x-1 overflow-x-auto pb-1">
+      <div className={`flex border-b border-slate-200 space-x-1 overflow-x-auto pb-1 ${hideTabBar ? 'hidden' : ''}`}>
         {[
           { id: 'lines', label: 'Production Lines', icon: Layers, count: localLines.length },
           { id: 'stations', label: 'Stations', icon: Cpu, count: localStations.length },
-          { id: 'cpk-rules', label: 'CPK Rules', icon: Gauge, count: localStations.filter(s => s.cpkStepName).length },
           { id: 'channels', label: 'Channels', icon: Radio, count: localChannels.length, conflict: ipConflicts.length },
           { id: 'model-groups', label: 'Model Groups', icon: Box, count: localModelGroups.length },
           { id: 'models', label: 'Models', icon: Tag, count: localModels.length },
@@ -414,17 +495,17 @@ export default function MasterData({
               onClick={() => setActiveSubTab(tab.id)}
               className={`flex items-center gap-1.5 px-3.5 py-2.5 text-xs font-bold font-display rounded-t-xl transition-all border-b-2 whitespace-nowrap ${
                 isActive
-                  ? 'border-blue-500 text-blue-400 bg-slate-900/80 shadow-inner'
-                  : 'border-transparent text-slate-400 hover:text-slate-200 hover:bg-slate-900/40'
+                  ? 'border-blue-500 text-blue-700 bg-slate-100/80 shadow-inner'
+                  : 'border-transparent text-slate-600 hover:text-slate-800 hover:bg-slate-100/40'
               }`}
             >
-              <Icon className={`w-3.5 h-3.5 ${isActive ? 'text-blue-400' : 'text-slate-400'}`} />
+              <Icon className={`w-3.5 h-3.5 ${isActive ? 'text-blue-700' : 'text-slate-600'}`} />
               <span>{tab.label}</span>
-              <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-mono ${isActive ? 'bg-blue-500/20 text-blue-300' : 'bg-slate-800 text-slate-400'}`}>
+              <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-mono ${isActive ? 'bg-blue-500/20 text-blue-700' : 'bg-slate-200 text-slate-600'}`}>
                 {tab.count}
               </span>
               {tab.conflict > 0 && (
-                <span className="px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-400 border border-amber-500/30 text-[10px] font-bold animate-pulse flex items-center gap-1">
+                <span className="px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-700 border border-amber-500/30 text-[10px] font-bold animate-pulse flex items-center gap-1">
                   <AlertTriangle className="w-3 h-3" /> {tab.conflict} Xung đột IP
                 </span>
               )}
@@ -436,49 +517,49 @@ export default function MasterData({
       {/* 1. LINES */}
       {activeSubTab === 'lines' && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          <div className="glass-panel p-6 border border-white/10 space-y-4">
-            <h3 className="text-sm font-bold text-white flex items-center gap-2 font-display">
-              <Plus className="w-4 h-4 text-blue-400" /> Thêm Line Sản Xuất
+          <div className="glass-panel p-6 border border-slate-200 space-y-4">
+            <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2 font-display">
+              <Plus className="w-4 h-4 text-blue-700" /> Thêm Line Sản Xuất
             </h3>
             <form onSubmit={handleCreateLine} className="space-y-4">
               <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1.5 uppercase tracking-wider">Tên Line</label>
-                <input type="text" required placeholder="e.g. Line 01 SMT" value={lineForm.name} onChange={e => setLineForm({ ...lineForm, name: e.target.value })} className="w-full bg-slate-950/80 border border-slate-700/80 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-blue-500" />
+                <label className="block text-xs font-semibold text-slate-700 mb-1.5 uppercase tracking-wider">Tên Line</label>
+                <input type="text" required placeholder="e.g. Line 01 SMT" value={lineForm.name} onChange={e => setLineForm({ ...lineForm, name: e.target.value })} className="w-full bg-slate-50/80 border border-slate-300 rounded-xl px-3.5 py-2.5 text-xs text-slate-900 focus:outline-none focus:border-blue-500" />
               </div>
               <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1.5 uppercase tracking-wider">Ghi chú (Remark)</label>
-                <input type="text" placeholder="Ghi chú thêm" value={lineForm.remark} onChange={e => setLineForm({ ...lineForm, remark: e.target.value })} className="w-full bg-slate-950/80 border border-slate-700/80 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-blue-500" />
+                <label className="block text-xs font-semibold text-slate-700 mb-1.5 uppercase tracking-wider">Ghi chú (Remark)</label>
+                <input type="text" placeholder="Ghi chú thêm" value={lineForm.remark} onChange={e => setLineForm({ ...lineForm, remark: e.target.value })} className="w-full bg-slate-50/80 border border-slate-300 rounded-xl px-3.5 py-2.5 text-xs text-slate-900 focus:outline-none focus:border-blue-500" />
               </div>
               <button type="submit" disabled={loading} className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-bold py-2.5 rounded-xl text-xs shadow-lg shadow-blue-600/30 transition-all">
                 {loading ? 'Đang xử lý...' : 'Tạo Line'}
               </button>
             </form>
           </div>
-          <div className="lg:col-span-2 glass-panel p-6 border border-white/10 space-y-4">
+          <div className="lg:col-span-2 glass-panel p-6 border border-slate-200 space-y-4">
             <TableToolbar tableState={linesTable} totalCount={localLines.length} title="Production Line" />
-            <div className="overflow-x-auto rounded-xl border border-white/10">
+            <div className="overflow-x-auto rounded-xl border border-slate-200">
               <table className="w-full text-left text-xs">
-                <thead className="bg-slate-950/90 text-slate-400 uppercase font-semibold font-display tracking-wider border-b border-slate-800">
+                <thead className="bg-slate-50/90 text-slate-600 uppercase font-semibold font-display tracking-wider border-b border-slate-200">
                   <tr>
                     <ThSort label="ID" colKey="id" tableState={linesTable} className="w-24" />
                     <ThSort label="Tên Line" colKey="name" tableState={linesTable} />
                     <ThSort label="Remark" colKey="remark" tableState={linesTable} />
                     <th className="p-3.5 text-right w-24">Thao tác</th>
                   </tr>
-                  <tr className="bg-slate-900/80 border-b border-slate-800">
+                  <tr className="bg-slate-100/80 border-b border-slate-200">
                     <td className="p-1.5">
-                      <input type="text" placeholder="Lọc ID..." value={linesTable.columnFilters.id || ''} onChange={e => linesTable.setColumnFilter('id', e.target.value)} className="w-full bg-slate-950 border border-slate-700/60 rounded-lg px-2 py-1 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 font-mono" />
+                      <input type="text" placeholder="Lọc ID..." value={linesTable.columnFilters.id || ''} onChange={e => linesTable.setColumnFilter('id', e.target.value)} className="w-full bg-slate-50 border border-slate-300 rounded-lg px-2 py-1 text-xs text-slate-900 placeholder-slate-500 focus:outline-none focus:border-blue-500 font-mono" />
                     </td>
                     <td className="p-1.5">
-                      <input type="text" placeholder="Lọc Tên Line..." value={linesTable.columnFilters.name || ''} onChange={e => linesTable.setColumnFilter('name', e.target.value)} className="w-full bg-slate-950 border border-slate-700/60 rounded-lg px-2 py-1 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500" />
+                      <input type="text" placeholder="Lọc Tên Line..." value={linesTable.columnFilters.name || ''} onChange={e => linesTable.setColumnFilter('name', e.target.value)} className="w-full bg-slate-50 border border-slate-300 rounded-lg px-2 py-1 text-xs text-slate-900 placeholder-slate-500 focus:outline-none focus:border-blue-500" />
                     </td>
                     <td className="p-1.5">
-                      <input type="text" placeholder="Lọc Remark..." value={linesTable.columnFilters.remark || ''} onChange={e => linesTable.setColumnFilter('remark', e.target.value)} className="w-full bg-slate-950 border border-slate-700/60 rounded-lg px-2 py-1 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500" />
+                      <input type="text" placeholder="Lọc Remark..." value={linesTable.columnFilters.remark || ''} onChange={e => linesTable.setColumnFilter('remark', e.target.value)} className="w-full bg-slate-50 border border-slate-300 rounded-lg px-2 py-1 text-xs text-slate-900 placeholder-slate-500 focus:outline-none focus:border-blue-500" />
                     </td>
                     <td className="p-1.5"></td>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-800/60 font-mono">
+                <tbody className="divide-y divide-slate-200 font-mono">
                   {linesTable.processedData.length === 0 ? (
                     <tr>
                       <td colSpan={4} className="p-8 text-center text-slate-500 font-sans">
@@ -487,14 +568,14 @@ export default function MasterData({
                     </tr>
                   ) : (
                     linesTable.processedData.map(l => (
-                      <tr key={l.id} className="hover:bg-slate-800/50 transition-colors">
-                        <td className="p-3.5 text-slate-400 font-bold">#{l.id}</td>
-                        <td className="p-3.5 font-bold text-white font-sans">{l.name}</td>
-                        <td className="p-3.5 text-slate-400 font-sans">{l.remark || '—'}</td>
+                      <tr key={l.id} className="hover:bg-slate-200/50 transition-colors">
+                        <td className="p-3.5 text-slate-600 font-bold">#{l.id}</td>
+                        <td className="p-3.5 font-bold text-slate-900 font-sans">{l.name}</td>
+                        <td className="p-3.5 text-slate-600 font-sans">{l.remark || '—'}</td>
                         <td className="p-3.5 text-right font-sans">
                           <div className="flex items-center justify-end gap-2">
-                            <button onClick={() => setEditModal({ entityType: 'line', item: { ...l } })} className="p-1.5 rounded-lg bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 transition-colors"><Pencil className="w-3.5 h-3.5" /></button>
-                            <button onClick={() => handleDeleteLine(l.id, l.name)} className="p-1.5 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 transition-colors"><Trash2 className="w-3.5 h-3.5" /></button>
+                            <button onClick={() => setEditModal({ entityType: 'line', item: { ...l } })} className="p-1.5 rounded-lg bg-blue-500/10 hover:bg-blue-500/20 text-blue-700 transition-colors"><Pencil className="w-3.5 h-3.5" /></button>
+                            <button onClick={() => handleDeleteLine(l.id, l.name)} className="p-1.5 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-700 transition-colors"><Trash2 className="w-3.5 h-3.5" /></button>
                           </div>
                         </td>
                       </tr>
@@ -510,50 +591,50 @@ export default function MasterData({
       {/* 2. STATIONS */}
       {activeSubTab === 'stations' && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          <div className="glass-panel p-6 border border-white/10 space-y-4">
-            <h3 className="text-sm font-bold text-white flex items-center gap-2 font-display">
-              <Plus className="w-4 h-4 text-blue-400" /> Thêm Trạm Kiểm Tra (Station)
+          <div className="glass-panel p-6 border border-slate-200 space-y-4">
+            <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2 font-display">
+              <Plus className="w-4 h-4 text-blue-700" /> Thêm Trạm Kiểm Tra (Station)
             </h3>
             <form onSubmit={handleCreateStation} className="space-y-4">
               <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1.5 uppercase tracking-wider">Chọn Line *</label>
-                <select required value={stationForm.lineId} onChange={e => setStationForm({ ...stationForm, lineId: e.target.value })} className="w-full bg-slate-950/80 border border-slate-700/80 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-blue-500">
+                <label className="block text-xs font-semibold text-slate-700 mb-1.5 uppercase tracking-wider">Chọn Line *</label>
+                <select required value={stationForm.lineId} onChange={e => setStationForm({ ...stationForm, lineId: e.target.value })} className="w-full bg-slate-50/80 border border-slate-300 rounded-xl px-3.5 py-2.5 text-xs text-slate-900 focus:outline-none focus:border-blue-500">
                   <option value="">-- Chọn Line --</option>
                   {localLines.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
                 </select>
               </div>
               <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1.5 uppercase tracking-wider">Tên Station *</label>
-                <input type="text" required placeholder="e.g. SPI Inspection #1" value={stationForm.name} onChange={e => setStationForm({ ...stationForm, name: e.target.value })} className="w-full bg-slate-950/80 border border-slate-700/80 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-blue-500" />
+                <label className="block text-xs font-semibold text-slate-700 mb-1.5 uppercase tracking-wider">Tên Station *</label>
+                <input type="text" required placeholder="e.g. SPI Inspection #1" value={stationForm.name} onChange={e => setStationForm({ ...stationForm, name: e.target.value })} className="w-full bg-slate-50/80 border border-slate-300 rounded-xl px-3.5 py-2.5 text-xs text-slate-900 focus:outline-none focus:border-blue-500" />
               </div>
               <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1.5 uppercase tracking-wider">Model Group</label>
-                <select value={stationForm.modelGroupId} onChange={e => setStationForm({ ...stationForm, modelGroupId: e.target.value })} className="w-full bg-slate-950/80 border border-slate-700/80 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-blue-500">
+                <label className="block text-xs font-semibold text-slate-700 mb-1.5 uppercase tracking-wider">Model Group</label>
+                <select value={stationForm.modelGroupId} onChange={e => setStationForm({ ...stationForm, modelGroupId: e.target.value })} className="w-full bg-slate-50/80 border border-slate-300 rounded-xl px-3.5 py-2.5 text-xs text-slate-900 focus:outline-none focus:border-blue-500">
                   <option value="">-- Tùy chọn Model Group --</option>
                   {localModelGroups.map(mg => <option key={mg.id} value={mg.id}>{mg.name}</option>)}
                 </select>
               </div>
               <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1.5 uppercase tracking-wider">Station Type</label>
-                <select value={stationForm.stationTypeId} onChange={e => setStationForm({ ...stationForm, stationTypeId: e.target.value })} className="w-full bg-slate-950/80 border border-slate-700/80 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-blue-500">
+                <label className="block text-xs font-semibold text-slate-700 mb-1.5 uppercase tracking-wider">Station Type</label>
+                <select value={stationForm.stationTypeId} onChange={e => setStationForm({ ...stationForm, stationTypeId: e.target.value })} className="w-full bg-slate-50/80 border border-slate-300 rounded-xl px-3.5 py-2.5 text-xs text-slate-900 focus:outline-none focus:border-blue-500">
                   <option value="">-- Tùy chọn Loại Trạm --</option>
                   {localStationTypes.map(st => <option key={st.id} value={st.id}>{st.name}</option>)}
                 </select>
               </div>
               <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1.5 uppercase tracking-wider">Remark</label>
-                <input type="text" placeholder="Ghi chú" value={stationForm.remark} onChange={e => setStationForm({ ...stationForm, remark: e.target.value })} className="w-full bg-slate-950/80 border border-slate-700/80 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-blue-500" />
+                <label className="block text-xs font-semibold text-slate-700 mb-1.5 uppercase tracking-wider">Remark</label>
+                <input type="text" placeholder="Ghi chú" value={stationForm.remark} onChange={e => setStationForm({ ...stationForm, remark: e.target.value })} className="w-full bg-slate-50/80 border border-slate-300 rounded-xl px-3.5 py-2.5 text-xs text-slate-900 focus:outline-none focus:border-blue-500" />
               </div>
               <button type="submit" disabled={loading} className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-bold py-2.5 rounded-xl text-xs shadow-lg shadow-blue-600/30 transition-all">
                 {loading ? 'Đang xử lý...' : 'Tạo Station'}
               </button>
             </form>
           </div>
-          <div className="lg:col-span-2 glass-panel p-6 border border-white/10 space-y-4">
+          <div className="lg:col-span-2 glass-panel p-6 border border-slate-200 space-y-4">
             <TableToolbar tableState={stationsTable} totalCount={localStations.length} title="Station" />
-            <div className="overflow-x-auto rounded-xl border border-white/10">
+            <div className="overflow-x-auto rounded-xl border border-slate-200">
               <table className="w-full text-left text-xs">
-                <thead className="bg-slate-950/90 text-slate-400 uppercase font-semibold font-display tracking-wider border-b border-slate-800">
+                <thead className="bg-slate-50/90 text-slate-600 uppercase font-semibold font-display tracking-wider border-b border-slate-200">
                   <tr>
                     <ThSort label="ID" colKey="id" tableState={stationsTable} className="w-20" />
                     <ThSort label="Station Name" colKey="name" tableState={stationsTable} />
@@ -562,35 +643,35 @@ export default function MasterData({
                     <ThSort label="Type" colKey="stationTypeName" tableState={stationsTable} />
                     <th className="p-3.5 text-right w-24">Thao tác</th>
                   </tr>
-                  <tr className="bg-slate-900/80 border-b border-slate-800">
+                  <tr className="bg-slate-100/80 border-b border-slate-200">
                     <td className="p-1.5">
-                      <input type="text" placeholder="ID..." value={stationsTable.columnFilters.id || ''} onChange={e => stationsTable.setColumnFilter('id', e.target.value)} className="w-full bg-slate-950 border border-slate-700/60 rounded-lg px-2 py-1 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 font-mono" />
+                      <input type="text" placeholder="ID..." value={stationsTable.columnFilters.id || ''} onChange={e => stationsTable.setColumnFilter('id', e.target.value)} className="w-full bg-slate-50 border border-slate-300 rounded-lg px-2 py-1 text-xs text-slate-900 placeholder-slate-500 focus:outline-none focus:border-blue-500 font-mono" />
                     </td>
                     <td className="p-1.5">
-                      <input type="text" placeholder="Tên Station..." value={stationsTable.columnFilters.name || ''} onChange={e => stationsTable.setColumnFilter('name', e.target.value)} className="w-full bg-slate-950 border border-slate-700/60 rounded-lg px-2 py-1 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500" />
+                      <input type="text" placeholder="Tên Station..." value={stationsTable.columnFilters.name || ''} onChange={e => stationsTable.setColumnFilter('name', e.target.value)} className="w-full bg-slate-50 border border-slate-300 rounded-lg px-2 py-1 text-xs text-slate-900 placeholder-slate-500 focus:outline-none focus:border-blue-500" />
                     </td>
                     <td className="p-1.5">
-                      <select value={stationsTable.columnFilters.lineName || ''} onChange={e => stationsTable.setColumnFilter('lineName', e.target.value)} className="w-full bg-slate-950 border border-slate-700/60 rounded-lg px-2 py-1 text-xs text-white focus:outline-none focus:border-blue-500">
+                      <select value={stationsTable.columnFilters.lineName || ''} onChange={e => stationsTable.setColumnFilter('lineName', e.target.value)} className="w-full bg-slate-50 border border-slate-300 rounded-lg px-2 py-1 text-xs text-slate-900 focus:outline-none focus:border-blue-500">
                         <option value="">Tất cả Line</option>
-                        {localLines.map(l => <option key={l.id} value={l.name}>{l.name}</option>)}
+                        {stationsTable.optionsFor('lineName').map(v => <option key={v} value={v}>{v}</option>)}
                       </select>
                     </td>
                     <td className="p-1.5">
-                      <select value={stationsTable.columnFilters.modelGroupName || ''} onChange={e => stationsTable.setColumnFilter('modelGroupName', e.target.value)} className="w-full bg-slate-950 border border-slate-700/60 rounded-lg px-2 py-1 text-xs text-white focus:outline-none focus:border-blue-500">
+                      <select value={stationsTable.columnFilters.modelGroupName || ''} onChange={e => stationsTable.setColumnFilter('modelGroupName', e.target.value)} className="w-full bg-slate-50 border border-slate-300 rounded-lg px-2 py-1 text-xs text-slate-900 focus:outline-none focus:border-blue-500">
                         <option value="">Tất cả Group</option>
-                        {localModelGroups.map(mg => <option key={mg.id} value={mg.name}>{mg.name}</option>)}
+                        {stationsTable.optionsFor('modelGroupName').map(v => <option key={v} value={v}>{v}</option>)}
                       </select>
                     </td>
                     <td className="p-1.5">
-                      <select value={stationsTable.columnFilters.stationTypeName || ''} onChange={e => stationsTable.setColumnFilter('stationTypeName', e.target.value)} className="w-full bg-slate-950 border border-slate-700/60 rounded-lg px-2 py-1 text-xs text-white focus:outline-none focus:border-blue-500">
+                      <select value={stationsTable.columnFilters.stationTypeName || ''} onChange={e => stationsTable.setColumnFilter('stationTypeName', e.target.value)} className="w-full bg-slate-50 border border-slate-300 rounded-lg px-2 py-1 text-xs text-slate-900 focus:outline-none focus:border-blue-500">
                         <option value="">Tất cả Type</option>
-                        {localStationTypes.map(st => <option key={st.id} value={st.name}>{st.name}</option>)}
+                        {stationsTable.optionsFor('stationTypeName').map(v => <option key={v} value={v}>{v}</option>)}
                       </select>
                     </td>
                     <td className="p-1.5"></td>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-800/60 font-mono">
+                <tbody className="divide-y divide-slate-200 font-mono">
                   {stationsTable.processedData.length === 0 ? (
                     <tr>
                       <td colSpan={6} className="p-8 text-center text-slate-500 font-sans">
@@ -599,16 +680,16 @@ export default function MasterData({
                     </tr>
                   ) : (
                     stationsTable.processedData.map(s => (
-                      <tr key={s.id} className="hover:bg-slate-800/50 transition-colors">
-                        <td className="p-3.5 text-slate-400 font-bold">#{s.id}</td>
-                        <td className="p-3.5 font-bold text-white font-sans">{s.name}</td>
-                        <td className="p-3.5 text-slate-300 font-sans">{s.lineName}</td>
-                        <td className="p-3.5 text-slate-300 font-sans">{s.modelGroupName || '—'}</td>
-                        <td className="p-3.5 text-slate-300 font-sans">{s.stationTypeName || '—'}</td>
+                      <tr key={s.id} className="hover:bg-slate-200/50 transition-colors">
+                        <td className="p-3.5 text-slate-600 font-bold">#{s.id}</td>
+                        <td className="p-3.5 font-bold text-slate-900 font-sans">{s.name}</td>
+                        <td className="p-3.5 text-slate-700 font-sans">{s.lineName}</td>
+                        <td className="p-3.5 text-slate-700 font-sans">{s.modelGroupName || '—'}</td>
+                        <td className="p-3.5 text-slate-700 font-sans">{s.stationTypeName || '—'}</td>
                         <td className="p-3.5 text-right font-sans">
                           <div className="flex items-center justify-end gap-2">
-                            <button onClick={() => setEditModal({ entityType: 'station', item: { ...s } })} className="p-1.5 rounded-lg bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 transition-colors"><Pencil className="w-3.5 h-3.5" /></button>
-                            <button onClick={() => handleDeleteStation(s.id, s.name)} className="p-1.5 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 transition-colors"><Trash2 className="w-3.5 h-3.5" /></button>
+                            <button onClick={() => setEditModal({ entityType: 'station', item: { ...s } })} className="p-1.5 rounded-lg bg-blue-500/10 hover:bg-blue-500/20 text-blue-700 transition-colors"><Pencil className="w-3.5 h-3.5" /></button>
+                            <button onClick={() => handleDeleteStation(s.id, s.name)} className="p-1.5 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-700 transition-colors"><Trash2 className="w-3.5 h-3.5" /></button>
                           </div>
                         </td>
                       </tr>
@@ -626,31 +707,31 @@ export default function MasterData({
         <div className="space-y-6">
           {/* Cảnh báo Xung đột IP chi tiết & Gộp Channel */}
           {ipConflicts.length > 0 && (
-            <div className="bg-amber-950/40 border border-amber-500/40 rounded-xl p-4 space-y-3 animate-fade-in">
-              <div className="flex items-center gap-2 text-amber-400 font-bold text-xs uppercase tracking-wider">
-                <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
+            <div className="bg-amber-50/40 border border-amber-500/40 rounded-xl p-4 space-y-3 animate-fade-in">
+              <div className="flex items-center gap-2 text-amber-700 font-bold text-xs uppercase tracking-wider">
+                <AlertTriangle className="w-4 h-4 text-amber-700 shrink-0" />
                 <span>Phát hiện {ipConflicts.length} địa chỉ IP trùng lặp giữa các Channel!</span>
               </div>
               <div className="space-y-2 text-xs">
                 {ipConflicts.map(conf => (
-                  <div key={conf.ip} className="bg-slate-950/80 p-3 rounded-lg border border-amber-500/30 space-y-2">
-                    <div className="flex items-center justify-between text-amber-300 font-bold font-mono">
-                      <span>🌐 IP TRÙNG: <span className="text-white underline">{conf.ip}</span></span>
-                      <span className="text-[11px] text-amber-400/90 font-sans italic bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20">
+                  <div key={conf.ip} className="bg-slate-50/80 p-3 rounded-lg border border-amber-500/30 space-y-2">
+                    <div className="flex items-center justify-between text-amber-700 font-bold font-mono">
+                      <span>🌐 IP TRÙNG: <span className="text-slate-900 underline">{conf.ip}</span></span>
+                      <span className="text-[11px] text-amber-700/90 font-sans italic bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20">
                         Trùng giữa {conf.channels.length} Channels
                       </span>
                     </div>
-                    <div className="pl-3 border-l-2 border-amber-500/50 space-y-1.5 font-sans text-slate-300 text-[11px]">
+                    <div className="pl-3 border-l-2 border-amber-500/50 space-y-1.5 font-sans text-slate-700 text-[11px]">
                       {conf.channels.map(ch => {
                         const targetCandidates = conf.channels.filter(c => c.id !== ch.id);
                         return (
-                          <div key={ch.id} className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 bg-slate-900/60 p-2 rounded border border-slate-800">
+                          <div key={ch.id} className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 bg-slate-100/60 p-2 rounded border border-slate-200">
                             <div>
-                              <span className="font-bold text-amber-400">Channel #{ch.id}:</span>{' '}
-                              <span className="text-white font-bold">{ch.name}</span>
-                              <div className="text-[10px] text-slate-400">
-                                Chuyền: <strong className="text-slate-200">{ch.lineName || '—'}</strong> | Trạm: <strong className="text-slate-200">{ch.stationName}</strong>
-                                {' | '}MAC: {ch.macAddress ? <strong className="text-amber-300 font-mono font-bold bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/20">{ch.macAddress}</strong> : <span className="text-slate-500 italic">Chưa đăng ký MAC</span>}
+                              <span className="font-bold text-amber-700">Channel #{ch.id}:</span>{' '}
+                              <span className="text-slate-900 font-bold">{ch.name}</span>
+                              <div className="text-[10px] text-slate-600">
+                                Chuyền: <strong className="text-slate-800">{ch.lineName || '—'}</strong> | Trạm: <strong className="text-slate-800">{ch.stationName}</strong>
+                                {' | '}MAC: {ch.macAddress ? <strong className="text-amber-700 font-mono font-bold bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/20">{ch.macAddress}</strong> : <span className="text-slate-500 italic">Chưa đăng ký MAC</span>}
                               </div>
                             </div>
                             <div className="flex items-center gap-1.5 shrink-0 flex-wrap">
@@ -658,15 +739,15 @@ export default function MasterData({
                                 <button
                                   key={targetCh.id}
                                   onClick={() => handleMergeChannels(ch, targetCh)}
-                                  className="px-2.5 py-1 rounded-lg bg-indigo-500/20 hover:bg-indigo-500/30 text-indigo-300 font-bold text-[11px] transition-colors border border-indigo-500/30 flex items-center gap-1"
+                                  className="px-2.5 py-1 rounded-lg bg-indigo-500/20 hover:bg-indigo-500/30 text-indigo-700 font-bold text-[11px] transition-colors border border-indigo-500/30 flex items-center gap-1"
                                   title={`Gộp dữ liệu từ Channel #${ch.id} (${ch.name}) sang Channel chính #${targetCh.id} (${targetCh.name}) và xóa Channel #${ch.id}`}
                                 >
-                                  <GitMerge className="w-3 h-3 text-indigo-400" /> Gộp vào #{targetCh.id}
+                                  <GitMerge className="w-3 h-3 text-indigo-700" /> Gộp vào #{targetCh.id}
                                 </button>
                               ))}
                               <button
                                 onClick={() => setEditModal({ entityType: 'channel', item: { ...ch } })}
-                                className="px-2.5 py-1 rounded-lg bg-blue-500/20 hover:bg-blue-500/30 text-blue-300 font-bold text-[11px] transition-colors border border-blue-500/30 flex items-center gap-1"
+                                className="px-2.5 py-1 rounded-lg bg-blue-500/20 hover:bg-blue-500/30 text-blue-700 font-bold text-[11px] transition-colors border border-blue-500/30 flex items-center gap-1"
                               >
                                 <Pencil className="w-3 h-3" /> Sửa IP
                               </button>
@@ -682,36 +763,36 @@ export default function MasterData({
           )}
 
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            <div className="glass-panel p-6 border border-white/10 space-y-4">
-              <h3 className="text-sm font-bold text-white flex items-center gap-2 font-display">
-                <Plus className="w-4 h-4 text-blue-400" /> Thêm Channel
+            <div className="glass-panel p-6 border border-slate-200 space-y-4">
+              <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2 font-display">
+                <Plus className="w-4 h-4 text-blue-700" /> Thêm Channel
               </h3>
               <form onSubmit={handleCreateChannel} className="space-y-4">
                 <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1.5 uppercase tracking-wider">Chọn Station *</label>
-                  <select required value={channelForm.stationId} onChange={e => setChannelForm({ ...channelForm, stationId: e.target.value })} className="w-full bg-slate-950/80 border border-slate-700/80 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-blue-500">
+                  <label className="block text-xs font-semibold text-slate-700 mb-1.5 uppercase tracking-wider">Chọn Station *</label>
+                  <select required value={channelForm.stationId} onChange={e => setChannelForm({ ...channelForm, stationId: e.target.value })} className="w-full bg-slate-50/80 border border-slate-300 rounded-xl px-3.5 py-2.5 text-xs text-slate-900 focus:outline-none focus:border-blue-500">
                     <option value="">-- Chọn Station --</option>
                     {localStations.map(s => <option key={s.id} value={s.id}>{s.name} ({s.lineName})</option>)}
                   </select>
                 </div>
                 <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1.5 uppercase tracking-wider">Tên Channel *</label>
-                  <input type="text" required placeholder="e.g. Optical Sensor #1" value={channelForm.name} onChange={e => setChannelForm({ ...channelForm, name: e.target.value })} className="w-full bg-slate-950/80 border border-slate-700/80 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-blue-500" />
+                  <label className="block text-xs font-semibold text-slate-700 mb-1.5 uppercase tracking-wider">Tên Channel *</label>
+                  <input type="text" required placeholder="e.g. Optical Sensor #1" value={channelForm.name} onChange={e => setChannelForm({ ...channelForm, name: e.target.value })} className="w-full bg-slate-50/80 border border-slate-300 rounded-xl px-3.5 py-2.5 text-xs text-slate-900 focus:outline-none focus:border-blue-500" />
                 </div>
                 <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1.5 uppercase tracking-wider">GMES Name</label>
-                  <input type="text" placeholder="Tên kết nối GMES" value={channelForm.gmesName} onChange={e => setChannelForm({ ...channelForm, gmesName: e.target.value })} className="w-full bg-slate-950/80 border border-slate-700/80 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-blue-500" />
+                  <label className="block text-xs font-semibold text-slate-700 mb-1.5 uppercase tracking-wider">GMES Name</label>
+                  <input type="text" placeholder="Tên kết nối GMES" value={channelForm.gmesName} onChange={e => setChannelForm({ ...channelForm, gmesName: e.target.value })} className="w-full bg-slate-50/80 border border-slate-300 rounded-xl px-3.5 py-2.5 text-xs text-slate-900 focus:outline-none focus:border-blue-500" />
                 </div>
                 <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1.5 uppercase tracking-wider">IP Address</label>
-                  <input type="text" placeholder="192.168.1.100" value={channelForm.ipAddress} onChange={e => setChannelForm({ ...channelForm, ipAddress: e.target.value })} className="w-full bg-slate-950/80 border border-slate-700/80 rounded-xl px-3.5 py-2.5 text-xs text-white font-mono focus:outline-none focus:border-blue-500" />
+                  <label className="block text-xs font-semibold text-slate-700 mb-1.5 uppercase tracking-wider">IP Address</label>
+                  <input type="text" placeholder="192.168.1.100" value={channelForm.ipAddress} onChange={e => setChannelForm({ ...channelForm, ipAddress: e.target.value })} className="w-full bg-slate-50/80 border border-slate-300 rounded-xl px-3.5 py-2.5 text-xs text-slate-900 font-mono focus:outline-none focus:border-blue-500" />
                   {(() => {
                     const ip = (channelForm.ipAddress || '').trim();
                     if (ip && ip !== '127.0.0.1') {
                       const dup = localChannels.filter(c => (c.ipAddress || '').trim() === ip);
                       if (dup.length > 0) {
                         return (
-                          <p className="mt-1 text-[11px] text-amber-400 flex items-center gap-1 font-sans">
+                          <p className="mt-1 text-[11px] text-amber-700 flex items-center gap-1 font-sans">
                             <AlertTriangle className="w-3 h-3 shrink-0" />
                             IP này đã được sử dụng bởi Channel: {dup.map(c => `#${c.id} (${c.name})`).join(', ')}
                           </p>
@@ -722,19 +803,19 @@ export default function MasterData({
                   })()}
                 </div>
                 <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1.5 uppercase tracking-wider">MAC Address</label>
-                  <input type="text" placeholder="00-11-22-33-44-55" value={channelForm.macAddress} onChange={e => setChannelForm({ ...channelForm, macAddress: e.target.value })} className="w-full bg-slate-950/80 border border-slate-700/80 rounded-xl px-3.5 py-2.5 text-xs text-white font-mono focus:outline-none focus:border-blue-500" />
+                  <label className="block text-xs font-semibold text-slate-700 mb-1.5 uppercase tracking-wider">MAC Address</label>
+                  <input type="text" placeholder="00-11-22-33-44-55" value={channelForm.macAddress} onChange={e => setChannelForm({ ...channelForm, macAddress: e.target.value })} className="w-full bg-slate-50/80 border border-slate-300 rounded-xl px-3.5 py-2.5 text-xs text-slate-900 font-mono focus:outline-none focus:border-blue-500" />
                 </div>
                 <button type="submit" disabled={loading} className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-bold py-2.5 rounded-xl text-xs shadow-lg shadow-blue-600/30 transition-all">
                   {loading ? 'Đang xử lý...' : 'Tạo Channel'}
                 </button>
               </form>
             </div>
-          <div className="lg:col-span-2 glass-panel p-6 border border-white/10 space-y-4">
+          <div className="lg:col-span-2 glass-panel p-6 border border-slate-200 space-y-4">
             <TableToolbar tableState={channelsTable} totalCount={localChannels.length} title="Channel" />
-            <div className="overflow-x-auto rounded-xl border border-white/10">
+            <div className="overflow-x-auto rounded-xl border border-slate-200">
               <table className="w-full text-left text-xs">
-                <thead className="bg-slate-950/90 text-slate-400 uppercase font-semibold font-display tracking-wider border-b border-slate-800">
+                <thead className="bg-slate-50/90 text-slate-600 uppercase font-semibold font-display tracking-wider border-b border-slate-200">
                   <tr>
                     <ThSort label="ID" colKey="id" tableState={channelsTable} className="w-20" />
                     <ThSort label="Line" colKey="lineName" tableState={channelsTable} />
@@ -744,35 +825,35 @@ export default function MasterData({
                     <ThSort label="IP / MAC" colKey="ipAddress" tableState={channelsTable} />
                     <th className="p-3.5 text-right w-24">Thao tác</th>
                   </tr>
-                  <tr className="bg-slate-900/80 border-b border-slate-800">
+                  <tr className="bg-slate-100/80 border-b border-slate-200">
                     <td className="p-1.5">
-                      <input type="text" placeholder="ID..." value={channelsTable.columnFilters.id || ''} onChange={e => channelsTable.setColumnFilter('id', e.target.value)} className="w-full bg-slate-950 border border-slate-700/60 rounded-lg px-2 py-1 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 font-mono" />
+                      <input type="text" placeholder="ID..." value={channelsTable.columnFilters.id || ''} onChange={e => channelsTable.setColumnFilter('id', e.target.value)} className="w-full bg-slate-50 border border-slate-300 rounded-lg px-2 py-1 text-xs text-slate-900 placeholder-slate-500 focus:outline-none focus:border-blue-500 font-mono" />
                     </td>
                     <td className="p-1.5">
-                      <select value={channelsTable.columnFilters.lineName || ''} onChange={e => channelsTable.setColumnFilter('lineName', e.target.value)} className="w-full bg-slate-950 border border-slate-700/60 rounded-lg px-2 py-1 text-xs text-white focus:outline-none focus:border-blue-500">
+                      <select value={channelsTable.columnFilters.lineName || ''} onChange={e => channelsTable.setColumnFilter('lineName', e.target.value)} className="w-full bg-slate-50 border border-slate-300 rounded-lg px-2 py-1 text-xs text-slate-900 focus:outline-none focus:border-blue-500">
                         <option value="">Tất cả Line</option>
-                        {localLines.map(l => <option key={l.id} value={l.name}>{l.name}</option>)}
+                        {channelsTable.optionsFor('lineName').map(v => <option key={v} value={v}>{v}</option>)}
                       </select>
                     </td>
                     <td className="p-1.5">
-                      <input type="text" placeholder="Tên Channel..." value={channelsTable.columnFilters.name || ''} onChange={e => channelsTable.setColumnFilter('name', e.target.value)} className="w-full bg-slate-950 border border-slate-700/60 rounded-lg px-2 py-1 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500" />
+                      <input type="text" placeholder="Tên Channel..." value={channelsTable.columnFilters.name || ''} onChange={e => channelsTable.setColumnFilter('name', e.target.value)} className="w-full bg-slate-50 border border-slate-300 rounded-lg px-2 py-1 text-xs text-slate-900 placeholder-slate-500 focus:outline-none focus:border-blue-500" />
                     </td>
                     <td className="p-1.5">
-                      <select value={channelsTable.columnFilters.stationName || ''} onChange={e => channelsTable.setColumnFilter('stationName', e.target.value)} className="w-full bg-slate-950 border border-slate-700/60 rounded-lg px-2 py-1 text-xs text-white focus:outline-none focus:border-blue-500">
+                      <select value={channelsTable.columnFilters.stationName || ''} onChange={e => channelsTable.setColumnFilter('stationName', e.target.value)} className="w-full bg-slate-50 border border-slate-300 rounded-lg px-2 py-1 text-xs text-slate-900 focus:outline-none focus:border-blue-500">
                         <option value="">Tất cả Station</option>
-                        {localStations.map(s => <option key={s.id} value={s.name}>{s.name}</option>)}
+                        {channelsTable.optionsFor('stationName').map(v => <option key={v} value={v}>{v}</option>)}
                       </select>
                     </td>
                     <td className="p-1.5">
-                      <input type="text" placeholder="Lọc GMES..." value={channelsTable.columnFilters.gmesName || ''} onChange={e => channelsTable.setColumnFilter('gmesName', e.target.value)} className="w-full bg-slate-950 border border-slate-700/60 rounded-lg px-2 py-1 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500" />
+                      <input type="text" placeholder="Lọc GMES..." value={channelsTable.columnFilters.gmesName || ''} onChange={e => channelsTable.setColumnFilter('gmesName', e.target.value)} className="w-full bg-slate-50 border border-slate-300 rounded-lg px-2 py-1 text-xs text-slate-900 placeholder-slate-500 focus:outline-none focus:border-blue-500" />
                     </td>
                     <td className="p-1.5">
-                      <input type="text" placeholder="IP/MAC..." value={channelsTable.columnFilters.ipAddress || ''} onChange={e => channelsTable.setColumnFilter('ipAddress', e.target.value)} className="w-full bg-slate-950 border border-slate-700/60 rounded-lg px-2 py-1 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 font-mono" />
+                      <input type="text" placeholder="IP/MAC..." value={channelsTable.columnFilters.ipAddress || ''} onChange={e => channelsTable.setColumnFilter('ipAddress', e.target.value)} className="w-full bg-slate-50 border border-slate-300 rounded-lg px-2 py-1 text-xs text-slate-900 placeholder-slate-500 focus:outline-none focus:border-blue-500 font-mono" />
                     </td>
                     <td className="p-1.5"></td>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-800/60 font-mono">
+                <tbody className="divide-y divide-slate-200 font-mono">
                   {channelsTable.processedData.length === 0 ? (
                     <tr>
                       <td colSpan={7} className="p-8 text-center text-slate-500 font-sans">
@@ -781,20 +862,20 @@ export default function MasterData({
                     </tr>
                   ) : (
                     channelsTable.processedData.map(c => (
-                      <tr key={c.id} className="hover:bg-slate-800/50 transition-colors">
-                        <td className="p-3.5 text-slate-400 font-bold">#{c.id}</td>
-                        <td className="p-3.5 font-bold text-cyan-400 font-sans">{c.lineName || 'Unassigned Line'}</td>
-                        <td className="p-3.5 font-bold text-white font-sans">{c.name}</td>
-                        <td className="p-3.5 text-slate-300 font-sans">{c.stationName}</td>
-                        <td className="p-3.5 text-slate-400 font-sans">{c.gmesName || '—'}</td>
+                      <tr key={c.id} className="hover:bg-slate-200/50 transition-colors">
+                        <td className="p-3.5 text-slate-600 font-bold">#{c.id}</td>
+                        <td className="p-3.5 font-bold text-cyan-700 font-sans">{c.lineName || 'Unassigned Line'}</td>
+                        <td className="p-3.5 font-bold text-slate-900 font-sans">{c.name}</td>
+                        <td className="p-3.5 text-slate-700 font-sans">{c.stationName}</td>
+                        <td className="p-3.5 text-slate-600 font-sans">{c.gmesName || '—'}</td>
                         <td className="p-3.5">
-                          <div className="text-blue-400 font-bold">{c.ipAddress || '127.0.0.1'}</div>
-                          <div className="text-[10px] text-slate-400">{c.macAddress || '—'}</div>
+                          <div className="text-blue-700 font-bold">{c.ipAddress || '127.0.0.1'}</div>
+                          <div className="text-[10px] text-slate-600">{c.macAddress || '—'}</div>
                         </td>
                         <td className="p-3.5 text-right font-sans">
                           <div className="flex items-center justify-end gap-2">
-                            <button onClick={() => setEditModal({ entityType: 'channel', item: { ...c } })} className="p-1.5 rounded-lg bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 transition-colors"><Pencil className="w-3.5 h-3.5" /></button>
-                            <button onClick={() => handleDeleteChannel(c.id, c.name)} className="p-1.5 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 transition-colors"><Trash2 className="w-3.5 h-3.5" /></button>
+                            <button onClick={() => setEditModal({ entityType: 'channel', item: { ...c } })} className="p-1.5 rounded-lg bg-blue-500/10 hover:bg-blue-500/20 text-blue-700 transition-colors"><Pencil className="w-3.5 h-3.5" /></button>
+                            <button onClick={() => handleDeleteChannel(c.id, c.name)} className="p-1.5 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-700 transition-colors"><Trash2 className="w-3.5 h-3.5" /></button>
                           </div>
                         </td>
                       </tr>
@@ -811,36 +892,36 @@ export default function MasterData({
       {/* 4. MODEL GROUPS */}
       {activeSubTab === 'model-groups' && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          <div className="glass-panel p-6 border border-white/10 space-y-4">
-            <h3 className="text-sm font-bold text-white flex items-center gap-2 font-display">
-              <Plus className="w-4 h-4 text-blue-400" /> Thêm Model Group
+          <div className="glass-panel p-6 border border-slate-200 space-y-4">
+            <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2 font-display">
+              <Plus className="w-4 h-4 text-blue-700" /> Thêm Model Group
             </h3>
             <form onSubmit={handleCreateModelGroup} className="space-y-4">
               <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1.5 uppercase tracking-wider">Chọn Buyer</label>
-                <select value={modelGroupForm.buyerId} onChange={e => setModelGroupForm({ ...modelGroupForm, buyerId: e.target.value })} className="w-full bg-slate-950/80 border border-slate-700/80 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-blue-500">
+                <label className="block text-xs font-semibold text-slate-700 mb-1.5 uppercase tracking-wider">Chọn Buyer</label>
+                <select value={modelGroupForm.buyerId} onChange={e => setModelGroupForm({ ...modelGroupForm, buyerId: e.target.value })} className="w-full bg-slate-50/80 border border-slate-300 rounded-xl px-3.5 py-2.5 text-xs text-slate-900 focus:outline-none focus:border-blue-500">
                   <option value="">-- Tùy chọn Buyer --</option>
                   {localBuyers.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
                 </select>
               </div>
               <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1.5 uppercase tracking-wider">Tên Model Group *</label>
-                <input type="text" required placeholder="e.g. M-Class Powertrain" value={modelGroupForm.name} onChange={e => setModelGroupForm({ ...modelGroupForm, name: e.target.value })} className="w-full bg-slate-950/80 border border-slate-700/80 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-blue-500" />
+                <label className="block text-xs font-semibold text-slate-700 mb-1.5 uppercase tracking-wider">Tên Model Group *</label>
+                <input type="text" required placeholder="e.g. M-Class Powertrain" value={modelGroupForm.name} onChange={e => setModelGroupForm({ ...modelGroupForm, name: e.target.value })} className="w-full bg-slate-50/80 border border-slate-300 rounded-xl px-3.5 py-2.5 text-xs text-slate-900 focus:outline-none focus:border-blue-500" />
               </div>
               <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1.5 uppercase tracking-wider">Remark</label>
-                <input type="text" placeholder="Ghi chú" value={modelGroupForm.remark} onChange={e => setModelGroupForm({ ...modelGroupForm, remark: e.target.value })} className="w-full bg-slate-950/80 border border-slate-700/80 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-blue-500" />
+                <label className="block text-xs font-semibold text-slate-700 mb-1.5 uppercase tracking-wider">Remark</label>
+                <input type="text" placeholder="Ghi chú" value={modelGroupForm.remark} onChange={e => setModelGroupForm({ ...modelGroupForm, remark: e.target.value })} className="w-full bg-slate-50/80 border border-slate-300 rounded-xl px-3.5 py-2.5 text-xs text-slate-900 focus:outline-none focus:border-blue-500" />
               </div>
               <button type="submit" disabled={loading} className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-bold py-2.5 rounded-xl text-xs shadow-lg shadow-blue-600/30 transition-all">
                 {loading ? 'Đang xử lý...' : 'Tạo Model Group'}
               </button>
             </form>
           </div>
-          <div className="lg:col-span-2 glass-panel p-6 border border-white/10 space-y-4">
+          <div className="lg:col-span-2 glass-panel p-6 border border-slate-200 space-y-4">
             <TableToolbar tableState={modelGroupsTable} totalCount={localModelGroups.length} title="Model Group" />
-            <div className="overflow-x-auto rounded-xl border border-white/10">
+            <div className="overflow-x-auto rounded-xl border border-slate-200">
               <table className="w-full text-left text-xs">
-                <thead className="bg-slate-950/90 text-slate-400 uppercase font-semibold font-display tracking-wider border-b border-slate-800">
+                <thead className="bg-slate-50/90 text-slate-600 uppercase font-semibold font-display tracking-wider border-b border-slate-200">
                   <tr>
                     <ThSort label="ID" colKey="id" tableState={modelGroupsTable} className="w-20" />
                     <ThSort label="Model Group Name" colKey="name" tableState={modelGroupsTable} />
@@ -848,26 +929,26 @@ export default function MasterData({
                     <ThSort label="Remark" colKey="remark" tableState={modelGroupsTable} />
                     <th className="p-3.5 text-right w-24">Thao tác</th>
                   </tr>
-                  <tr className="bg-slate-900/80 border-b border-slate-800">
+                  <tr className="bg-slate-100/80 border-b border-slate-200">
                     <td className="p-1.5">
-                      <input type="text" placeholder="ID..." value={modelGroupsTable.columnFilters.id || ''} onChange={e => modelGroupsTable.setColumnFilter('id', e.target.value)} className="w-full bg-slate-950 border border-slate-700/60 rounded-lg px-2 py-1 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 font-mono" />
+                      <input type="text" placeholder="ID..." value={modelGroupsTable.columnFilters.id || ''} onChange={e => modelGroupsTable.setColumnFilter('id', e.target.value)} className="w-full bg-slate-50 border border-slate-300 rounded-lg px-2 py-1 text-xs text-slate-900 placeholder-slate-500 focus:outline-none focus:border-blue-500 font-mono" />
                     </td>
                     <td className="p-1.5">
-                      <input type="text" placeholder="Group Name..." value={modelGroupsTable.columnFilters.name || ''} onChange={e => modelGroupsTable.setColumnFilter('name', e.target.value)} className="w-full bg-slate-950 border border-slate-700/60 rounded-lg px-2 py-1 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500" />
+                      <input type="text" placeholder="Group Name..." value={modelGroupsTable.columnFilters.name || ''} onChange={e => modelGroupsTable.setColumnFilter('name', e.target.value)} className="w-full bg-slate-50 border border-slate-300 rounded-lg px-2 py-1 text-xs text-slate-900 placeholder-slate-500 focus:outline-none focus:border-blue-500" />
                     </td>
                     <td className="p-1.5">
-                      <select value={modelGroupsTable.columnFilters.buyerName || ''} onChange={e => modelGroupsTable.setColumnFilter('buyerName', e.target.value)} className="w-full bg-slate-950 border border-slate-700/60 rounded-lg px-2 py-1 text-xs text-white focus:outline-none focus:border-blue-500">
+                      <select value={modelGroupsTable.columnFilters.buyerName || ''} onChange={e => modelGroupsTable.setColumnFilter('buyerName', e.target.value)} className="w-full bg-slate-50 border border-slate-300 rounded-lg px-2 py-1 text-xs text-slate-900 focus:outline-none focus:border-blue-500">
                         <option value="">Tất cả Buyer</option>
-                        {localBuyers.map(b => <option key={b.id} value={b.name}>{b.name}</option>)}
+                        {modelGroupsTable.optionsFor('buyerName').map(v => <option key={v} value={v}>{v}</option>)}
                       </select>
                     </td>
                     <td className="p-1.5">
-                      <input type="text" placeholder="Lọc Remark..." value={modelGroupsTable.columnFilters.remark || ''} onChange={e => modelGroupsTable.setColumnFilter('remark', e.target.value)} className="w-full bg-slate-950 border border-slate-700/60 rounded-lg px-2 py-1 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500" />
+                      <input type="text" placeholder="Lọc Remark..." value={modelGroupsTable.columnFilters.remark || ''} onChange={e => modelGroupsTable.setColumnFilter('remark', e.target.value)} className="w-full bg-slate-50 border border-slate-300 rounded-lg px-2 py-1 text-xs text-slate-900 placeholder-slate-500 focus:outline-none focus:border-blue-500" />
                     </td>
                     <td className="p-1.5"></td>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-800/60 font-mono">
+                <tbody className="divide-y divide-slate-200 font-mono">
                   {modelGroupsTable.processedData.length === 0 ? (
                     <tr>
                       <td colSpan={5} className="p-8 text-center text-slate-500 font-sans">
@@ -876,15 +957,15 @@ export default function MasterData({
                     </tr>
                   ) : (
                     modelGroupsTable.processedData.map(mg => (
-                      <tr key={mg.id} className="hover:bg-slate-800/50 transition-colors">
-                        <td className="p-3.5 text-slate-400 font-bold">#{mg.id}</td>
-                        <td className="p-3.5 font-bold text-white font-sans">{mg.name}</td>
-                        <td className="p-3.5 text-slate-300 font-sans">{mg.buyerName || '—'}</td>
-                        <td className="p-3.5 text-slate-400 font-sans">{mg.remark || '—'}</td>
+                      <tr key={mg.id} className="hover:bg-slate-200/50 transition-colors">
+                        <td className="p-3.5 text-slate-600 font-bold">#{mg.id}</td>
+                        <td className="p-3.5 font-bold text-slate-900 font-sans">{mg.name}</td>
+                        <td className="p-3.5 text-slate-700 font-sans">{mg.buyerName || '—'}</td>
+                        <td className="p-3.5 text-slate-600 font-sans">{mg.remark || '—'}</td>
                         <td className="p-3.5 text-right font-sans">
                           <div className="flex items-center justify-end gap-2">
-                            <button onClick={() => setEditModal({ entityType: 'model-group', item: { ...mg } })} className="p-1.5 rounded-lg bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 transition-colors"><Pencil className="w-3.5 h-3.5" /></button>
-                            <button onClick={() => handleDeleteModelGroup(mg.id, mg.name)} className="p-1.5 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 transition-colors"><Trash2 className="w-3.5 h-3.5" /></button>
+                            <button onClick={() => setEditModal({ entityType: 'model-group', item: { ...mg } })} className="p-1.5 rounded-lg bg-blue-500/10 hover:bg-blue-500/20 text-blue-700 transition-colors"><Pencil className="w-3.5 h-3.5" /></button>
+                            <button onClick={() => handleDeleteModelGroup(mg.id, mg.name)} className="p-1.5 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-700 transition-colors"><Trash2 className="w-3.5 h-3.5" /></button>
                           </div>
                         </td>
                       </tr>
@@ -900,36 +981,36 @@ export default function MasterData({
       {/* 5. MODELS */}
       {activeSubTab === 'models' && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          <div className="glass-panel p-6 border border-white/10 space-y-4">
-            <h3 className="text-sm font-bold text-white flex items-center gap-2 font-display">
-              <Plus className="w-4 h-4 text-blue-400" /> Thêm Model (Sản phẩm)
+          <div className="glass-panel p-6 border border-slate-200 space-y-4">
+            <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2 font-display">
+              <Plus className="w-4 h-4 text-blue-700" /> Thêm Model (Sản phẩm)
             </h3>
             <form onSubmit={handleCreateModel} className="space-y-4">
               <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1.5 uppercase tracking-wider">Chọn Model Group</label>
-                <select value={modelForm.modelGroupId} onChange={e => setModelForm({ ...modelForm, modelGroupId: e.target.value })} className="w-full bg-slate-950/80 border border-slate-700/80 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-blue-500">
+                <label className="block text-xs font-semibold text-slate-700 mb-1.5 uppercase tracking-wider">Chọn Model Group</label>
+                <select value={modelForm.modelGroupId} onChange={e => setModelForm({ ...modelForm, modelGroupId: e.target.value })} className="w-full bg-slate-50/80 border border-slate-300 rounded-xl px-3.5 py-2.5 text-xs text-slate-900 focus:outline-none focus:border-blue-500">
                   <option value="">-- Chọn Model Group --</option>
                   {localModelGroups.map(mg => <option key={mg.id} value={mg.id}>{mg.name}</option>)}
                 </select>
               </div>
               <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1.5 uppercase tracking-wider">Tên Model *</label>
-                <input type="text" required placeholder="e.g. Model W206 Controller" value={modelForm.name} onChange={e => setModelForm({ ...modelForm, name: e.target.value })} className="w-full bg-slate-950/80 border border-slate-700/80 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-blue-500" />
+                <label className="block text-xs font-semibold text-slate-700 mb-1.5 uppercase tracking-wider">Tên Model *</label>
+                <input type="text" required placeholder="e.g. Model W206 Controller" value={modelForm.name} onChange={e => setModelForm({ ...modelForm, name: e.target.value })} className="w-full bg-slate-50/80 border border-slate-300 rounded-xl px-3.5 py-2.5 text-xs text-slate-900 focus:outline-none focus:border-blue-500" />
               </div>
               <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1.5 uppercase tracking-wider">Remark</label>
-                <input type="text" placeholder="Ghi chú" value={modelForm.remark} onChange={e => setModelForm({ ...modelForm, remark: e.target.value })} className="w-full bg-slate-950/80 border border-slate-700/80 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-blue-500" />
+                <label className="block text-xs font-semibold text-slate-700 mb-1.5 uppercase tracking-wider">Remark</label>
+                <input type="text" placeholder="Ghi chú" value={modelForm.remark} onChange={e => setModelForm({ ...modelForm, remark: e.target.value })} className="w-full bg-slate-50/80 border border-slate-300 rounded-xl px-3.5 py-2.5 text-xs text-slate-900 focus:outline-none focus:border-blue-500" />
               </div>
               <button type="submit" disabled={loading} className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-bold py-2.5 rounded-xl text-xs shadow-lg shadow-blue-600/30 transition-all">
                 {loading ? 'Đang xử lý...' : 'Tạo Model'}
               </button>
             </form>
           </div>
-          <div className="lg:col-span-2 glass-panel p-6 border border-white/10 space-y-4">
+          <div className="lg:col-span-2 glass-panel p-6 border border-slate-200 space-y-4">
             <TableToolbar tableState={modelsTable} totalCount={localModels.length} title="Model" />
-            <div className="overflow-x-auto rounded-xl border border-white/10">
+            <div className="overflow-x-auto rounded-xl border border-slate-200">
               <table className="w-full text-left text-xs">
-                <thead className="bg-slate-950/90 text-slate-400 uppercase font-semibold font-display tracking-wider border-b border-slate-800">
+                <thead className="bg-slate-50/90 text-slate-600 uppercase font-semibold font-display tracking-wider border-b border-slate-200">
                   <tr>
                     <ThSort label="ID" colKey="id" tableState={modelsTable} className="w-20" />
                     <ThSort label="Model Name" colKey="name" tableState={modelsTable} />
@@ -937,26 +1018,26 @@ export default function MasterData({
                     <ThSort label="Remark" colKey="remark" tableState={modelsTable} />
                     <th className="p-3.5 text-right w-24">Thao tác</th>
                   </tr>
-                  <tr className="bg-slate-900/80 border-b border-slate-800">
+                  <tr className="bg-slate-100/80 border-b border-slate-200">
                     <td className="p-1.5">
-                      <input type="text" placeholder="ID..." value={modelsTable.columnFilters.id || ''} onChange={e => modelsTable.setColumnFilter('id', e.target.value)} className="w-full bg-slate-950 border border-slate-700/60 rounded-lg px-2 py-1 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 font-mono" />
+                      <input type="text" placeholder="ID..." value={modelsTable.columnFilters.id || ''} onChange={e => modelsTable.setColumnFilter('id', e.target.value)} className="w-full bg-slate-50 border border-slate-300 rounded-lg px-2 py-1 text-xs text-slate-900 placeholder-slate-500 focus:outline-none focus:border-blue-500 font-mono" />
                     </td>
                     <td className="p-1.5">
-                      <input type="text" placeholder="Tên Model..." value={modelsTable.columnFilters.name || ''} onChange={e => modelsTable.setColumnFilter('name', e.target.value)} className="w-full bg-slate-950 border border-slate-700/60 rounded-lg px-2 py-1 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500" />
+                      <input type="text" placeholder="Tên Model..." value={modelsTable.columnFilters.name || ''} onChange={e => modelsTable.setColumnFilter('name', e.target.value)} className="w-full bg-slate-50 border border-slate-300 rounded-lg px-2 py-1 text-xs text-slate-900 placeholder-slate-500 focus:outline-none focus:border-blue-500" />
                     </td>
                     <td className="p-1.5">
-                      <select value={modelsTable.columnFilters.modelGroupName || ''} onChange={e => modelsTable.setColumnFilter('modelGroupName', e.target.value)} className="w-full bg-slate-950 border border-slate-700/60 rounded-lg px-2 py-1 text-xs text-white focus:outline-none focus:border-blue-500">
+                      <select value={modelsTable.columnFilters.modelGroupName || ''} onChange={e => modelsTable.setColumnFilter('modelGroupName', e.target.value)} className="w-full bg-slate-50 border border-slate-300 rounded-lg px-2 py-1 text-xs text-slate-900 focus:outline-none focus:border-blue-500">
                         <option value="">Tất cả Group</option>
-                        {localModelGroups.map(mg => <option key={mg.id} value={mg.name}>{mg.name}</option>)}
+                        {modelsTable.optionsFor('modelGroupName').map(v => <option key={v} value={v}>{v}</option>)}
                       </select>
                     </td>
                     <td className="p-1.5">
-                      <input type="text" placeholder="Lọc Remark..." value={modelsTable.columnFilters.remark || ''} onChange={e => modelsTable.setColumnFilter('remark', e.target.value)} className="w-full bg-slate-950 border border-slate-700/60 rounded-lg px-2 py-1 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500" />
+                      <input type="text" placeholder="Lọc Remark..." value={modelsTable.columnFilters.remark || ''} onChange={e => modelsTable.setColumnFilter('remark', e.target.value)} className="w-full bg-slate-50 border border-slate-300 rounded-lg px-2 py-1 text-xs text-slate-900 placeholder-slate-500 focus:outline-none focus:border-blue-500" />
                     </td>
                     <td className="p-1.5"></td>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-800/60 font-mono">
+                <tbody className="divide-y divide-slate-200 font-mono">
                   {modelsTable.processedData.length === 0 ? (
                     <tr>
                       <td colSpan={5} className="p-8 text-center text-slate-500 font-sans">
@@ -965,15 +1046,15 @@ export default function MasterData({
                     </tr>
                   ) : (
                     modelsTable.processedData.map(m => (
-                      <tr key={m.id} className="hover:bg-slate-800/50 transition-colors">
-                        <td className="p-3.5 text-slate-400 font-bold">#{m.id}</td>
-                        <td className="p-3.5 font-bold text-white font-sans">{m.name}</td>
-                        <td className="p-3.5 text-slate-300 font-sans">{m.modelGroupName || '—'}</td>
-                        <td className="p-3.5 text-slate-400 font-sans">{m.remark || '—'}</td>
+                      <tr key={m.id} className="hover:bg-slate-200/50 transition-colors">
+                        <td className="p-3.5 text-slate-600 font-bold">#{m.id}</td>
+                        <td className="p-3.5 font-bold text-slate-900 font-sans">{m.name}</td>
+                        <td className="p-3.5 text-slate-700 font-sans">{m.modelGroupName || '—'}</td>
+                        <td className="p-3.5 text-slate-600 font-sans">{m.remark || '—'}</td>
                         <td className="p-3.5 text-right font-sans">
                           <div className="flex items-center justify-end gap-2">
-                            <button onClick={() => setEditModal({ entityType: 'model', item: { ...m } })} className="p-1.5 rounded-lg bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 transition-colors"><Pencil className="w-3.5 h-3.5" /></button>
-                            <button onClick={() => handleDeleteModel(m.id, m.name)} className="p-1.5 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 transition-colors"><Trash2 className="w-3.5 h-3.5" /></button>
+                            <button onClick={() => setEditModal({ entityType: 'model', item: { ...m } })} className="p-1.5 rounded-lg bg-blue-500/10 hover:bg-blue-500/20 text-blue-700 transition-colors"><Pencil className="w-3.5 h-3.5" /></button>
+                            <button onClick={() => handleDeleteModel(m.id, m.name)} className="p-1.5 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-700 transition-colors"><Trash2 className="w-3.5 h-3.5" /></button>
                           </div>
                         </td>
                       </tr>
@@ -988,42 +1069,47 @@ export default function MasterData({
 
       {activeSubTab === 'job-model-mapping' && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          <div className="glass-panel p-6 border border-white/10 space-y-4">
+          <div className="glass-panel p-6 border border-slate-200 space-y-4">
             <div className={`rounded-xl border px-4 py-3 ${unmappedJobFileCount > 0 ? 'border-amber-500/30 bg-amber-500/10' : 'border-emerald-500/30 bg-emerald-500/10'}`}>
-              <div className="text-[11px] uppercase tracking-wider text-slate-400">Job File chưa mapping Model</div>
-              <div className={`mt-1 text-2xl font-bold ${unmappedJobFileCount > 0 ? 'text-amber-300' : 'text-emerald-300'}`}>{unmappedJobFileCount}</div>
+              <div className="text-[11px] uppercase tracking-wider text-slate-600">Job File chưa mapping Model</div>
+              <div className={`mt-1 text-2xl font-bold ${unmappedJobFileCount > 0 ? 'text-amber-700' : 'text-emerald-700'}`}>{unmappedJobFileCount}</div>
             </div>
-            <h3 className="text-sm font-bold text-white flex items-center gap-2"><Plus className="w-4 h-4 text-blue-400" /> Mapping Job File → Model</h3>
+            <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2"><Plus className="w-4 h-4 text-blue-700" /> Mapping Job File → Model</h3>
             <form onSubmit={handleSaveJobMapping} className="space-y-4">
-              <div><label className="block text-xs font-semibold text-slate-300 mb-1.5">JOB FILE *</label><input required className="w-full bg-slate-950/80 border border-slate-700/80 rounded-xl px-3.5 py-2.5 text-xs text-white" placeholder="Nhập chính xác tên Job File" value={jobMappingForm.jobFile} onChange={e => setJobMappingForm({...jobMappingForm, jobFile:e.target.value})}/></div>
-              <div><label className="block text-xs font-semibold text-slate-300 mb-1.5">MODEL *</label><select required className="w-full bg-slate-950/80 border border-slate-700/80 rounded-xl px-3.5 py-2.5 text-xs text-white" value={jobMappingForm.modelId} onChange={e => setJobMappingForm({...jobMappingForm, modelId:e.target.value})}><option value="">-- Chọn Model --</option>{localModels.map(m => <option key={m.id} value={m.id}>{m.name}{m.modelGroupName ? ` (${m.modelGroupName})` : ''}</option>)}</select></div>
-              <div><label className="block text-xs font-semibold text-slate-300 mb-1.5">REMARK</label><input className="w-full bg-slate-950/80 border border-slate-700/80 rounded-xl px-3.5 py-2.5 text-xs text-white" value={jobMappingForm.remark} onChange={e => setJobMappingForm({...jobMappingForm, remark:e.target.value})}/></div>
+              <div><label className="block text-xs font-semibold text-slate-700 mb-1.5">JOB FILE *</label><input required className="w-full bg-slate-50/80 border border-slate-300 rounded-xl px-3.5 py-2.5 text-xs text-slate-900" placeholder="Nhập chính xác tên Job File" value={jobMappingForm.jobFile} onChange={e => setJobMappingForm({...jobMappingForm, jobFile:e.target.value})}/></div>
+              <div><label className="block text-xs font-semibold text-slate-700 mb-1.5">MODEL *</label><select required className="w-full bg-slate-50/80 border border-slate-300 rounded-xl px-3.5 py-2.5 text-xs text-slate-900" value={jobMappingForm.modelId} onChange={e => setJobMappingForm({...jobMappingForm, modelId:e.target.value})}><option value="">-- Chọn Model --</option>{localModels.map(m => <option key={m.id} value={m.id}>{m.name}{m.modelGroupName ? ` (${m.modelGroupName})` : ''}</option>)}</select></div>
+              <div><label className="block text-xs font-semibold text-slate-700 mb-1.5">REMARK</label><input className="w-full bg-slate-50/80 border border-slate-300 rounded-xl px-3.5 py-2.5 text-xs text-slate-900" value={jobMappingForm.remark} onChange={e => setJobMappingForm({...jobMappingForm, remark:e.target.value})}/></div>
               <button disabled={loading} className="w-full rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 py-2.5 text-xs font-bold text-white">{loading ? 'Đang lưu...' : 'Lưu mapping'}</button>
               <p className="text-[11px] text-slate-500">Nếu Job File đã tồn tại, Model và Remark sẽ được cập nhật.</p>
             </form>
           </div>
-          <div className="lg:col-span-2 glass-panel p-6 border border-white/10 space-y-4">
-            <div className="flex flex-wrap gap-3 rounded-xl border border-white/10 bg-slate-900/60 p-3">
+          <div className="lg:col-span-2 glass-panel p-6 border border-slate-200 space-y-4">
+            <div className="flex flex-wrap gap-3 rounded-xl border border-slate-200 bg-slate-100/60 p-3">
               <div className="relative min-w-[220px] flex-1">
-                <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
-                <input value={jobMappingSearch} onChange={e => { setJobMappingSearch(e.target.value); setJobMappingPageNumber(1); }} placeholder="Tìm Job File, Model, Remark..." className="w-full rounded-xl border border-slate-700/80 bg-slate-950/80 py-2 pl-9 pr-3 text-xs text-white" />
+                <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-600" />
+                <input value={jobMappingSearch} onChange={e => { setJobMappingSearch(e.target.value); setJobMappingPageNumber(1); }} placeholder="Tìm Job File, Model, Remark..." className="w-full rounded-xl border border-slate-300 bg-slate-50/80 py-2 pl-9 pr-3 text-xs text-slate-900" />
               </div>
-              <select value={jobMappingStatus} onChange={e => { setJobMappingStatus(e.target.value); setJobMappingPageNumber(1); }} className="rounded-xl border border-slate-700/80 bg-slate-950/80 px-3 py-2 text-xs text-white">
+              <select value={jobMappingStatus} onChange={e => { setJobMappingStatus(e.target.value); setJobMappingPageNumber(1); }} className="rounded-xl border border-slate-300 bg-slate-50/80 px-3 py-2 text-xs text-slate-900">
                 <option value="all">Tất cả</option><option value="unmapped">Chưa mapping</option><option value="mapped">Đã mapping</option>
               </select>
-              <span className="self-center text-xs text-slate-400">{jobMappingPage.filteredCount.toLocaleString()} / {jobMappingPage.totalCount.toLocaleString()}</span>
+              <span className="self-center text-xs text-slate-600">{jobMappingPage.filteredCount.toLocaleString()} / {jobMappingPage.totalCount.toLocaleString()}</span>
+              <button type="button" onClick={handleExportJobMappings} disabled={jobMappingsExporting || jobMappingPage.filteredCount === 0} className="flex items-center gap-1.5 rounded-lg border border-emerald-500/20 bg-emerald-500/10 px-3 py-2 text-[11px] font-semibold text-emerald-700 hover:bg-emerald-500/20 disabled:cursor-not-allowed disabled:opacity-40">
+                <Download className="h-3.5 w-3.5" />
+                {jobMappingsExporting ? 'Đang export...' : 'Export CSV'}
+              </button>
             </div>
             <div className="flex flex-wrap items-center gap-3 rounded-xl border border-blue-500/20 bg-blue-500/5 p-3">
-              <span className="text-xs font-semibold text-blue-300">Đã chọn: {selectedJobMappingIds.length}</span>
-              <select value={bulkJobMappingModelId} onChange={e => setBulkJobMappingModelId(e.target.value)} className="min-w-[220px] flex-1 rounded-xl border border-slate-700/80 bg-slate-950/80 px-3 py-2 text-xs text-white"><option value="">-- Chọn Model để gán hàng loạt --</option>{localModels.map(m => <option key={m.id} value={m.id}>{m.name}{m.modelGroupName ? ` (${m.modelGroupName})` : ''}</option>)}</select>
-              <button disabled={loading || !bulkJobMappingModelId || selectedJobMappingIds.length === 0} onClick={handleBulkSaveJobMappings} className="rounded-xl bg-blue-600 px-4 py-2 text-xs font-bold text-white disabled:opacity-40">Gán Model</button>
-              {selectedJobMappingIds.length > 0 && <button onClick={() => setSelectedJobMappingIds([])} className="text-xs text-slate-400 hover:text-white">Bỏ chọn</button>}
+              <span className="text-xs font-semibold text-blue-700">Đã chọn: {selectedJobMappingIds.length}</span>
+              <select value={bulkJobMappingModelId} onChange={e => { setBulkJobMappingModelId(e.target.value); setBulkJobMappingMessage(null); }} className="min-w-[220px] flex-1 rounded-xl border border-slate-300 bg-slate-50/80 px-3 py-2 text-xs text-slate-900"><option value="">-- Chọn Model để gán hàng loạt --</option>{localModels.map(m => <option key={m.id} value={m.id}>{m.name}{m.modelGroupName ? ` (${m.modelGroupName})` : ''}</option>)}</select>
+              <button type="button" disabled={loading || bulkJobMappingModelId === '' || selectedJobMappingIds.length === 0} onClick={handleBulkSaveJobMappings} className="rounded-xl bg-blue-600 px-4 py-2 text-xs font-bold text-white disabled:opacity-40">{loading ? 'Đang gán...' : 'Gán Model'}</button>
+              {selectedJobMappingIds.length > 0 && <button type="button" onClick={() => { setSelectedJobMappingIds([]); setBulkJobMappingMessage(null); }} className="text-xs text-slate-600 hover:text-slate-900">Bỏ chọn</button>}
+              {bulkJobMappingMessage && <p className={`w-full text-xs ${bulkJobMappingMessage.type === 'success' ? 'text-emerald-700' : 'text-rose-700'}`}>{bulkJobMappingMessage.text}</p>}
             </div>
-            <div className="overflow-x-auto rounded-xl border border-white/10"><table className="w-full text-left text-xs"><thead className="bg-slate-950/90 text-slate-400 uppercase"><tr><th className="w-10 p-3.5"><input type="checkbox" checked={allCurrentJobFilesSelected} onChange={toggleCurrentJobMappingPage} title="Chọn tất cả trang hiện tại"/></th><th className="p-3.5">Job File</th><th className="p-3.5">Model</th><th className="p-3.5">Remark</th><th className="p-3.5 text-right">Thao tác</th></tr></thead><tbody className="divide-y divide-slate-800/60">{jobMappingsLoading ? <tr><td colSpan={5} className="p-8 text-center text-slate-500">Đang tải...</td></tr> : jobMappingPage.items.length === 0 ? <tr><td colSpan={5} className="p-8 text-center text-slate-500">Không tìm thấy Job File.</td></tr> : jobMappingPage.items.map(x => <tr key={x.id} className={`hover:bg-slate-800/50 ${selectedJobMappingIds.includes(x.id) ? 'bg-blue-500/10' : ''}`}><td className="p-3.5"><input type="checkbox" checked={selectedJobMappingIds.includes(x.id)} onChange={() => toggleJobMappingSelection(x.id)}/></td><td className="p-3.5 break-all font-mono text-amber-300">{x.jobFile}</td><td className="p-3.5 font-semibold text-white">{x.modelName || <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-[10px] text-amber-300">Chưa mapping</span>}</td><td className="p-3.5 text-slate-400">{x.remark || '—'}</td><td className="p-3.5 text-right"><div className="flex justify-end gap-2"><button onClick={() => setJobMappingForm({ jobFile: x.jobFile, modelId: x.modelId ? String(x.modelId) : '', remark: x.remark || '' })} className="rounded-lg bg-blue-500/10 px-2.5 py-1.5 text-blue-300">{x.modelId ? 'Sửa' : 'Gán Model'}</button>{x.modelId && <button title="Bỏ mapping" onClick={() => handleDeleteJobMapping(x.id, x.jobFile)} className="p-1.5 rounded-lg bg-rose-500/10 text-rose-400"><Trash2 className="w-3.5 h-3.5"/></button>}</div></td></tr>)}</tbody></table></div>
-            <div className="flex items-center justify-between text-xs text-slate-400">
-              <button disabled={jobMappingPage.page <= 1 || jobMappingsLoading} onClick={() => setJobMappingPageNumber(p => Math.max(1, p - 1))} className="rounded-lg border border-slate-700 px-3 py-1.5 disabled:opacity-40">Trang trước</button>
-              <span>Trang <strong className="text-white">{jobMappingPage.page}</strong> / {jobMappingPage.totalPages}</span>
-              <button disabled={jobMappingPage.page >= jobMappingPage.totalPages || jobMappingsLoading} onClick={() => setJobMappingPageNumber(p => p + 1)} className="rounded-lg border border-slate-700 px-3 py-1.5 disabled:opacity-40">Trang sau</button>
+            <div className="overflow-x-auto rounded-xl border border-slate-200"><table className="w-full text-left text-xs"><thead className="bg-slate-50/90 text-slate-600 uppercase"><tr><th className="w-10 p-3.5"><input type="checkbox" checked={allCurrentJobFilesSelected} onChange={toggleCurrentJobMappingPage} title="Chọn tất cả trang hiện tại"/></th><th className="p-3.5">Job File</th><th className="p-3.5">Model</th><th className="p-3.5">Remark</th><th className="p-3.5 text-right">Thao tác</th></tr></thead><tbody className="divide-y divide-slate-200">{jobMappingsLoading ? <tr><td colSpan={5} className="p-8 text-center text-slate-500">Đang tải...</td></tr> : jobMappingPage.items.length === 0 ? <tr><td colSpan={5} className="p-8 text-center text-slate-500">Không tìm thấy Job File.</td></tr> : jobMappingPage.items.map(x => <tr key={x.id} className={`hover:bg-slate-200/50 ${selectedJobMappingIds.includes(x.id) ? 'bg-blue-500/10' : ''}`}><td className="p-3.5"><input type="checkbox" checked={selectedJobMappingIds.includes(x.id)} onChange={() => toggleJobMappingSelection(x.id)}/></td><td className="p-3.5 break-all font-mono text-amber-700">{x.jobFile}</td><td className="p-3.5 font-semibold text-slate-900">{x.modelName || <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-[10px] text-amber-700">Chưa mapping</span>}</td><td className="p-3.5 text-slate-600">{x.remark || '—'}</td><td className="p-3.5 text-right"><div className="flex justify-end gap-2"><button onClick={() => setJobMappingForm({ jobFile: x.jobFile, modelId: x.modelId ? String(x.modelId) : '', remark: x.remark || '' })} className="rounded-lg bg-blue-500/10 px-2.5 py-1.5 text-blue-700">{x.modelId ? 'Sửa' : 'Gán Model'}</button>{x.modelId && <button title="Bỏ mapping" onClick={() => handleDeleteJobMapping(x.id, x.jobFile)} className="p-1.5 rounded-lg bg-rose-500/10 text-rose-700"><Trash2 className="w-3.5 h-3.5"/></button>}</div></td></tr>)}</tbody></table></div>
+            <div className="flex items-center justify-between text-xs text-slate-600">
+              <button disabled={jobMappingPage.page <= 1 || jobMappingsLoading} onClick={() => setJobMappingPageNumber(p => Math.max(1, p - 1))} className="rounded-lg border border-slate-300 px-3 py-1.5 disabled:opacity-40">Trang trước</button>
+              <span>Trang <strong className="text-slate-900">{jobMappingPage.page}</strong> / {jobMappingPage.totalPages}</span>
+              <button disabled={jobMappingPage.page >= jobMappingPage.totalPages || jobMappingsLoading} onClick={() => setJobMappingPageNumber(p => p + 1)} className="rounded-lg border border-slate-300 px-3 py-1.5 disabled:opacity-40">Trang sau</button>
             </div>
           </div>
         </div>
@@ -1032,49 +1118,49 @@ export default function MasterData({
       {/* 6. STATION TYPES */}
       {activeSubTab === 'station-types' && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          <div className="glass-panel p-6 border border-white/10 space-y-4">
-            <h3 className="text-sm font-bold text-white flex items-center gap-2 font-display">
-              <Plus className="w-4 h-4 text-blue-400" /> Thêm Loại Trạm (Station Type)
+          <div className="glass-panel p-6 border border-slate-200 space-y-4">
+            <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2 font-display">
+              <Plus className="w-4 h-4 text-blue-700" /> Thêm Loại Trạm (Station Type)
             </h3>
             <form onSubmit={handleCreateStationType} className="space-y-4">
               <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1.5 uppercase tracking-wider">Tên Station Type *</label>
-                <input type="text" required placeholder="e.g. SPI / AOI / ICT / FCT" value={stationTypeForm.name} onChange={e => setStationTypeForm({ ...stationTypeForm, name: e.target.value })} className="w-full bg-slate-950/80 border border-slate-700/80 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-blue-500" />
+                <label className="block text-xs font-semibold text-slate-700 mb-1.5 uppercase tracking-wider">Tên Station Type *</label>
+                <input type="text" required placeholder="e.g. SPI / AOI / ICT / FCT" value={stationTypeForm.name} onChange={e => setStationTypeForm({ ...stationTypeForm, name: e.target.value })} className="w-full bg-slate-50/80 border border-slate-300 rounded-xl px-3.5 py-2.5 text-xs text-slate-900 focus:outline-none focus:border-blue-500" />
               </div>
               <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1.5 uppercase tracking-wider">Remark</label>
-                <input type="text" placeholder="Ghi chú" value={stationTypeForm.remark} onChange={e => setStationTypeForm({ ...stationTypeForm, remark: e.target.value })} className="w-full bg-slate-950/80 border border-slate-700/80 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-blue-500" />
+                <label className="block text-xs font-semibold text-slate-700 mb-1.5 uppercase tracking-wider">Remark</label>
+                <input type="text" placeholder="Ghi chú" value={stationTypeForm.remark} onChange={e => setStationTypeForm({ ...stationTypeForm, remark: e.target.value })} className="w-full bg-slate-50/80 border border-slate-300 rounded-xl px-3.5 py-2.5 text-xs text-slate-900 focus:outline-none focus:border-blue-500" />
               </div>
               <button type="submit" disabled={loading} className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-bold py-2.5 rounded-xl text-xs shadow-lg shadow-blue-600/30 transition-all">
                 {loading ? 'Đang xử lý...' : 'Tạo Station Type'}
               </button>
             </form>
           </div>
-          <div className="lg:col-span-2 glass-panel p-6 border border-white/10 space-y-4">
+          <div className="lg:col-span-2 glass-panel p-6 border border-slate-200 space-y-4">
             <TableToolbar tableState={stationTypesTable} totalCount={localStationTypes.length} title="Station Type" />
-            <div className="overflow-x-auto rounded-xl border border-white/10">
+            <div className="overflow-x-auto rounded-xl border border-slate-200">
               <table className="w-full text-left text-xs">
-                <thead className="bg-slate-950/90 text-slate-400 uppercase font-semibold font-display tracking-wider border-b border-slate-800">
+                <thead className="bg-slate-50/90 text-slate-600 uppercase font-semibold font-display tracking-wider border-b border-slate-200">
                   <tr>
                     <ThSort label="ID" colKey="id" tableState={stationTypesTable} className="w-20" />
                     <ThSort label="Type Name" colKey="name" tableState={stationTypesTable} />
                     <ThSort label="Remark" colKey="remark" tableState={stationTypesTable} />
                     <th className="p-3.5 text-right w-24">Thao tác</th>
                   </tr>
-                  <tr className="bg-slate-900/80 border-b border-slate-800">
+                  <tr className="bg-slate-100/80 border-b border-slate-200">
                     <td className="p-1.5">
-                      <input type="text" placeholder="ID..." value={stationTypesTable.columnFilters.id || ''} onChange={e => stationTypesTable.setColumnFilter('id', e.target.value)} className="w-full bg-slate-950 border border-slate-700/60 rounded-lg px-2 py-1 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 font-mono" />
+                      <input type="text" placeholder="ID..." value={stationTypesTable.columnFilters.id || ''} onChange={e => stationTypesTable.setColumnFilter('id', e.target.value)} className="w-full bg-slate-50 border border-slate-300 rounded-lg px-2 py-1 text-xs text-slate-900 placeholder-slate-500 focus:outline-none focus:border-blue-500 font-mono" />
                     </td>
                     <td className="p-1.5">
-                      <input type="text" placeholder="Type Name..." value={stationTypesTable.columnFilters.name || ''} onChange={e => stationTypesTable.setColumnFilter('name', e.target.value)} className="w-full bg-slate-950 border border-slate-700/60 rounded-lg px-2 py-1 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500" />
+                      <input type="text" placeholder="Type Name..." value={stationTypesTable.columnFilters.name || ''} onChange={e => stationTypesTable.setColumnFilter('name', e.target.value)} className="w-full bg-slate-50 border border-slate-300 rounded-lg px-2 py-1 text-xs text-slate-900 placeholder-slate-500 focus:outline-none focus:border-blue-500" />
                     </td>
                     <td className="p-1.5">
-                      <input type="text" placeholder="Lọc Remark..." value={stationTypesTable.columnFilters.remark || ''} onChange={e => stationTypesTable.setColumnFilter('remark', e.target.value)} className="w-full bg-slate-950 border border-slate-700/60 rounded-lg px-2 py-1 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500" />
+                      <input type="text" placeholder="Lọc Remark..." value={stationTypesTable.columnFilters.remark || ''} onChange={e => stationTypesTable.setColumnFilter('remark', e.target.value)} className="w-full bg-slate-50 border border-slate-300 rounded-lg px-2 py-1 text-xs text-slate-900 placeholder-slate-500 focus:outline-none focus:border-blue-500" />
                     </td>
                     <td className="p-1.5"></td>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-800/60 font-mono">
+                <tbody className="divide-y divide-slate-200 font-mono">
                   {stationTypesTable.processedData.length === 0 ? (
                     <tr>
                       <td colSpan={4} className="p-8 text-center text-slate-500 font-sans">
@@ -1083,14 +1169,14 @@ export default function MasterData({
                     </tr>
                   ) : (
                     stationTypesTable.processedData.map(st => (
-                      <tr key={st.id} className="hover:bg-slate-800/50 transition-colors">
-                        <td className="p-3.5 text-slate-400 font-bold">#{st.id}</td>
-                        <td className="p-3.5 font-bold text-white font-sans">{st.name}</td>
-                        <td className="p-3.5 text-slate-400 font-sans">{st.remark || '—'}</td>
+                      <tr key={st.id} className="hover:bg-slate-200/50 transition-colors">
+                        <td className="p-3.5 text-slate-600 font-bold">#{st.id}</td>
+                        <td className="p-3.5 font-bold text-slate-900 font-sans">{st.name}</td>
+                        <td className="p-3.5 text-slate-600 font-sans">{st.remark || '—'}</td>
                         <td className="p-3.5 text-right font-sans">
                           <div className="flex items-center justify-end gap-2">
-                            <button onClick={() => setEditModal({ entityType: 'station-type', item: { ...st } })} className="p-1.5 rounded-lg bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 transition-colors"><Pencil className="w-3.5 h-3.5" /></button>
-                            <button onClick={() => handleDeleteStationType(st.id, st.name)} className="p-1.5 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 transition-colors"><Trash2 className="w-3.5 h-3.5" /></button>
+                            <button onClick={() => setEditModal({ entityType: 'station-type', item: { ...st } })} className="p-1.5 rounded-lg bg-blue-500/10 hover:bg-blue-500/20 text-blue-700 transition-colors"><Pencil className="w-3.5 h-3.5" /></button>
+                            <button onClick={() => handleDeleteStationType(st.id, st.name)} className="p-1.5 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-700 transition-colors"><Trash2 className="w-3.5 h-3.5" /></button>
                           </div>
                         </td>
                       </tr>
@@ -1103,70 +1189,52 @@ export default function MasterData({
         </div>
       )}
 
-      {/* CPK RULES - Station-level configuration */}
-      {activeSubTab === 'cpk-rules' && (
-        <div className="space-y-6">
-          <div className="glass-panel p-6 border border-fuchsia-500/20 rounded-2xl">
-            <div className="flex items-center gap-3 mb-2"><Gauge className="w-5 h-5 text-fuchsia-400"/><h3 className="text-base font-bold">Cấu hình Step CPK theo Station</h3></div>
-            <p className="text-xs text-slate-400">Mỗi Station chọn một Step. Quy tắc này áp dụng chung cho toàn bộ Channel thuộc Station.</p>
-          </div>
-          {localLines.map(line => {
-            const lineStations = localStations.filter(s => String(s.lineId) === String(line.id));
-            if (!lineStations.length) return null;
-            return <section key={line.id} className="glass-panel p-5 border border-white/10 rounded-2xl space-y-3">
-              <div className="flex items-center gap-3 pb-2 border-b border-white/10"><Layers className="w-4 h-4 text-blue-400"/><h4 className="font-bold">{line.name}</h4><span className="text-[11px] text-slate-500">{lineStations.length} Station</span></div>
-              {lineStations.map(station => <CpkRuleRow key={station.id} station={station} saving={loading} onSave={handleUpdateStation}/>) }
-            </section>;
-          })}
-        </div>
-      )}
-
       {/* 7. DEVICE TYPES */}
       {activeSubTab === 'device-types' && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          <div className="glass-panel p-6 border border-white/10 space-y-4">
-            <h3 className="text-sm font-bold text-white flex items-center gap-2 font-display">
-              <Plus className="w-4 h-4 text-blue-400" /> Thêm Loại Thiết Bị (Device Type)
+          <div className="glass-panel p-6 border border-slate-200 space-y-4">
+            <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2 font-display">
+              <Plus className="w-4 h-4 text-blue-700" /> Thêm Loại Thiết Bị (Device Type)
             </h3>
             <form onSubmit={handleCreateDeviceType} className="space-y-4">
               <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1.5 uppercase tracking-wider">Tên Device Type *</label>
-                <input type="text" required placeholder="e.g. Camera 3D / Sensor / Scanner" value={deviceTypeForm.name} onChange={e => setDeviceTypeForm({ ...deviceTypeForm, name: e.target.value })} className="w-full bg-slate-950/80 border border-slate-700/80 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-blue-500" />
+                <label className="block text-xs font-semibold text-slate-700 mb-1.5 uppercase tracking-wider">Tên Device Type *</label>
+                <input type="text" required placeholder="e.g. Camera 3D / Sensor / Scanner" value={deviceTypeForm.name} onChange={e => setDeviceTypeForm({ ...deviceTypeForm, name: e.target.value })} className="w-full bg-slate-50/80 border border-slate-300 rounded-xl px-3.5 py-2.5 text-xs text-slate-900 focus:outline-none focus:border-blue-500" />
               </div>
               <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1.5 uppercase tracking-wider">Remark</label>
-                <input type="text" placeholder="Ghi chú" value={deviceTypeForm.remark} onChange={e => setDeviceTypeForm({ ...deviceTypeForm, remark: e.target.value })} className="w-full bg-slate-950/80 border border-slate-700/80 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-blue-500" />
+                <label className="block text-xs font-semibold text-slate-700 mb-1.5 uppercase tracking-wider">Remark</label>
+                <input type="text" placeholder="Ghi chú" value={deviceTypeForm.remark} onChange={e => setDeviceTypeForm({ ...deviceTypeForm, remark: e.target.value })} className="w-full bg-slate-50/80 border border-slate-300 rounded-xl px-3.5 py-2.5 text-xs text-slate-900 focus:outline-none focus:border-blue-500" />
               </div>
               <button type="submit" disabled={loading} className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-bold py-2.5 rounded-xl text-xs shadow-lg shadow-blue-600/30 transition-all">
                 {loading ? 'Đang xử lý...' : 'Tạo Device Type'}
               </button>
             </form>
           </div>
-          <div className="lg:col-span-2 glass-panel p-6 border border-white/10 space-y-4">
+          <div className="lg:col-span-2 glass-panel p-6 border border-slate-200 space-y-4">
             <TableToolbar tableState={deviceTypesTable} totalCount={localDeviceTypes.length} title="Device Type" />
-            <div className="overflow-x-auto rounded-xl border border-white/10">
+            <div className="overflow-x-auto rounded-xl border border-slate-200">
               <table className="w-full text-left text-xs">
-                <thead className="bg-slate-950/90 text-slate-400 uppercase font-semibold font-display tracking-wider border-b border-slate-800">
+                <thead className="bg-slate-50/90 text-slate-600 uppercase font-semibold font-display tracking-wider border-b border-slate-200">
                   <tr>
                     <ThSort label="ID" colKey="id" tableState={deviceTypesTable} className="w-20" />
                     <ThSort label="Device Type Name" colKey="name" tableState={deviceTypesTable} />
                     <ThSort label="Remark" colKey="remark" tableState={deviceTypesTable} />
                     <th className="p-3.5 text-right w-24">Thao tác</th>
                   </tr>
-                  <tr className="bg-slate-900/80 border-b border-slate-800">
+                  <tr className="bg-slate-100/80 border-b border-slate-200">
                     <td className="p-1.5">
-                      <input type="text" placeholder="ID..." value={deviceTypesTable.columnFilters.id || ''} onChange={e => deviceTypesTable.setColumnFilter('id', e.target.value)} className="w-full bg-slate-950 border border-slate-700/60 rounded-lg px-2 py-1 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 font-mono" />
+                      <input type="text" placeholder="ID..." value={deviceTypesTable.columnFilters.id || ''} onChange={e => deviceTypesTable.setColumnFilter('id', e.target.value)} className="w-full bg-slate-50 border border-slate-300 rounded-lg px-2 py-1 text-xs text-slate-900 placeholder-slate-500 focus:outline-none focus:border-blue-500 font-mono" />
                     </td>
                     <td className="p-1.5">
-                      <input type="text" placeholder="Device Type Name..." value={deviceTypesTable.columnFilters.name || ''} onChange={e => deviceTypesTable.setColumnFilter('name', e.target.value)} className="w-full bg-slate-950 border border-slate-700/60 rounded-lg px-2 py-1 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500" />
+                      <input type="text" placeholder="Device Type Name..." value={deviceTypesTable.columnFilters.name || ''} onChange={e => deviceTypesTable.setColumnFilter('name', e.target.value)} className="w-full bg-slate-50 border border-slate-300 rounded-lg px-2 py-1 text-xs text-slate-900 placeholder-slate-500 focus:outline-none focus:border-blue-500" />
                     </td>
                     <td className="p-1.5">
-                      <input type="text" placeholder="Lọc Remark..." value={deviceTypesTable.columnFilters.remark || ''} onChange={e => deviceTypesTable.setColumnFilter('remark', e.target.value)} className="w-full bg-slate-950 border border-slate-700/60 rounded-lg px-2 py-1 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500" />
+                      <input type="text" placeholder="Lọc Remark..." value={deviceTypesTable.columnFilters.remark || ''} onChange={e => deviceTypesTable.setColumnFilter('remark', e.target.value)} className="w-full bg-slate-50 border border-slate-300 rounded-lg px-2 py-1 text-xs text-slate-900 placeholder-slate-500 focus:outline-none focus:border-blue-500" />
                     </td>
                     <td className="p-1.5"></td>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-800/60 font-mono">
+                <tbody className="divide-y divide-slate-200 font-mono">
                   {deviceTypesTable.processedData.length === 0 ? (
                     <tr>
                       <td colSpan={4} className="p-8 text-center text-slate-500 font-sans">
@@ -1175,14 +1243,14 @@ export default function MasterData({
                     </tr>
                   ) : (
                     deviceTypesTable.processedData.map(dt => (
-                      <tr key={dt.id} className="hover:bg-slate-800/50 transition-colors">
-                        <td className="p-3.5 text-slate-400 font-bold">#{dt.id}</td>
-                        <td className="p-3.5 font-bold text-white font-sans">{dt.name}</td>
-                        <td className="p-3.5 text-slate-400 font-sans">{dt.remark || '—'}</td>
+                      <tr key={dt.id} className="hover:bg-slate-200/50 transition-colors">
+                        <td className="p-3.5 text-slate-600 font-bold">#{dt.id}</td>
+                        <td className="p-3.5 font-bold text-slate-900 font-sans">{dt.name}</td>
+                        <td className="p-3.5 text-slate-600 font-sans">{dt.remark || '—'}</td>
                         <td className="p-3.5 text-right font-sans">
                           <div className="flex items-center justify-end gap-2">
-                            <button onClick={() => setEditModal({ entityType: 'device-type', item: { ...dt } })} className="p-1.5 rounded-lg bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 transition-colors"><Pencil className="w-3.5 h-3.5" /></button>
-                            <button onClick={() => handleDeleteDeviceType(dt.id, dt.name)} className="p-1.5 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 transition-colors"><Trash2 className="w-3.5 h-3.5" /></button>
+                            <button onClick={() => setEditModal({ entityType: 'device-type', item: { ...dt } })} className="p-1.5 rounded-lg bg-blue-500/10 hover:bg-blue-500/20 text-blue-700 transition-colors"><Pencil className="w-3.5 h-3.5" /></button>
+                            <button onClick={() => handleDeleteDeviceType(dt.id, dt.name)} className="p-1.5 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-700 transition-colors"><Trash2 className="w-3.5 h-3.5" /></button>
                           </div>
                         </td>
                       </tr>
@@ -1198,43 +1266,43 @@ export default function MasterData({
       {/* 8. DEVICES */}
       {activeSubTab === 'devices' && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          <div className="glass-panel p-6 border border-white/10 space-y-4">
-            <h3 className="text-sm font-bold text-white flex items-center gap-2 font-display">
-              <Plus className="w-4 h-4 text-blue-400" /> Thêm Thiết Bị (Device)
+          <div className="glass-panel p-6 border border-slate-200 space-y-4">
+            <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2 font-display">
+              <Plus className="w-4 h-4 text-blue-700" /> Thêm Thiết Bị (Device)
             </h3>
             <form onSubmit={handleCreateDevice} className="space-y-4">
               <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1.5 uppercase tracking-wider">Chọn Channel *</label>
-                <select required value={deviceForm.channelId} onChange={e => setDeviceForm({ ...deviceForm, channelId: e.target.value })} className="w-full bg-slate-950/80 border border-slate-700/80 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-blue-500">
+                <label className="block text-xs font-semibold text-slate-700 mb-1.5 uppercase tracking-wider">Chọn Channel *</label>
+                <select required value={deviceForm.channelId} onChange={e => setDeviceForm({ ...deviceForm, channelId: e.target.value })} className="w-full bg-slate-50/80 border border-slate-300 rounded-xl px-3.5 py-2.5 text-xs text-slate-900 focus:outline-none focus:border-blue-500">
                   <option value="">-- Chọn Channel --</option>
                   {localChannels.map(c => <option key={c.id} value={c.id}>{c.name} ({c.stationName})</option>)}
                 </select>
               </div>
               <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1.5 uppercase tracking-wider">Tên Device *</label>
-                <input type="text" required placeholder="e.g. Laser Meter 01" value={deviceForm.name} onChange={e => setDeviceForm({ ...deviceForm, name: e.target.value })} className="w-full bg-slate-950/80 border border-slate-700/80 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-blue-500" />
+                <label className="block text-xs font-semibold text-slate-700 mb-1.5 uppercase tracking-wider">Tên Device *</label>
+                <input type="text" required placeholder="e.g. Laser Meter 01" value={deviceForm.name} onChange={e => setDeviceForm({ ...deviceForm, name: e.target.value })} className="w-full bg-slate-50/80 border border-slate-300 rounded-xl px-3.5 py-2.5 text-xs text-slate-900 focus:outline-none focus:border-blue-500" />
               </div>
               <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1.5 uppercase tracking-wider">Device Type</label>
-                <select value={deviceForm.deviceTypeId} onChange={e => setDeviceForm({ ...deviceForm, deviceTypeId: e.target.value })} className="w-full bg-slate-950/80 border border-slate-700/80 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-blue-500">
+                <label className="block text-xs font-semibold text-slate-700 mb-1.5 uppercase tracking-wider">Device Type</label>
+                <select value={deviceForm.deviceTypeId} onChange={e => setDeviceForm({ ...deviceForm, deviceTypeId: e.target.value })} className="w-full bg-slate-50/80 border border-slate-300 rounded-xl px-3.5 py-2.5 text-xs text-slate-900 focus:outline-none focus:border-blue-500">
                   <option value="">-- Chọn Device Type --</option>
                   {localDeviceTypes.map(dt => <option key={dt.id} value={dt.id}>{dt.name}</option>)}
                 </select>
               </div>
               <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1.5 uppercase tracking-wider">Serial Number</label>
-                <input type="text" placeholder="S/N 123456" value={deviceForm.serialNumber} onChange={e => setDeviceForm({ ...deviceForm, serialNumber: e.target.value })} className="w-full bg-slate-950/80 border border-slate-700/80 rounded-xl px-3.5 py-2.5 text-xs text-white font-mono focus:outline-none focus:border-blue-500" />
+                <label className="block text-xs font-semibold text-slate-700 mb-1.5 uppercase tracking-wider">Serial Number</label>
+                <input type="text" placeholder="S/N 123456" value={deviceForm.serialNumber} onChange={e => setDeviceForm({ ...deviceForm, serialNumber: e.target.value })} className="w-full bg-slate-50/80 border border-slate-300 rounded-xl px-3.5 py-2.5 text-xs text-slate-900 font-mono focus:outline-none focus:border-blue-500" />
               </div>
               <button type="submit" disabled={loading} className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-bold py-2.5 rounded-xl text-xs shadow-lg shadow-blue-600/30 transition-all">
                 {loading ? 'Đang xử lý...' : 'Tạo Device'}
               </button>
             </form>
           </div>
-          <div className="lg:col-span-2 glass-panel p-6 border border-white/10 space-y-4">
+          <div className="lg:col-span-2 glass-panel p-6 border border-slate-200 space-y-4">
             <TableToolbar tableState={devicesTable} totalCount={localDevices.length} title="Device" />
-            <div className="overflow-x-auto rounded-xl border border-white/10">
+            <div className="overflow-x-auto rounded-xl border border-slate-200">
               <table className="w-full text-left text-xs">
-                <thead className="bg-slate-950/90 text-slate-400 uppercase font-semibold font-display tracking-wider border-b border-slate-800">
+                <thead className="bg-slate-50/90 text-slate-600 uppercase font-semibold font-display tracking-wider border-b border-slate-200">
                   <tr>
                     <ThSort label="ID" colKey="id" tableState={devicesTable} className="w-20" />
                     <ThSort label="Device Name" colKey="name" tableState={devicesTable} />
@@ -1243,32 +1311,32 @@ export default function MasterData({
                     <ThSort label="Serial No" colKey="serialNumber" tableState={devicesTable} />
                     <th className="p-3.5 text-right w-24">Thao tác</th>
                   </tr>
-                  <tr className="bg-slate-900/80 border-b border-slate-800">
+                  <tr className="bg-slate-100/80 border-b border-slate-200">
                     <td className="p-1.5">
-                      <input type="text" placeholder="ID..." value={devicesTable.columnFilters.id || ''} onChange={e => devicesTable.setColumnFilter('id', e.target.value)} className="w-full bg-slate-950 border border-slate-700/60 rounded-lg px-2 py-1 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 font-mono" />
+                      <input type="text" placeholder="ID..." value={devicesTable.columnFilters.id || ''} onChange={e => devicesTable.setColumnFilter('id', e.target.value)} className="w-full bg-slate-50 border border-slate-300 rounded-lg px-2 py-1 text-xs text-slate-900 placeholder-slate-500 focus:outline-none focus:border-blue-500 font-mono" />
                     </td>
                     <td className="p-1.5">
-                      <input type="text" placeholder="Device Name..." value={devicesTable.columnFilters.name || ''} onChange={e => devicesTable.setColumnFilter('name', e.target.value)} className="w-full bg-slate-950 border border-slate-700/60 rounded-lg px-2 py-1 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500" />
+                      <input type="text" placeholder="Device Name..." value={devicesTable.columnFilters.name || ''} onChange={e => devicesTable.setColumnFilter('name', e.target.value)} className="w-full bg-slate-50 border border-slate-300 rounded-lg px-2 py-1 text-xs text-slate-900 placeholder-slate-500 focus:outline-none focus:border-blue-500" />
                     </td>
                     <td className="p-1.5">
-                      <select value={devicesTable.columnFilters.channelName || ''} onChange={e => devicesTable.setColumnFilter('channelName', e.target.value)} className="w-full bg-slate-950 border border-slate-700/60 rounded-lg px-2 py-1 text-xs text-white focus:outline-none focus:border-blue-500">
+                      <select value={devicesTable.columnFilters.channelName || ''} onChange={e => devicesTable.setColumnFilter('channelName', e.target.value)} className="w-full bg-slate-50 border border-slate-300 rounded-lg px-2 py-1 text-xs text-slate-900 focus:outline-none focus:border-blue-500">
                         <option value="">Tất cả Channel</option>
-                        {localChannels.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
+                        {devicesTable.optionsFor('channelName').map(v => <option key={v} value={v}>{v}</option>)}
                       </select>
                     </td>
                     <td className="p-1.5">
-                      <select value={devicesTable.columnFilters.deviceTypeName || ''} onChange={e => devicesTable.setColumnFilter('deviceTypeName', e.target.value)} className="w-full bg-slate-950 border border-slate-700/60 rounded-lg px-2 py-1 text-xs text-white focus:outline-none focus:border-blue-500">
+                      <select value={devicesTable.columnFilters.deviceTypeName || ''} onChange={e => devicesTable.setColumnFilter('deviceTypeName', e.target.value)} className="w-full bg-slate-50 border border-slate-300 rounded-lg px-2 py-1 text-xs text-slate-900 focus:outline-none focus:border-blue-500">
                         <option value="">Tất cả Type</option>
-                        {localDeviceTypes.map(dt => <option key={dt.id} value={dt.name}>{dt.name}</option>)}
+                        {devicesTable.optionsFor('deviceTypeName').map(v => <option key={v} value={v}>{v}</option>)}
                       </select>
                     </td>
                     <td className="p-1.5">
-                      <input type="text" placeholder="Serial No..." value={devicesTable.columnFilters.serialNumber || ''} onChange={e => devicesTable.setColumnFilter('serialNumber', e.target.value)} className="w-full bg-slate-950 border border-slate-700/60 rounded-lg px-2 py-1 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 font-mono" />
+                      <input type="text" placeholder="Serial No..." value={devicesTable.columnFilters.serialNumber || ''} onChange={e => devicesTable.setColumnFilter('serialNumber', e.target.value)} className="w-full bg-slate-50 border border-slate-300 rounded-lg px-2 py-1 text-xs text-slate-900 placeholder-slate-500 focus:outline-none focus:border-blue-500 font-mono" />
                     </td>
                     <td className="p-1.5"></td>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-800/60 font-mono">
+                <tbody className="divide-y divide-slate-200 font-mono">
                   {devicesTable.processedData.length === 0 ? (
                     <tr>
                       <td colSpan={6} className="p-8 text-center text-slate-500 font-sans">
@@ -1277,16 +1345,16 @@ export default function MasterData({
                     </tr>
                   ) : (
                     devicesTable.processedData.map(d => (
-                      <tr key={d.id} className="hover:bg-slate-800/50 transition-colors">
-                        <td className="p-3.5 text-slate-400 font-bold">#{d.id}</td>
-                        <td className="p-3.5 font-bold text-white font-sans">{d.name}</td>
-                        <td className="p-3.5 text-slate-300 font-sans">{d.channelName}</td>
-                        <td className="p-3.5 text-slate-300 font-sans">{d.deviceTypeName || '—'}</td>
-                        <td className="p-3.5 text-slate-400 font-mono">{d.serialNumber || '—'}</td>
+                      <tr key={d.id} className="hover:bg-slate-200/50 transition-colors">
+                        <td className="p-3.5 text-slate-600 font-bold">#{d.id}</td>
+                        <td className="p-3.5 font-bold text-slate-900 font-sans">{d.name}</td>
+                        <td className="p-3.5 text-slate-700 font-sans">{d.channelName}</td>
+                        <td className="p-3.5 text-slate-700 font-sans">{d.deviceTypeName || '—'}</td>
+                        <td className="p-3.5 text-slate-600 font-mono">{d.serialNumber || '—'}</td>
                         <td className="p-3.5 text-right font-sans">
                           <div className="flex items-center justify-end gap-2">
-                            <button onClick={() => setEditModal({ entityType: 'device', item: { ...d } })} className="p-1.5 rounded-lg bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 transition-colors"><Pencil className="w-3.5 h-3.5" /></button>
-                            <button onClick={() => handleDeleteDevice(d.id, d.name)} className="p-1.5 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 transition-colors"><Trash2 className="w-3.5 h-3.5" /></button>
+                            <button onClick={() => setEditModal({ entityType: 'device', item: { ...d } })} className="p-1.5 rounded-lg bg-blue-500/10 hover:bg-blue-500/20 text-blue-700 transition-colors"><Pencil className="w-3.5 h-3.5" /></button>
+                            <button onClick={() => handleDeleteDevice(d.id, d.name)} className="p-1.5 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-700 transition-colors"><Trash2 className="w-3.5 h-3.5" /></button>
                           </div>
                         </td>
                       </tr>
@@ -1302,49 +1370,49 @@ export default function MasterData({
       {/* 9. BUYERS */}
       {activeSubTab === 'buyers' && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          <div className="glass-panel p-6 border border-white/10 space-y-4">
-            <h3 className="text-sm font-bold text-white flex items-center gap-2 font-display">
-              <Plus className="w-4 h-4 text-blue-400" /> Thêm Khách Hàng (Buyer)
+          <div className="glass-panel p-6 border border-slate-200 space-y-4">
+            <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2 font-display">
+              <Plus className="w-4 h-4 text-blue-700" /> Thêm Khách Hàng (Buyer)
             </h3>
             <form onSubmit={handleCreateBuyer} className="space-y-4">
               <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1.5 uppercase tracking-wider">Tên Buyer *</label>
-                <input type="text" required placeholder="e.g. Mercedes-Benz / Bosch" value={buyerForm.name} onChange={e => setBuyerForm({ ...buyerForm, name: e.target.value })} className="w-full bg-slate-950/80 border border-slate-700/80 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-blue-500" />
+                <label className="block text-xs font-semibold text-slate-700 mb-1.5 uppercase tracking-wider">Tên Buyer *</label>
+                <input type="text" required placeholder="e.g. Mercedes-Benz / Bosch" value={buyerForm.name} onChange={e => setBuyerForm({ ...buyerForm, name: e.target.value })} className="w-full bg-slate-50/80 border border-slate-300 rounded-xl px-3.5 py-2.5 text-xs text-slate-900 focus:outline-none focus:border-blue-500" />
               </div>
               <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1.5 uppercase tracking-wider">Remark</label>
-                <input type="text" placeholder="Ghi chú thêm" value={buyerForm.remark} onChange={e => setBuyerForm({ ...buyerForm, remark: e.target.value })} className="w-full bg-slate-950/80 border border-slate-700/80 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-blue-500" />
+                <label className="block text-xs font-semibold text-slate-700 mb-1.5 uppercase tracking-wider">Remark</label>
+                <input type="text" placeholder="Ghi chú thêm" value={buyerForm.remark} onChange={e => setBuyerForm({ ...buyerForm, remark: e.target.value })} className="w-full bg-slate-50/80 border border-slate-300 rounded-xl px-3.5 py-2.5 text-xs text-slate-900 focus:outline-none focus:border-blue-500" />
               </div>
               <button type="submit" disabled={loading} className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-bold py-2.5 rounded-xl text-xs shadow-lg shadow-blue-600/30 transition-all">
                 {loading ? 'Đang xử lý...' : 'Tạo Buyer'}
               </button>
             </form>
           </div>
-          <div className="lg:col-span-2 glass-panel p-6 border border-white/10 space-y-4">
+          <div className="lg:col-span-2 glass-panel p-6 border border-slate-200 space-y-4">
             <TableToolbar tableState={buyersTable} totalCount={localBuyers.length} title="Buyer" />
-            <div className="overflow-x-auto rounded-xl border border-white/10">
+            <div className="overflow-x-auto rounded-xl border border-slate-200">
               <table className="w-full text-left text-xs">
-                <thead className="bg-slate-950/90 text-slate-400 uppercase font-semibold font-display tracking-wider border-b border-slate-800">
+                <thead className="bg-slate-50/90 text-slate-600 uppercase font-semibold font-display tracking-wider border-b border-slate-200">
                   <tr>
                     <ThSort label="ID" colKey="id" tableState={buyersTable} className="w-20" />
                     <ThSort label="Buyer Name" colKey="name" tableState={buyersTable} />
                     <ThSort label="Remark" colKey="remark" tableState={buyersTable} />
                     <th className="p-3.5 text-right w-24">Thao tác</th>
                   </tr>
-                  <tr className="bg-slate-900/80 border-b border-slate-800">
+                  <tr className="bg-slate-100/80 border-b border-slate-200">
                     <td className="p-1.5">
-                      <input type="text" placeholder="ID..." value={buyersTable.columnFilters.id || ''} onChange={e => buyersTable.setColumnFilter('id', e.target.value)} className="w-full bg-slate-950 border border-slate-700/60 rounded-lg px-2 py-1 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 font-mono" />
+                      <input type="text" placeholder="ID..." value={buyersTable.columnFilters.id || ''} onChange={e => buyersTable.setColumnFilter('id', e.target.value)} className="w-full bg-slate-50 border border-slate-300 rounded-lg px-2 py-1 text-xs text-slate-900 placeholder-slate-500 focus:outline-none focus:border-blue-500 font-mono" />
                     </td>
                     <td className="p-1.5">
-                      <input type="text" placeholder="Buyer Name..." value={buyersTable.columnFilters.name || ''} onChange={e => buyersTable.setColumnFilter('name', e.target.value)} className="w-full bg-slate-950 border border-slate-700/60 rounded-lg px-2 py-1 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500" />
+                      <input type="text" placeholder="Buyer Name..." value={buyersTable.columnFilters.name || ''} onChange={e => buyersTable.setColumnFilter('name', e.target.value)} className="w-full bg-slate-50 border border-slate-300 rounded-lg px-2 py-1 text-xs text-slate-900 placeholder-slate-500 focus:outline-none focus:border-blue-500" />
                     </td>
                     <td className="p-1.5">
-                      <input type="text" placeholder="Lọc Remark..." value={buyersTable.columnFilters.remark || ''} onChange={e => buyersTable.setColumnFilter('remark', e.target.value)} className="w-full bg-slate-950 border border-slate-700/60 rounded-lg px-2 py-1 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500" />
+                      <input type="text" placeholder="Lọc Remark..." value={buyersTable.columnFilters.remark || ''} onChange={e => buyersTable.setColumnFilter('remark', e.target.value)} className="w-full bg-slate-50 border border-slate-300 rounded-lg px-2 py-1 text-xs text-slate-900 placeholder-slate-500 focus:outline-none focus:border-blue-500" />
                     </td>
                     <td className="p-1.5"></td>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-800/60 font-mono">
+                <tbody className="divide-y divide-slate-200 font-mono">
                   {buyersTable.processedData.length === 0 ? (
                     <tr>
                       <td colSpan={4} className="p-8 text-center text-slate-500 font-sans">
@@ -1353,14 +1421,14 @@ export default function MasterData({
                     </tr>
                   ) : (
                     buyersTable.processedData.map(b => (
-                      <tr key={b.id} className="hover:bg-slate-800/50 transition-colors">
-                        <td className="p-3.5 text-slate-400 font-bold">#{b.id}</td>
-                        <td className="p-3.5 font-bold text-white font-sans">{b.name}</td>
-                        <td className="p-3.5 text-slate-400 font-sans">{b.remark || '—'}</td>
+                      <tr key={b.id} className="hover:bg-slate-200/50 transition-colors">
+                        <td className="p-3.5 text-slate-600 font-bold">#{b.id}</td>
+                        <td className="p-3.5 font-bold text-slate-900 font-sans">{b.name}</td>
+                        <td className="p-3.5 text-slate-600 font-sans">{b.remark || '—'}</td>
                         <td className="p-3.5 text-right font-sans">
                           <div className="flex items-center justify-end gap-2">
-                            <button onClick={() => setEditModal({ entityType: 'buyer', item: { ...b } })} className="p-1.5 rounded-lg bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 transition-colors"><Pencil className="w-3.5 h-3.5" /></button>
-                            <button onClick={() => handleDeleteBuyer(b.id, b.name)} className="p-1.5 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 transition-colors"><Trash2 className="w-3.5 h-3.5" /></button>
+                            <button onClick={() => setEditModal({ entityType: 'buyer', item: { ...b } })} className="p-1.5 rounded-lg bg-blue-500/10 hover:bg-blue-500/20 text-blue-700 transition-colors"><Pencil className="w-3.5 h-3.5" /></button>
+                            <button onClick={() => handleDeleteBuyer(b.id, b.name)} className="p-1.5 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-700 transition-colors"><Trash2 className="w-3.5 h-3.5" /></button>
                           </div>
                         </td>
                       </tr>
@@ -1375,25 +1443,25 @@ export default function MasterData({
 
       {/* EDIT MODAL */}
       {editModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-fade-in">
-          <div className="glass-panel w-full max-w-md p-6 border border-white/20 rounded-2xl shadow-2xl space-y-5 bg-slate-900/95">
-            <div className="flex items-center justify-between border-b border-white/10 pb-3">
-              <h3 className="text-base font-bold text-white flex items-center gap-2 font-display">
-                <Pencil className="w-4 h-4 text-blue-400" /> Cập nhật {editModal.entityType.toUpperCase()} #{editModal.item.id}
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm animate-fade-in">
+          <div className="glass-panel w-full max-w-md p-6 border border-slate-200 rounded-2xl shadow-2xl space-y-5 bg-slate-100/95">
+            <div className="flex items-center justify-between border-b border-slate-200 pb-3">
+              <h3 className="text-base font-bold text-slate-900 flex items-center gap-2 font-display">
+                <Pencil className="w-4 h-4 text-blue-700" /> Cập nhật {editModal.entityType.toUpperCase()} #{editModal.item.id}
               </h3>
-              <button onClick={() => setEditModal(null)} className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-white/10 transition-colors"><X className="w-5 h-5" /></button>
+              <button onClick={() => setEditModal(null)} className="p-1 rounded-lg text-slate-600 hover:text-slate-900 hover:bg-slate-100 transition-colors"><X className="w-5 h-5" /></button>
             </div>
             
             <div className="space-y-4">
               <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1 uppercase tracking-wider">Tên Entity</label>
-                <input type="text" required value={editModal.item.name || ''} onChange={e => setEditModal({ ...editModal, item: { ...editModal.item, name: e.target.value } })} className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-blue-500" />
+                <label className="block text-xs font-semibold text-slate-700 mb-1 uppercase tracking-wider">Tên Entity</label>
+                <input type="text" required value={editModal.item.name || ''} onChange={e => setEditModal({ ...editModal, item: { ...editModal.item, name: e.target.value } })} className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3.5 py-2.5 text-xs text-slate-900 focus:outline-none focus:border-blue-500" />
               </div>
 
               {editModal.entityType === 'model-group' && (
                 <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1 uppercase tracking-wider">Chọn Buyer</label>
-                  <select value={editModal.item.buyerId || ''} onChange={e => setEditModal({ ...editModal, item: { ...editModal.item, buyerId: e.target.value } })} className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-blue-500">
+                  <label className="block text-xs font-semibold text-slate-700 mb-1 uppercase tracking-wider">Chọn Buyer</label>
+                  <select value={editModal.item.buyerId || ''} onChange={e => setEditModal({ ...editModal, item: { ...editModal.item, buyerId: e.target.value } })} className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3.5 py-2.5 text-xs text-slate-900 focus:outline-none focus:border-blue-500">
                     <option value="">-- Tùy chọn Buyer --</option>
                     {localBuyers.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
                   </select>
@@ -1402,8 +1470,8 @@ export default function MasterData({
 
               {editModal.entityType === 'model' && (
                 <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1 uppercase tracking-wider">Chọn Model Group</label>
-                  <select value={editModal.item.modelGroupId || ''} onChange={e => setEditModal({ ...editModal, item: { ...editModal.item, modelGroupId: e.target.value } })} className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-blue-500">
+                  <label className="block text-xs font-semibold text-slate-700 mb-1 uppercase tracking-wider">Chọn Model Group</label>
+                  <select value={editModal.item.modelGroupId || ''} onChange={e => setEditModal({ ...editModal, item: { ...editModal.item, modelGroupId: e.target.value } })} className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3.5 py-2.5 text-xs text-slate-900 focus:outline-none focus:border-blue-500">
                     <option value="">-- Tùy chọn Model Group --</option>
                     {localModelGroups.map(mg => <option key={mg.id} value={mg.id}>{mg.name}</option>)}
                   </select>
@@ -1413,21 +1481,21 @@ export default function MasterData({
               {editModal.entityType === 'station' && (
                 <>
                   <div>
-                    <label className="block text-xs font-semibold text-slate-300 mb-1 uppercase tracking-wider">Chọn Line</label>
-                    <select required value={editModal.item.lineId || ''} onChange={e => setEditModal({ ...editModal, item: { ...editModal.item, lineId: e.target.value } })} className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-blue-500">
+                    <label className="block text-xs font-semibold text-slate-700 mb-1 uppercase tracking-wider">Chọn Line</label>
+                    <select required value={editModal.item.lineId || ''} onChange={e => setEditModal({ ...editModal, item: { ...editModal.item, lineId: e.target.value } })} className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3.5 py-2.5 text-xs text-slate-900 focus:outline-none focus:border-blue-500">
                       {localLines.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
                     </select>
                   </div>
                   <div>
-                    <label className="block text-xs font-semibold text-slate-300 mb-1 uppercase tracking-wider">Chọn Model Group</label>
-                    <select value={editModal.item.modelGroupId || ''} onChange={e => setEditModal({ ...editModal, item: { ...editModal.item, modelGroupId: e.target.value } })} className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-blue-500">
+                    <label className="block text-xs font-semibold text-slate-700 mb-1 uppercase tracking-wider">Chọn Model Group</label>
+                    <select value={editModal.item.modelGroupId || ''} onChange={e => setEditModal({ ...editModal, item: { ...editModal.item, modelGroupId: e.target.value } })} className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3.5 py-2.5 text-xs text-slate-900 focus:outline-none focus:border-blue-500">
                       <option value="">-- Tùy chọn Model Group --</option>
                       {localModelGroups.map(mg => <option key={mg.id} value={mg.id}>{mg.name}</option>)}
                     </select>
                   </div>
                   <div>
-                    <label className="block text-xs font-semibold text-slate-300 mb-1 uppercase tracking-wider">Chọn Station Type</label>
-                    <select value={editModal.item.stationTypeId || ''} onChange={e => setEditModal({ ...editModal, item: { ...editModal.item, stationTypeId: e.target.value } })} className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-blue-500">
+                    <label className="block text-xs font-semibold text-slate-700 mb-1 uppercase tracking-wider">Chọn Station Type</label>
+                    <select value={editModal.item.stationTypeId || ''} onChange={e => setEditModal({ ...editModal, item: { ...editModal.item, stationTypeId: e.target.value } })} className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3.5 py-2.5 text-xs text-slate-900 focus:outline-none focus:border-blue-500">
                       <option value="">-- Tùy chọn Station Type --</option>
                       {localStationTypes.map(st => <option key={st.id} value={st.id}>{st.name}</option>)}
                     </select>
@@ -1438,7 +1506,7 @@ export default function MasterData({
               {editModal.entityType === 'channel' && (
                 <>
                   <div>
-                    <label className="block text-xs font-semibold text-slate-300 mb-1 uppercase tracking-wider">Chọn Chuyền (Line)</label>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1 uppercase tracking-wider">Chọn Chuyền (Line)</label>
                     <select
                       required
                       value={editModal.item.lineId || ''}
@@ -1446,15 +1514,15 @@ export default function MasterData({
                         ...editModal,
                         item: { ...editModal.item, lineId: e.target.value, stationId: '' }
                       })}
-                      className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-blue-500"
+                      className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3.5 py-2.5 text-xs text-slate-900 focus:outline-none focus:border-blue-500"
                     >
                       <option value="">-- Chọn Line --</option>
                       {localLines.map(line => <option key={line.id} value={line.id}>{line.name}</option>)}
                     </select>
                   </div>
                   <div>
-                    <label className="block text-xs font-semibold text-slate-300 mb-1 uppercase tracking-wider">Chọn Trạm (Station)</label>
-                    <select required disabled={!editModal.item.lineId} value={editModal.item.stationId || ''} onChange={e => setEditModal({ ...editModal, item: { ...editModal.item, stationId: e.target.value } })} className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-blue-500 disabled:opacity-50 disabled:cursor-not-allowed">
+                    <label className="block text-xs font-semibold text-slate-700 mb-1 uppercase tracking-wider">Chọn Trạm (Station)</label>
+                    <select required disabled={!editModal.item.lineId} value={editModal.item.stationId || ''} onChange={e => setEditModal({ ...editModal, item: { ...editModal.item, stationId: e.target.value } })} className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3.5 py-2.5 text-xs text-slate-900 focus:outline-none focus:border-blue-500 disabled:opacity-50 disabled:cursor-not-allowed">
                       <option value="">-- Chọn Station --</option>
                       {localStations
                         .filter(s => String(s.lineId) === String(editModal.item.lineId))
@@ -1462,27 +1530,27 @@ export default function MasterData({
                     </select>
                   </div>
                   <div>
-                    <label className="block text-xs font-semibold text-slate-300 mb-1 uppercase tracking-wider">IP Address</label>
-                    <input type="text" value={editModal.item.ipAddress || ''} onChange={e => setEditModal({ ...editModal, item: { ...editModal.item, ipAddress: e.target.value } })} className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2.5 text-xs text-white font-mono focus:outline-none focus:border-blue-500" />
+                    <label className="block text-xs font-semibold text-slate-700 mb-1 uppercase tracking-wider">IP Address</label>
+                    <input type="text" value={editModal.item.ipAddress || ''} onChange={e => setEditModal({ ...editModal, item: { ...editModal.item, ipAddress: e.target.value } })} className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3.5 py-2.5 text-xs text-slate-900 font-mono focus:outline-none focus:border-blue-500" />
                   </div>
                   <div>
-                    <label className="block text-xs font-semibold text-slate-300 mb-1 uppercase tracking-wider">MAC Address</label>
-                    <input type="text" value={editModal.item.macAddress || ''} onChange={e => setEditModal({ ...editModal, item: { ...editModal.item, macAddress: e.target.value } })} className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2.5 text-xs text-white font-mono focus:outline-none focus:border-blue-500" />
+                    <label className="block text-xs font-semibold text-slate-700 mb-1 uppercase tracking-wider">MAC Address</label>
+                    <input type="text" value={editModal.item.macAddress || ''} onChange={e => setEditModal({ ...editModal, item: { ...editModal.item, macAddress: e.target.value } })} className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3.5 py-2.5 text-xs text-slate-900 font-mono focus:outline-none focus:border-blue-500" />
                   </div>
                   <div>
-                    <label className="block text-xs font-semibold text-slate-300 mb-1 uppercase tracking-wider">GMES Name</label>
-                    <input type="text" value={editModal.item.gmesName || ''} onChange={e => setEditModal({ ...editModal, item: { ...editModal.item, gmesName: e.target.value } })} className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-blue-500" />
+                    <label className="block text-xs font-semibold text-slate-700 mb-1 uppercase tracking-wider">GMES Name</label>
+                    <input type="text" value={editModal.item.gmesName || ''} onChange={e => setEditModal({ ...editModal, item: { ...editModal.item, gmesName: e.target.value } })} className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3.5 py-2.5 text-xs text-slate-900 focus:outline-none focus:border-blue-500" />
                   </div>
                 </>
               )}
 
               <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1 uppercase tracking-wider">Ghi chú (Remark)</label>
-                <input type="text" value={editModal.item.remark || ''} onChange={e => setEditModal({ ...editModal, item: { ...editModal.item, remark: e.target.value } })} className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-blue-500" />
+                <label className="block text-xs font-semibold text-slate-700 mb-1 uppercase tracking-wider">Ghi chú (Remark)</label>
+                <input type="text" value={editModal.item.remark || ''} onChange={e => setEditModal({ ...editModal, item: { ...editModal.item, remark: e.target.value } })} className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3.5 py-2.5 text-xs text-slate-900 focus:outline-none focus:border-blue-500" />
               </div>
 
               <div className="flex justify-end gap-3 pt-3">
-                <button type="button" onClick={() => setEditModal(null)} className="px-4 py-2 rounded-xl bg-slate-800 text-slate-300 text-xs font-semibold hover:bg-slate-700">Hủy</button>
+                <button type="button" onClick={() => setEditModal(null)} className="px-4 py-2 rounded-xl bg-slate-200 text-slate-700 text-xs font-semibold hover:bg-slate-300">Hủy</button>
                 <button
                   type="button"
                   disabled={loading}

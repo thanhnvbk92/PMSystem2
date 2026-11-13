@@ -1,71 +1,73 @@
 import React from 'react';
-import { Activity, Database, BarChart3, Search, RefreshCw, Radio, Terminal, Gauge, ClipboardCheck } from 'lucide-react';
+import { Activity, Database, BarChart3, Search, RefreshCw, Radio, Terminal, Gauge, ClipboardCheck, ShieldAlert, Languages, LayoutGrid, ChevronRight, Monitor } from 'lucide-react';
 
-export default function Header({ activeTab, onRefresh, signalRState, lastSignalREvent, summaryData }) {
-  const isSignalRConnected = signalRState === 'Connected';
-  const signalRLabel = isSignalRConnected
-    ? 'Connected'
-    : signalRState === 'Reconnecting'
-      ? 'Reconnecting'
-      : 'Disconnected';
-  const lastEventText = lastSignalREvent?.receivedAt
-    ? new Date(lastSignalREvent.receivedAt).toLocaleTimeString([], {
-        hour: '2-digit',
-        minute: '2-digit',
-        second: '2-digit',
-      })
-    : 'Chưa nhận event';
-  const eventInspectTime = lastSignalREvent?.inspectTime
-    ? String(lastSignalREvent.inspectTime).replace('T', ' ').replace(/Z$/, '')
-    : null;
-  const eventOutcome = lastSignalREvent
-    ? lastSignalREvent.applied
-      ? `Đã cộng${lastSignalREvent.count ? ` +${lastSignalREvent.count}` : ''}`
-      : `Bỏ qua: ${lastSignalREvent.reason || 'Không xác định'}`
-    : null;
+export default function Header({ activeTab, sectionLabel, moduleTitle, onRefresh, summaryData, language = 'vi', onLanguageChange }) {
   const getTabDetails = () => {
-    switch (activeTab) {
+    // "master/channels" -> "master"
+    switch ((activeTab || '').split('/')[0]) {
+      case 'home':
+        return {
+          title: 'Trang Chủ',
+          subtitle: 'Chọn module để làm việc: FCT Analysis, Master Data, ...',
+          icon: LayoutGrid,
+          color: 'text-slate-700',
+        };
       case 'analytics':
         return {
           title: 'Trung Tâm Phân Tích Dữ Liệu (Analytics)',
           subtitle: 'Phân tích xu hướng sản lượng, ma trận tỷ lệ Yield theo dây chuyền & biểu đồ Pareto mã lỗi',
           icon: BarChart3,
-          color: 'text-purple-400',
+          color: 'text-purple-700',
         };
       case 'pcb-search':
         return {
           title: 'Tra Cứu & Tìm Kiếm Bản Ghi PCB',
           subtitle: 'Tìm kiếm theo mã vạch PID Barcode, lọc trạng thái OK/NG và tra cứu chi tiết từng bước kiểm tra',
           icon: Search,
-          color: 'text-emerald-400',
+          color: 'text-emerald-700',
         };
       case 'cpk':
         return {
           title: 'Theo Dõi Năng Lực Quá Trình (CPK)',
-          subtitle: 'Theo dõi CPK theo Channel và Step từ 50 PCB OK gần nhất tính từ đầu tháng',
+          subtitle: 'CPK theo Channel và Step từ 50 PCB OK gần nhất (tối thiểu 30 mẫu), cập nhật realtime',
           icon: Gauge,
-          color: 'text-fuchsia-400',
+          color: 'text-fuchsia-700',
         };
       case 'improvements':
         return {
           title: 'Cải Tiến Giảm Lỗi',
           subtitle: 'Theo dõi hành động và đo hiệu quả trực tiếp từ tỷ lệ lỗi trong dữ liệu FCT',
           icon: ClipboardCheck,
-          color: 'text-cyan-400',
+          color: 'text-cyan-700',
+        };
+      case 'invalid-results':
+        return {
+          title: 'Theo Dõi Dữ Liệu Không Hợp Lệ',
+          subtitle: 'Kiểm tra các PCB result được bảo toàn nhưng không tính vào sản lượng do trạng thái không thể chuẩn hóa',
+          icon: ShieldAlert,
+          color: 'text-rose-700',
+        };
+      case 'pc-overview':
+      case 'pc-list':
+        return {
+          title: activeTab === 'pc-list' ? 'Danh Sách PC' : 'Tổng Quan PC',
+          subtitle: 'Online/offline, version Backup_Log2 và tài nguyên các PC thu thập log',
+          icon: Monitor,
+          color: 'text-teal-700',
         };
       case 'master':
         return {
-          title: 'Master Data',
+          title: sectionLabel ? `Master Data · ${sectionLabel}` : 'Master Data',
           subtitle: 'Quản lý Dây chuyền sản xuất SMT, Trạm kiểm tra & Các Channels',
           icon: Database,
-          color: 'text-cyan-400',
+          color: 'text-cyan-700',
         };
       case 'command':
         return {
           title: 'Điều Khiển & Lệnh Hệ Thống (Command Center)',
           subtitle: 'Gửi lệnh từ xa (Đổi Model, Khởi Động Lại, Custom Command) đến các thiết bị thu thập log SMT',
           icon: Terminal,
-          color: 'text-amber-400',
+          color: 'text-amber-700',
         };
       case 'dashboard':
       default:
@@ -73,7 +75,7 @@ export default function Header({ activeTab, onRefresh, signalRState, lastSignalR
           title: 'Dashboard Overview',
           subtitle: 'Thống kê sản lượng tổng thể, tỷ lệ Yield toàn nhà máy & Luồng dữ liệu kiểm tra real-time',
           icon: Activity,
-          color: 'text-blue-400',
+          color: 'text-blue-700',
         };
     }
   };
@@ -81,62 +83,51 @@ export default function Header({ activeTab, onRefresh, signalRState, lastSignalR
   const { title, subtitle, icon: Icon, color } = getTabDetails();
 
   return (
-    <header className="glass-panel px-6 py-4 mb-6 flex flex-wrap items-center justify-between gap-4 border border-white/10 relative overflow-hidden">
+    <header className="glass-panel px-6 py-4 mb-6 flex flex-wrap items-center justify-between gap-4 border border-slate-200 relative overflow-hidden">
       {/* Background ambient light */}
       <div className="absolute top-0 right-1/3 w-80 h-20 bg-blue-500/10 rounded-full blur-3xl pointer-events-none"></div>
 
       {/* Active Tab Title & Subtitle */}
       <div className="flex items-center gap-3.5 relative z-10">
-        <div className="w-10 h-10 rounded-xl bg-slate-900 border border-white/10 flex items-center justify-center shadow-inner">
+        <div className="w-10 h-10 rounded-xl bg-slate-100 border border-slate-200 flex items-center justify-center shadow-inner">
           <Icon className={`w-5 h-5 ${color}`} />
         </div>
         <div>
-          <h1 className="text-xl font-bold text-white font-display tracking-tight flex items-center gap-2">
+          {activeTab !== 'home' && moduleTitle && (
+            <div className="flex items-center gap-1 text-[11px] font-semibold text-slate-500 mb-0.5">
+              <span>Trang chủ</span>
+              <ChevronRight className="w-3 h-3" />
+              <span className="text-slate-700">{moduleTitle}</span>
+            </div>
+          )}
+          <h1 className="text-xl font-bold text-slate-900 font-display tracking-tight flex items-center gap-2">
             {title}
           </h1>
-          <p className="text-xs text-slate-400 font-medium">{subtitle}</p>
+          <p className="text-xs text-slate-600 font-medium">{subtitle}</p>
         </div>
       </div>
 
       {/* Top Header Actions & Badges */}
       <div className="flex items-center gap-3 relative z-10">
         <div id="analytics-header-actions" className="flex items-center gap-2" />
-        <div
-          className={`hidden md:flex items-center gap-2 px-3 py-1.5 rounded-xl border text-xs font-mono ${
-            isSignalRConnected
-              ? 'bg-emerald-500/10 border-emerald-500/25 text-emerald-300'
-              : signalRState === 'Reconnecting'
-                ? 'bg-amber-500/10 border-amber-500/25 text-amber-300'
-                : 'bg-rose-500/10 border-rose-500/25 text-rose-300'
-          }`}
-          title={lastSignalREvent
-            ? `Event cuối: ${lastSignalREvent.type} lúc ${lastEventText}. ${eventOutcome}${eventInspectTime ? `. Inspect time: ${eventInspectTime}` : ''}`
-            : 'Trình duyệt chưa nhận event production nào từ SignalR'}
-        >
-          <span className={`w-2 h-2 rounded-full ${isSignalRConnected ? 'bg-emerald-400 animate-pulse' : signalRState === 'Reconnecting' ? 'bg-amber-400 animate-pulse' : 'bg-rose-400'}`} />
-          <strong>SignalR {signalRLabel}</strong>
-          <span className="text-slate-400">|</span>
-          <span>Last event: {lastEventText}</span>
-          {eventOutcome && (
-            <span className={lastSignalREvent.applied ? 'text-emerald-300' : 'text-amber-300'}>
-              ({eventOutcome})
-            </span>
-          )}
+        <div data-no-translate className="flex items-center gap-1 rounded-xl border border-slate-200 bg-slate-50/70 p-1" title="Language / Ngôn ngữ">
+          <Languages className="ml-1 h-3.5 w-3.5 text-cyan-700" />
+          {['vi', 'en'].map(value => <button key={value} type="button" onClick={() => onLanguageChange?.(value)} className={`rounded-lg px-2 py-1 text-[10px] font-bold transition ${language === value ? 'bg-cyan-600 text-white' : 'text-slate-600 hover:text-slate-900'}`}>{value.toUpperCase()}</button>)}
         </div>
         {summaryData && (
-          <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-950/70 border border-white/10 text-xs font-mono text-slate-300">
-            <Radio className="w-3.5 h-3.5 text-blue-400 animate-pulse" />
+          <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-50/70 border border-slate-200 text-xs font-mono text-slate-700">
+            <Radio className="w-3.5 h-3.5 text-blue-700 animate-pulse" />
             <span>Active Channels:</span>
-            <strong className="text-blue-300">{summaryData.activeChannels}</strong>
+            <strong className="text-blue-700">{summaryData.activeChannels}</strong>
           </div>
         )}
 
         <button
           onClick={onRefresh}
-          className="px-3.5 py-2 rounded-xl bg-slate-900/80 hover:bg-slate-800 border border-white/10 text-xs font-semibold text-slate-300 transition-colors flex items-center gap-2 shadow-sm"
+          className="px-3.5 py-2 rounded-xl bg-slate-100/80 hover:bg-slate-200 border border-slate-200 text-xs font-semibold text-slate-700 transition-colors flex items-center gap-2 shadow-sm"
           title="Tải lại dữ liệu"
         >
-          <RefreshCw className="w-3.5 h-3.5 text-blue-400" />
+          <RefreshCw className="w-3.5 h-3.5 text-blue-700" />
           <span className="hidden sm:inline">Refresh Data</span>
         </button>
       </div>

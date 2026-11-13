@@ -12,6 +12,13 @@ const listeners = {
   ReceiveCommandStatus: new Set(),
   ReceiveMachineStatusChanged: new Set(),
   ReceiveMachineAlert: new Set(),
+  ReceiveCpkUpdate: new Set(),
+};
+
+// Automatic CPK rows that changed in the last backend engine flush.
+export const onCpkUpdate = (callback) => {
+  listeners.ReceiveCpkUpdate.add(callback);
+  return () => listeners.ReceiveCpkUpdate.delete(callback);
 };
 
 export const onCommandStatus = (callback) => {
@@ -111,6 +118,10 @@ export const initSignalR = (onPcbResultReceived, onStatsReceived, onStateChange,
 
   connection.on('ReceiveMachineAlert', (alert) => {
     listeners.ReceiveMachineAlert.forEach((cb) => cb(alert));
+  });
+
+  connection.on('ReceiveCpkUpdate', (items) => {
+    listeners.ReceiveCpkUpdate.forEach((cb) => cb(items));
   });
 
   startConnection();

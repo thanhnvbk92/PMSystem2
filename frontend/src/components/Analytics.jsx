@@ -1,4 +1,4 @@
-import React, { memo, useState, useEffect, useMemo } from 'react';
+import React, { memo, useState, useEffect, useMemo, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { 
   BarChart3, Layers, AlertTriangle, Cpu, Clock, 
@@ -11,23 +11,113 @@ import {
 } from 'recharts';
 import { ProductionApi } from '../services/api';
 
-function Analytics({ lines, stations, channels = [], startDate, endDate, onFilterChange }) {
+// High-contrast categorical palette for the 14 production lines. Keep colors
+// stable by sorting Lines before assigning them; defect ranking must not change
+// a Line's color between filters or time buckets.
+const LINE_CONTRIBUTION_COLORS = [
+  '#0891B2', // cyan
+  '#FF375F', // red-pink
+  '#A16207', // yellow
+  '#7D5CFF', // violet
+  '#15803D', // green
+  '#C2410C', // orange
+  '#0A84FF', // blue
+  '#BE185D', // magenta
+  '#4D7C0F', // lime
+  '#BF5AF2', // purple
+  '#0F766E', // teal
+  '#FF453A', // red
+  '#92400E', // tan
+  '#475569', // neutral slate
+];
+
+const LINE_CONTRIBUTION_COLOR_BY_NAME = {
+  'line 1-1': '#0891B2', // cyan
+  'line 1-2': '#A16207', // yellow
+  'line 2-1': '#15803D', // green
+  'line 2-2': '#7D5CFF', // violet
+  'line 3-1': '#C2410C', // orange
+  'line 3-2': '#BE185D', // magenta
+  'line 4-1': '#0A84FF', // blue
+  'line 4-2': '#4D7C0F', // lime
+  'line 5-1': '#0F766E', // teal
+  'line 5-2': '#BF5AF2', // purple
+  'line 6-1': '#92400E', // tan
+  'line 6-2': '#FF375F', // red-pink
+  'line off': '#64748B', // neutral slate
+  'unassigned line': '#475569', // neutral slate
+};
+
+const getLineContributionColor = (lineName, fallbackIndex) =>
+  LINE_CONTRIBUTION_COLOR_BY_NAME[String(lineName || '').trim().toLowerCase()]
+  || LINE_CONTRIBUTION_COLORS[fallbackIndex % LINE_CONTRIBUTION_COLORS.length];
+
+function Analytics({ lines, stations, channels = [], startDate, endDate, onFilterChange, initialFilters = null }) {
+  const biRequestRef = useRef(0);
   // Global BI Filter States
-  const [selectedLine, setSelectedLine] = useState('');
-  const [selectedStation, setSelectedStation] = useState('');
+  const [selectedLine, setSelectedLine] = useState(initialFilters?.lineId ? String(initialFilters.lineId) : '');
+  const [selectedStation, setSelectedStation] = useState(initialFilters?.stationId ? String(initialFilters.stationId) : '');
   const [selectedChannel, setSelectedChannel] = useState('');
-  const [selectedModel, setSelectedModel] = useState('');
-  const [selectedModelName, setSelectedModelName] = useState('');
-  const [selectedErrorCode, setSelectedErrorCode] = useState('');
+  const [selectedModel, setSelectedModel] = useState(initialFilters?.modelId ? String(initialFilters.modelId) : '');
+  const [selectedModelName, setSelectedModelName] = useState(initialFilters?.modelName || '');
+  const [selectedErrorCode, setSelectedErrorCode] = useState(initialFilters?.errorCode || '');
   const [selectedJobFile, setSelectedJobFile] = useState('');
   const [selectedHours, setSelectedHours] = useState(24);
-  const [selectedTimeWindow, setSelectedTimeWindow] = useState(null);
+  const [selectedTimePreset, setSelectedTimePreset] = useState('24h');
+  const [selectedTimeWindow, setSelectedTimeWindow] = useState(initialFilters?.start && initialFilters?.end ? {
+    start: new Date(initialFilters.start),
+    end: new Date(initialFilters.end),
+    label: `Cải tiến: ${new Date(initialFilters.start).toLocaleDateString('vi-VN')} → ${new Date(initialFilters.end).toLocaleDateString('vi-VN')}`,
+  } : null);
+  useEffect(() => {
+    if (!initialFilters) return;
+    const nextLine = initialFilters.lineId ? String(initialFilters.lineId) : '';
+    const nextStation = initialFilters.stationId ? String(initialFilters.stationId) : '';
+    setSelectedLine(nextLine);
+    setSelectedStation(nextStation);
+    setSelectedChannel('');
+    setSelectedModel(initialFilters.modelId ? String(initialFilters.modelId) : '');
+    setSelectedModelName(initialFilters.modelName || '');
+    setSelectedErrorCode(initialFilters.errorCode || '');
+    setSelectedJobFile('');
+    if (initialFilters.start && initialFilters.end) {
+      const rangeStart = new Date(initialFilters.start);
+      const rangeEnd = new Date(initialFilters.end);
+      setSelectedTimeWindow({
+        start: rangeStart,
+        end: rangeEnd,
+        label: `Cải tiến: ${rangeStart.toLocaleDateString('vi-VN')} → ${rangeEnd.toLocaleDateString('vi-VN')}`,
+      });
+      setSelectedHours(Math.max(1, Math.ceil((rangeEnd.getTime() - rangeStart.getTime()) / 3600000)));
+    }
+    onFilterChange?.(
+      nextLine ? Number(nextLine) : null,
+      nextStation ? Number(nextStation) : null,
+      initialFilters.start ? new Date(initialFilters.start).toISOString() : null,
+      initialFilters.end ? new Date(initialFilters.end).toISOString() : null,
+    );
+  }, [initialFilters, onFilterChange]);
   const analyticsRange = useMemo(() => {
     const end = new Date();
-    const start = new Date(end.getTime() - selectedHours * 60 * 60 * 1000);
+    let start;
+    switch (selectedTimePreset) {
+      case 'today': start = new Date(end.getFullYear(), end.getMonth(), end.getDate()); break;
+      case 'this-month': start = new Date(end.getFullYear(), end.getMonth(), 1); break;
+      case 'this-year': start = new Date(end.getFullYear(), 0, 1); break;
+      case 'last-12-months':
+        start = new Date(end); start.setMonth(start.getMonth() - 12); break;
+      case 'last-5-years':
+        start = new Date(end); start.setFullYear(start.getFullYear() - 5); break;
+      default: start = new Date(end.getTime() - selectedHours * 60 * 60 * 1000); break;
+    }
     const format = (value) => value.toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
     return { start, end, label: `${format(start)} → ${format(end)}` };
-  }, [selectedHours]);
+  }, [selectedHours, selectedTimePreset]);
+  const selectedTimePresetLabel = ({
+    '12h': '12 giờ gần nhất', '24h': '24 giờ gần nhất', '48h': '48 giờ gần nhất',
+    today: 'Hôm nay', 'this-month': 'Tháng này', 'this-year': 'Năm nay',
+    'last-12-months': '12 tháng gần nhất', 'last-5-years': '5 năm gần nhất'
+  })[selectedTimePreset] || `${selectedHours} giờ`;
 
   // BI Data State from backend API getBiMatrix
   const [biData, setBiData] = useState(null);
@@ -38,6 +128,7 @@ function Analytics({ lines, stations, channels = [], startDate, endDate, onFilte
 
   // Fetch unified BI matrix data
   const fetchBiMatrix = async () => {
+    const requestId = ++biRequestRef.current;
     setLoading(true);
     const loadStarted = performance.now();
     try {
@@ -50,56 +141,86 @@ function Analytics({ lines, stations, channels = [], startDate, endDate, onFilte
 
       const data = await ProductionApi.getBiMatrix(
         lineId, stationId, channelId, modelId, errCode, job,
-        selectedTimeWindow?.start?.toISOString() || null,
-        selectedTimeWindow?.end?.toISOString() || null,
+        (selectedTimeWindow?.start || analyticsRange.start).toISOString(),
+        (selectedTimeWindow?.end || analyticsRange.end).toISOString(),
         selectedHours
       );
-      setBiData(data);
+      if (requestId === biRequestRef.current) setBiData(data);
     } catch (err) {
       console.error('Lỗi nạp dữ liệu Power BI Matrix Analytics:', err);
     } finally {
-      setLoadDurationMs(performance.now() - loadStarted);
-      setLoading(false);
+      if (requestId === biRequestRef.current) {
+        setLoadDurationMs(performance.now() - loadStarted);
+        setLoading(false);
+      }
     }
   };
 
   useEffect(() => {
     fetchBiMatrix();
-  }, [selectedLine, selectedStation, selectedChannel, selectedModel, selectedErrorCode, selectedJobFile, selectedHours, selectedTimeWindow]);
+  }, [selectedLine, selectedStation, selectedChannel, selectedModel, selectedErrorCode, selectedJobFile, selectedHours, selectedTimePreset, selectedTimeWindow, analyticsRange]);
 
   const handleLineChange = (val) => {
-    setSelectedLine(val);
+    const nextValue = val && String(val) === String(selectedLine) ? '' : val;
+    setSelectedLine(nextValue);
     setSelectedStation('');
     setSelectedChannel('');
-    if (onFilterChange) onFilterChange(val ? parseInt(val) : null, null, startDate, endDate);
+    if (onFilterChange) onFilterChange(nextValue ? parseInt(nextValue) : null, null, startDate, endDate);
   };
 
   const handleStationChange = (val) => {
-    setSelectedStation(val);
+    const nextValue = val && String(val) === String(selectedStation) ? '' : val;
+    setSelectedStation(nextValue);
     setSelectedChannel('');
-    if (onFilterChange) onFilterChange(selectedLine ? parseInt(selectedLine) : null, val ? parseInt(val) : null, startDate, endDate);
+    if (onFilterChange) onFilterChange(selectedLine ? parseInt(selectedLine) : null, nextValue ? parseInt(nextValue) : null, startDate, endDate);
   };
 
   const handleChannelChange = (val) => {
-    setSelectedChannel(val);
+    setSelectedChannel(val && String(val) === String(selectedChannel) ? '' : val);
   };
 
   const handleModelChange = (modelId, modelName = '') => {
-    setSelectedModel(modelId ? String(modelId) : '');
-    setSelectedModelName(modelId ? modelName : '');
+    const nextValue = modelId && String(modelId) === String(selectedModel) ? '' : String(modelId || '');
+    setSelectedModel(nextValue);
+    setSelectedModelName(nextValue ? modelName : '');
   };
 
-  const handleModelChartClick = (chartState) => {
-    const model = chartState?.activePayload?.[0]?.payload;
-    if (model?.modelId) handleModelChange(model.modelId, model.displayName);
+  const handleModelChartClick = (eventData) => {
+    // Recharts sends different shapes for a chart-area click and a direct
+    // Bar/Line click. Resolve both so Model filtering is reliable.
+    const model = eventData?.activePayload?.[0]?.payload
+      ?? eventData?.payload
+      ?? eventData;
+    if (model?.modelId != null) handleModelChange(model.modelId, model.displayName);
   };
 
   const handleErrorCodeChange = (val) => {
-    setSelectedErrorCode(val);
+    setSelectedErrorCode(val && val === selectedErrorCode ? '' : val);
   };
 
   const handleJobFileChange = (val) => {
-    setSelectedJobFile(val);
+    setSelectedJobFile(val && val === selectedJobFile ? '' : val);
+  };
+
+  const handleTimePresetChange = (preset) => {
+    const now = new Date();
+    let start;
+    switch (preset) {
+      case 'today': start = new Date(now.getFullYear(), now.getMonth(), now.getDate()); break;
+      case 'this-month': start = new Date(now.getFullYear(), now.getMonth(), 1); break;
+      case 'this-year': start = new Date(now.getFullYear(), 0, 1); break;
+      case 'last-12-months': start = new Date(now); start.setMonth(start.getMonth() - 12); break;
+      case 'last-5-years': start = new Date(now); start.setFullYear(start.getFullYear() - 5); break;
+      default: {
+        const hours = Number.parseInt(preset, 10) || 24;
+        start = new Date(now.getTime() - hours * 60 * 60 * 1000);
+      }
+    }
+    setSelectedTimePreset(preset);
+    setSelectedHours(Math.max(1, Math.ceil((now.getTime() - start.getTime()) / (60 * 60 * 1000))));
+    setSelectedTimeWindow(null);
+    setSelectedErrorCode('');
+    setSelectedJobFile('');
   };
 
   const clearAllFilters = () => {
@@ -111,6 +232,7 @@ function Analytics({ lines, stations, channels = [], startDate, endDate, onFilte
     setSelectedErrorCode('');
     setSelectedJobFile('');
     setSelectedHours(24);
+    setSelectedTimePreset('24h');
     setSelectedTimeWindow(null);
     if (onFilterChange) onFilterChange(null, null, null, null);
   };
@@ -137,8 +259,8 @@ function Analytics({ lines, stations, channels = [], startDate, endDate, onFilte
   // Hourly trend data formatting
   const timeTrendChartData = useMemo(() => {
     if (!biData?.timeTrend) return [];
-    const rangeEnd = new Date();
-    const rangeStart = new Date(rangeEnd.getTime() - selectedHours * 60 * 60 * 1000);
+    const rangeEnd = analyticsRange.end;
+    const rangeStart = analyticsRange.start;
     const scopedTrend = biData.timeTrend.filter(stat => {
       const bucket = new Date(stat.bucket);
       return !Number.isNaN(bucket.getTime()) && bucket >= rangeStart && bucket <= rangeEnd;
@@ -146,12 +268,14 @@ function Analytics({ lines, stations, channels = [], startDate, endDate, onFilte
     if (selectedHours <= 48) {
       return scopedTrend.map(stat => {
         const date = new Date(stat.bucket);
+        const contributionFields = Object.fromEntries((stat.lineContributions || []).map(line => [`line_${line.lineId}`, line.contributionRate || 0]));
         return {
           time: selectedHours <= 24
             ? date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
             : date.toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', hour: '2-digit' }),
           Total: stat.totalCount || 0, OK: stat.okCount, NG: stat.ngCount,
           DefectRate: stat.totalCount > 0 ? parseFloat((stat.ngCount / stat.totalCount * 100).toFixed(3)) : 0,
+          ...contributionFields, lineContributions: stat.lineContributions || [],
           bucketStart: date,
           bucketEnd: new Date(date.getTime() + 60 * 60 * 1000)
         };
@@ -162,22 +286,64 @@ function Analytics({ lines, stations, channels = [], startDate, endDate, onFilte
       const date = new Date(stat.bucket);
       const key = `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
       const dayStart = new Date(date.getFullYear(), date.getMonth(), date.getDate());
-      const item = daily.get(key) || { time: date.toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit' }), Total: 0, OK: 0, NG: 0,
-        bucketStart: dayStart, bucketEnd: new Date(dayStart.getTime() + 24 * 60 * 60 * 1000) };
+      const useMonthlyLabel = selectedTimePreset === 'this-year'
+        || selectedTimePreset === 'last-12-months'
+        || selectedTimePreset === 'last-5-years';
+      const item = daily.get(key) || { time: useMonthlyLabel
+          ? date.toLocaleDateString('vi-VN', { month: 'short', year: 'numeric' })
+          : date.toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit' }), Total: 0, OK: 0, NG: 0,
+        bucketStart: dayStart, bucketEnd: useMonthlyLabel
+          ? new Date(date.getFullYear(), date.getMonth() + 1, 1)
+          : new Date(dayStart.getTime() + 24 * 60 * 60 * 1000), lineContributionMap: new Map() };
       item.Total += stat.totalCount || 0;
       item.OK += stat.okCount || 0;
       item.NG += stat.ngCount || 0;
+      (stat.lineContributions || []).forEach(line => {
+        const current = item.lineContributionMap.get(line.lineId) || { lineId: line.lineId, lineName: line.lineName, totalCount: 0, ngCount: 0 };
+        current.totalCount += line.totalCount || 0; current.ngCount += line.ngCount || 0;
+        item.lineContributionMap.set(line.lineId, current);
+      });
       daily.set(key, item);
     });
-    return [...daily.values()].map(item => ({ ...item,
-      DefectRate: item.Total > 0 ? parseFloat((item.NG / item.Total * 100).toFixed(3)) : 0 }));
-  }, [biData, selectedHours]);
+    return [...daily.values()].map(item => {
+      const contributions = [...item.lineContributionMap.values()].map(line => ({ ...line,
+        defectRate: line.totalCount > 0 ? line.ngCount * 100 / line.totalCount : 0,
+        contributionRate: item.Total > 0 ? line.ngCount * 100 / item.Total : 0 }));
+      const fields = Object.fromEntries(contributions.map(line => [`line_${line.lineId}`, line.contributionRate]));
+      const { lineContributionMap, ...chartItem } = item;
+      return { ...chartItem, ...fields, lineContributions: contributions,
+        DefectRate: item.Total > 0 ? parseFloat((item.NG / item.Total * 100).toFixed(3)) : 0 };
+    });
+  }, [biData, selectedHours, selectedTimePreset, analyticsRange]);
+
+  const lineContributionSeries = useMemo(() => {
+    const found = new Map();
+    (biData?.timeTrend || []).forEach(point => (point.lineContributions || []).forEach(line => {
+      if (!found.has(line.lineId)) found.set(line.lineId, line.lineName);
+    }));
+    return [...found.entries()]
+      .sort((a, b) => String(a[1]).localeCompare(String(b[1]), undefined, { numeric: true, sensitivity: 'base' }))
+      .map(([lineId, lineName], index) => ({ lineId, lineName,
+      dataKey: `line_${lineId}`, color: getLineContributionColor(lineName, index) }));
+  }, [biData]);
 
   const handleTimePointClick = (chartState) => {
-    const point = chartState?.activePayload?.[0]?.payload;
-    if (!point?.bucketStart || !point?.bucketEnd) return;
-    const start = new Date(point.bucketStart);
-    const end = new Date(point.bucketEnd);
+    // Recharts uses activePayload for a chart-area click and payload for a
+    // direct column click. In both cases drill into the full local day.
+    const point = chartState?.activePayload?.[0]?.payload
+      ?? chartState?.payload
+      ?? chartState;
+    if (!point?.bucketStart) return;
+    const clickedAt = new Date(point.bucketStart);
+    if (Number.isNaN(clickedAt.getTime())) return;
+    const start = new Date(clickedAt.getFullYear(), clickedAt.getMonth(), clickedAt.getDate());
+    const end = new Date(clickedAt.getFullYear(), clickedAt.getMonth(), clickedAt.getDate() + 1);
+    if (selectedTimeWindow
+      && new Date(selectedTimeWindow.start).getTime() === start.getTime()
+      && new Date(selectedTimeWindow.end).getTime() === end.getTime()) {
+      setSelectedTimeWindow(null);
+      return;
+    }
     setSelectedTimeWindow({ start, end, label: selectedHours <= 48
       ? `${start.toLocaleString('vi-VN')} → ${end.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}`
       : start.toLocaleDateString('vi-VN', { weekday: 'short', day: '2-digit', month: '2-digit', year: 'numeric' }) });
@@ -217,23 +383,17 @@ function Analytics({ lines, stations, channels = [], startDate, endDate, onFilte
 
   const CustomTooltip = ({ active, payload, label }) => {
     if (active && payload && payload.length) {
+      const point = payload[0]?.payload || {};
+      const contributions = [...(point.lineContributions || [])].sort((a, b) => b.contributionRate - a.contributionRate);
       return (
-        <div className="glass-panel p-3.5 border border-slate-700/80 shadow-2xl text-xs space-y-2 min-w-[170px]">
-          <p className="font-mono text-slate-400 border-b border-slate-700/60 pb-1 font-semibold">{label}</p>
-          <div className="flex items-center justify-between text-emerald-400 font-semibold">
-            <span>Pass (OK):</span>
-            <span className="font-mono text-sm">{payload[0]?.value || 0}</span>
+        <div className="glass-panel p-3.5 border border-slate-300 shadow-2xl text-xs space-y-2 min-w-[250px]">
+          <p className="font-mono text-slate-600 border-b border-slate-300 pb-1 font-semibold">{label}</p>
+          <div className="flex items-center justify-between text-rose-700 font-semibold">
+            <span>Tổng tỷ lệ lỗi:</span>
+            <span className="font-mono text-sm">{Number(point.DefectRate || 0).toFixed(3)}%</span>
           </div>
-          <div className="flex items-center justify-between text-rose-400 font-semibold">
-            <span>Fail (NG):</span>
-            <span className="font-mono text-sm">{payload[1]?.value || 0}</span>
-          </div>
-          {payload[2] && (
-            <div className="flex items-center justify-between text-purple-300 font-semibold pt-1 border-t border-slate-800">
-              <span>Tỷ lệ lỗi:</span>
-              <span className="font-mono text-sm">{payload[2]?.value}%</span>
-            </div>
-          )}
+          <div className="max-h-52 space-y-1.5 overflow-y-auto border-t border-slate-200 pt-2">{contributions.map(line => { const series = lineContributionSeries.find(x => x.lineId === line.lineId); return <div key={line.lineId} className="grid grid-cols-[10px_1fr_auto] items-center gap-2"><span className="h-2.5 w-2.5 rounded-sm" style={{backgroundColor: series?.color || getLineContributionColor(line.lineName, 0)}}/><span className="truncate text-slate-700">{line.lineName}<span className="ml-1 text-slate-500">({line.ngCount} NG)</span></span><span className="font-mono font-semibold text-slate-900">{Number(line.contributionRate || 0).toFixed(3)}%</span></div>; })}</div>
+          <div className="border-t border-slate-200 pt-1 text-[10px] text-slate-500">Đóng góp = NG của Line / tổng sản lượng tại mốc</div>
         </div>
       );
     }
@@ -345,28 +505,28 @@ function Analytics({ lines, stations, channels = [], startDate, endDate, onFilte
     if (active && payload && payload.length) {
       const data = payload[0].payload;
       return (
-        <div className="glass-panel p-3.5 border border-slate-700/80 shadow-2xl text-xs space-y-2 min-w-[190px]">
-          <p className="font-mono text-slate-300 font-bold border-b border-slate-700/60 pb-1">
+        <div className="glass-panel p-3.5 border border-slate-300 shadow-2xl text-xs space-y-2 min-w-[190px]">
+          <p className="font-mono text-slate-700 font-bold border-b border-slate-300 pb-1">
             {data.displayName || label}
           </p>
           {data.stationName && (
-            <div className="text-[11px] text-slate-400">
-              Trạm: <span className="text-white font-semibold">{data.stationName}</span> ({data.lineName})
+            <div className="text-[11px] text-slate-600">
+              Trạm: <span className="text-slate-900 font-semibold">{data.stationName}</span> ({data.lineName})
             </div>
           )}
-          <div className="flex items-center justify-between text-cyan-300 font-semibold">
+          <div className="flex items-center justify-between text-cyan-700 font-semibold">
             <span>Sản Lượng (Tổng):</span>
             <span className="font-mono text-sm">{data.Volume?.toLocaleString()}</span>
           </div>
-          <div className="flex items-center justify-between text-emerald-400 font-semibold">
+          <div className="flex items-center justify-between text-emerald-700 font-semibold">
             <span>Pass (OK):</span>
             <span className="font-mono text-sm">{data.OK?.toLocaleString()}</span>
           </div>
-          <div className="flex items-center justify-between text-rose-400 font-semibold">
+          <div className="flex items-center justify-between text-rose-700 font-semibold">
             <span>Fail (NG):</span>
             <span className="font-mono text-sm">{data.NG?.toLocaleString()}</span>
           </div>
-          <div className="flex items-center justify-between text-purple-300 font-bold pt-1.5 border-t border-slate-800">
+          <div className="flex items-center justify-between text-purple-700 font-bold pt-1.5 border-t border-slate-200">
             <span>Tỷ lệ lỗi:</span>
             <span className="font-mono text-sm">{data.DefectRate}%</span>
           </div>
@@ -380,14 +540,14 @@ function Analytics({ lines, stations, channels = [], startDate, endDate, onFilte
     <div className="space-y-6 w-full animate-in fade-in duration-300">
 
       {document.getElementById('analytics-header-actions') && createPortal(<div className="flex flex-wrap items-center justify-end gap-2">
-        <span className={`rounded-lg border px-2.5 py-1.5 text-[10px] font-mono ${loading ? 'border-amber-500/30 bg-amber-500/10 text-amber-300' : 'border-slate-700 bg-slate-900/70 text-slate-400'}`}>
+        <span className={`rounded-lg border px-2.5 py-1.5 text-[10px] font-mono ${loading ? 'border-amber-500/30 bg-amber-500/10 text-amber-700' : 'border-slate-300 bg-slate-100/70 text-slate-600'}`}>
           <Clock className={`mr-1 inline h-3 w-3 ${loading ? 'animate-pulse' : ''}`} />
           BI Matrix: {loading ? 'đang tải...' : loadDurationMs == null ? '—' : `${(loadDurationMs / 1000).toFixed(2)}s`}
         </span>
         <button
           onClick={fetchBiMatrix}
           disabled={loading}
-          className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 text-xs font-medium flex items-center gap-1.5 disabled:opacity-50"
+          className="px-3 py-1.5 rounded-xl bg-slate-200 hover:bg-slate-300 text-slate-700 border border-slate-300 text-xs font-medium flex items-center gap-1.5 disabled:opacity-50"
         >
           <RefreshCw className="w-3.5 h-3.5" />
           Làm mới
@@ -395,7 +555,7 @@ function Analytics({ lines, stations, channels = [], startDate, endDate, onFilte
         {hasActiveFilters && (
           <button
             onClick={clearAllFilters}
-            className="px-3 py-1.5 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/30 text-xs font-medium flex items-center gap-1.5 transition-all"
+            className="px-3 py-1.5 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-700 border border-rose-500/30 text-xs font-medium flex items-center gap-1.5 transition-all"
           >
             <XCircle className="w-3.5 h-3.5" />
             Xóa Bộ Lọc Chéo
@@ -417,11 +577,11 @@ function Analytics({ lines, stations, channels = [], startDate, endDate, onFilte
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2.5">
           {/* 1. Line Filter */}
           <div>
-            <label className="block text-[10px] uppercase font-bold text-slate-400 mb-1">Dây Chuyền (Line)</label>
+            <label className="block text-[10px] uppercase font-bold text-slate-600 mb-1">Dây Chuyền (Line)</label>
             <select
               value={selectedLine}
               onChange={(e) => handleLineChange(e.target.value)}
-              className="w-full bg-slate-950/90 border border-slate-700/80 rounded-xl px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-purple-500"
+              className="w-full bg-slate-50/90 border border-slate-300 rounded-xl px-2.5 py-1.5 text-xs text-slate-900 focus:outline-none focus:border-purple-500"
             >
               <option value="">Tất cả Lines ({lines.length})</option>
               {[...lines].sort((a, b) => (a.name || '').localeCompare(b.name || '', undefined, { numeric: true, sensitivity: 'base' })).map(l => (
@@ -432,11 +592,11 @@ function Analytics({ lines, stations, channels = [], startDate, endDate, onFilte
 
           {/* 2. Station Filter */}
           <div>
-            <label className="block text-[10px] uppercase font-bold text-slate-400 mb-1">Trạm (Station)</label>
+            <label className="block text-[10px] uppercase font-bold text-slate-600 mb-1">Trạm (Station)</label>
             <select
               value={selectedStation}
               onChange={(e) => handleStationChange(e.target.value)}
-              className="w-full bg-slate-950/90 border border-slate-700/80 rounded-xl px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-purple-500"
+              className="w-full bg-slate-50/90 border border-slate-300 rounded-xl px-2.5 py-1.5 text-xs text-slate-900 focus:outline-none focus:border-purple-500"
             >
               <option value="">Tất cả Trạm ({filteredStations.length})</option>
               {filteredStations.map(s => (
@@ -447,11 +607,11 @@ function Analytics({ lines, stations, channels = [], startDate, endDate, onFilte
 
           {/* 3. Machine / Channel Filter */}
           <div>
-            <label className="block text-[10px] uppercase font-bold text-slate-400 mb-1">Máy (Machine)</label>
+            <label className="block text-[10px] uppercase font-bold text-slate-600 mb-1">Máy (Machine)</label>
             <select
               value={selectedChannel}
               onChange={(e) => handleChannelChange(e.target.value)}
-              className="w-full bg-slate-950/90 border border-slate-700/80 rounded-xl px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-purple-500"
+              className="w-full bg-slate-50/90 border border-slate-300 rounded-xl px-2.5 py-1.5 text-xs text-slate-900 focus:outline-none focus:border-purple-500"
             >
               <option value="">Tất cả Máy ({filteredChannels.length})</option>
               {filteredChannels.map(c => (
@@ -462,11 +622,11 @@ function Analytics({ lines, stations, channels = [], startDate, endDate, onFilte
 
           {/* 4. Error Code Filter */}
           <div>
-            <label className="block text-[10px] uppercase font-bold text-slate-400 mb-1">Mã Lỗi (Defect)</label>
+            <label className="block text-[10px] uppercase font-bold text-slate-600 mb-1">Mã Lỗi (Defect)</label>
             <select
               value={selectedErrorCode}
               onChange={(e) => handleErrorCodeChange(e.target.value)}
-              className="w-full bg-slate-950/90 border border-slate-700/80 rounded-xl px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-purple-500"
+              className="w-full bg-slate-50/90 border border-slate-300 rounded-xl px-2.5 py-1.5 text-xs text-slate-900 focus:outline-none focus:border-purple-500"
             >
               <option value="">Tất cả Mã Lỗi</option>
               {biData?.defectStats?.map(d => (
@@ -477,11 +637,11 @@ function Analytics({ lines, stations, channels = [], startDate, endDate, onFilte
 
           {/* 5. Job File Filter */}
           <div>
-            <label className="block text-[10px] uppercase font-bold text-slate-400 mb-1">Job File</label>
+            <label className="block text-[10px] uppercase font-bold text-slate-600 mb-1">Job File</label>
             <select
               value={selectedJobFile}
               onChange={(e) => handleJobFileChange(e.target.value)}
-              className="w-full bg-slate-950/90 border border-slate-700/80 rounded-xl px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-purple-500"
+              className="w-full bg-slate-50/90 border border-slate-300 rounded-xl px-2.5 py-1.5 text-xs text-slate-900 focus:outline-none focus:border-purple-500"
             >
               <option value="">Tất cả Job Files</option>
               {biData?.jobFileStats?.map(j => (
@@ -489,7 +649,7 @@ function Analytics({ lines, stations, channels = [], startDate, endDate, onFilte
               ))}
             </select>
             {selectedJobFile && (
-              <div className="mt-1 break-all rounded-md border border-amber-500/20 bg-amber-500/5 px-2 py-1 text-[9px] font-mono leading-4 text-amber-300" title={selectedJobFile}>
+              <div className="mt-1 break-all rounded-md border border-amber-500/20 bg-amber-500/5 px-2 py-1 text-[9px] font-mono leading-4 text-amber-700" title={selectedJobFile}>
                 {selectedJobFile}
               </div>
             )}
@@ -497,24 +657,26 @@ function Analytics({ lines, stations, channels = [], startDate, endDate, onFilte
 
           {/* 6. Hours Interval Filter */}
           <div>
-            <label className="block text-[10px] uppercase font-bold text-slate-400 mb-1">Khung Thời Gian</label>
+            <label className="block text-[10px] uppercase font-bold text-slate-600 mb-1">Khung Thời Gian</label>
             <select
-              value={selectedHours}
-              onChange={(e) => {
-                setSelectedHours(parseInt(e.target.value));
-                setSelectedTimeWindow(null);
-                setSelectedErrorCode('');
-                setSelectedJobFile('');
-              }}
-              className="w-full bg-slate-950/90 border border-slate-700/80 rounded-xl px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-purple-500 font-mono"
+              value={selectedTimePreset}
+              onChange={(e) => handleTimePresetChange(e.target.value)}
+              className="w-full bg-slate-50/90 border border-slate-300 rounded-xl px-2.5 py-1.5 text-xs text-slate-900 focus:outline-none focus:border-purple-500 font-mono"
             >
-              <option value={12}>12 Giờ Gần Nhất</option>
-              <option value={24}>24 Giờ Gần Nhất</option>
-              <option value={48}>48 Giờ Gần Nhất</option>
-              <option value={168}>7 Ngày Gần Nhất</option>
-              <option value={720}>30 Ngày Gần Nhất</option>
+              <optgroup label="Theo lịch">
+                <option value="today">Hôm Nay</option>
+                <option value="this-month">Tháng Này</option>
+                <option value="this-year">Năm Nay</option>
+              </optgroup>
+              <optgroup label="Khoảng gần nhất">
+                <option value="12h">12 Giờ Gần Nhất</option>
+                <option value="24h">24 Giờ Gần Nhất</option>
+                <option value="48h">48 Giờ Gần Nhất</option>
+                <option value="last-12-months">12 Tháng Gần Nhất</option>
+                <option value="last-5-years">5 Năm Gần Nhất</option>
+              </optgroup>
             </select>
-            <div className="mt-1 truncate text-[9px] font-mono text-cyan-400" title={analyticsRange.label}>
+            <div className="mt-1 truncate text-[9px] font-mono text-cyan-700" title={analyticsRange.label}>
               {analyticsRange.label}
             </div>
           </div>
@@ -523,47 +685,47 @@ function Analytics({ lines, stations, channels = [], startDate, endDate, onFilte
         {/* Active Filter Indicators */}
         {hasActiveFilters && (
           <div className="flex flex-wrap items-center gap-1.5 pt-1 text-[11px]">
-            <span className="text-slate-400 font-semibold">Bộ lọc hiện tại:</span>
+            <span className="text-slate-600 font-semibold">Bộ lọc hiện tại:</span>
             {selectedLine && (
-              <span className="px-2 py-0.5 rounded-md bg-purple-500/20 text-purple-300 border border-purple-500/30 flex items-center gap-1">
+              <span className="px-2 py-0.5 rounded-md bg-purple-500/20 text-purple-700 border border-purple-500/30 flex items-center gap-1">
                 Line: {lines.find(l => l.id === parseInt(selectedLine))?.name}
-                <button onClick={() => handleLineChange('')} className="hover:text-white">✕</button>
+                <button onClick={() => handleLineChange('')} className="hover:text-slate-900">✕</button>
               </span>
             )}
             {selectedStation && (
-              <span className="px-2 py-0.5 rounded-md bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 flex items-center gap-1">
+              <span className="px-2 py-0.5 rounded-md bg-indigo-500/20 text-indigo-700 border border-indigo-500/30 flex items-center gap-1">
                 Station: {stations.find(s => s.id === parseInt(selectedStation))?.name}
-                <button onClick={() => handleStationChange('')} className="hover:text-white">✕</button>
+                <button onClick={() => handleStationChange('')} className="hover:text-slate-900">✕</button>
               </span>
             )}
             {selectedChannel && (
-              <span className="px-2 py-0.5 rounded-md bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 flex items-center gap-1">
+              <span className="px-2 py-0.5 rounded-md bg-cyan-500/20 text-cyan-700 border border-cyan-500/30 flex items-center gap-1">
                 Machine: {channels.find(c => c.id === parseInt(selectedChannel))?.name}
-                <button onClick={() => handleChannelChange('')} className="hover:text-white">✕</button>
+                <button onClick={() => handleChannelChange('')} className="hover:text-slate-900">✕</button>
               </span>
             )}
             {selectedModel && (
-              <span className="px-2 py-0.5 rounded-md bg-amber-500/20 text-amber-300 border border-amber-500/30 flex items-center gap-1">
+              <span className="px-2 py-0.5 rounded-md bg-amber-500/20 text-amber-700 border border-amber-500/30 flex items-center gap-1">
                 Model: {selectedModelName || `#${selectedModel}`}
-                <button onClick={() => handleModelChange('')} className="hover:text-white">✕</button>
+                <button onClick={() => handleModelChange('')} className="hover:text-slate-900">✕</button>
               </span>
             )}
             {selectedErrorCode && (
-              <span className="px-2 py-0.5 rounded-md bg-rose-500/20 text-rose-300 border border-rose-500/30 flex items-center gap-1">
+              <span className="px-2 py-0.5 rounded-md bg-rose-500/20 text-rose-700 border border-rose-500/30 flex items-center gap-1">
                 Code: {selectedErrorCode}
-                <button onClick={() => handleErrorCodeChange('')} className="hover:text-white">✕</button>
+                <button onClick={() => handleErrorCodeChange('')} className="hover:text-slate-900">✕</button>
               </span>
             )}
             {selectedJobFile && (
-              <span className="px-2 py-0.5 rounded-md bg-amber-500/20 text-amber-300 border border-amber-500/30 flex items-center gap-1">
+              <span className="px-2 py-0.5 rounded-md bg-amber-500/20 text-amber-700 border border-amber-500/30 flex items-center gap-1">
                 Job: {selectedJobFile}
-                <button onClick={() => handleJobFileChange('')} className="hover:text-white">✕</button>
+                <button onClick={() => handleJobFileChange('')} className="hover:text-slate-900">✕</button>
               </span>
             )}
             {selectedTimeWindow && (
-              <span className="px-2 py-0.5 rounded-md bg-sky-500/20 text-sky-300 border border-sky-500/30 flex items-center gap-1">
+              <span className="px-2 py-0.5 rounded-md bg-sky-500/20 text-sky-700 border border-sky-500/30 flex items-center gap-1">
                 Thời gian: {selectedTimeWindow.label}
-                <button onClick={() => setSelectedTimeWindow(null)} className="hover:text-white">✕</button>
+                <button onClick={() => setSelectedTimeWindow(null)} className="hover:text-slate-900">✕</button>
               </span>
             )}
           </div>
@@ -574,27 +736,25 @@ function Analytics({ lines, stations, channels = [], startDate, endDate, onFilte
       <div className="glass-panel p-5 space-y-4">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <Clock className="w-4 h-4 text-purple-400" />
-            <h3 className="text-xs font-bold text-white uppercase tracking-wider font-display">
-              Xu Hướng Sản Lượng Theo Thời Gian ({selectedHours}h)
+            <Clock className="w-4 h-4 text-purple-700" />
+            <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wider font-display">
+              Đóng Góp Tỷ Lệ Lỗi Theo Line ({selectedTimePresetLabel})
             </h3>
           </div>
-          <span className="text-[11px] text-slate-400 font-mono">TimescaleDB Aggregation</span>
+          <span className="text-[11px] text-slate-600 font-mono">TimescaleDB Aggregation</span>
         </div>
 
         <div className="h-72 w-full">
           {timeTrendChartData.length > 0 ? (
             <ResponsiveContainer width="100%" height="100%">
               <ComposedChart data={timeTrendChartData} margin={{ top: 10, right: 20, left: 0, bottom: 0 }} onClick={handleTimePointClick} className="cursor-pointer">
-                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
+                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
                 <XAxis dataKey="time" stroke="#64748b" fontSize={11} tickLine={false} />
-                <YAxis yAxisId="left" stroke="#64748b" fontSize={11} tickLine={false} />
-                <YAxis yAxisId="right" orientation="right" domain={[0, 'auto']} stroke="#fb7185" fontSize={11} tickLine={false} unit="%" />
+                <YAxis yAxisId="right" orientation="right" domain={[0, 'auto']} stroke="#be123c" fontSize={11} tickLine={false} unit="%" />
                 <Tooltip content={<CustomTooltip />} />
                 <Legend wrapperStyle={{ fontSize: '11px', paddingTop: '6px' }} />
-                <Bar yAxisId="left" dataKey="OK" name="Pass (OK)" stackId="production" fill="#10b981" maxBarSize={30} />
-                <Bar yAxisId="left" dataKey="NG" name="Fail (NG)" stackId="production" fill="#ef4444" radius={[4, 4, 0, 0]} maxBarSize={30} />
-                <Line yAxisId="right" type="monotone" dataKey="DefectRate" name="Tỷ lệ lỗi (%)" stroke="#fb7185" strokeWidth={2.5} dot={{ r: 3, fill: '#fb7185' }} />
+                {lineContributionSeries.map(series => <Bar key={series.lineId} yAxisId="right" dataKey={series.dataKey} name={series.lineName} stackId="lineContribution" fill={series.color} stroke="#ffffff" strokeWidth={1} maxBarSize={34} cursor="pointer" onClick={handleTimePointClick} />)}
+                <Line yAxisId="right" type="monotone" dataKey="DefectRate" name="Tỷ lệ lỗi (%)" stroke="#be123c" strokeWidth={2.5} dot={{ r: 3, fill: '#be123c' }} />
               </ComposedChart>
             </ResponsiveContainer>
           ) : (
@@ -610,32 +770,32 @@ function Analytics({ lines, stations, channels = [], startDate, endDate, onFilte
         
         {/* Chart A: Line Yield Rate (Stacked Volume Bars OK+NG + Yield Rate Line) */}
         <div className="glass-panel p-4 space-y-3">
-          <div className="flex items-center justify-between border-b border-white/5 pb-2">
-            <h4 className="text-xs font-bold text-slate-200 uppercase tracking-wider flex items-center gap-1.5">
-              <Layers className="w-3.5 h-3.5 text-purple-400" />
+          <div className="flex items-center justify-between border-b border-slate-200 pb-2">
+            <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
+              <Layers className="w-3.5 h-3.5 text-purple-700" />
               Sản lượng & tỷ lệ lỗi theo Line
             </h4>
-            <span className="text-[10px] text-slate-400 font-mono">Click cột để lọc Line</span>
+            <span className="text-[10px] text-slate-600 font-mono">Click cột để lọc Line</span>
           </div>
 
           <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-[9px] font-mono">
-            <span className="flex items-center gap-1 text-rose-400"><span className="h-2.5 w-2.5 bg-red-500" /> Sản Lượng Fail (NG)</span>
-            <span className="flex items-center gap-1 text-emerald-400"><span className="h-2.5 w-2.5 bg-emerald-500" /> Sản Lượng Pass (OK)</span>
-            <span className="flex items-center gap-1 text-rose-400"><span className="h-0.5 w-3 bg-rose-400" /> Tỷ lệ lỗi (%)</span>
+            <span className="flex items-center gap-1 text-rose-700"><span className="h-2.5 w-2.5 bg-red-500" /> Sản Lượng Fail (NG)</span>
+            <span className="flex items-center gap-1 text-emerald-700"><span className="h-2.5 w-2.5 bg-emerald-500" /> Sản Lượng Pass (OK)</span>
+            <span className="flex items-center gap-1 text-rose-700"><span className="h-0.5 w-3 bg-rose-400" /> Tỷ lệ lỗi (%)</span>
           </div>
 
           <div className="h-64 w-full">
             {lineChartData.length > 0 ? (
               <ResponsiveContainer width="100%" height="100%">
                 <ComposedChart data={lineChartData} margin={{ top: 10, right: 15, left: -15, bottom: 42 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
-                  <XAxis dataKey="displayName" stroke="#94a3b8" fontSize={10} tickLine={false} interval={0} angle={-15} textAnchor="end" />
+                  <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                  <XAxis dataKey="displayName" stroke="#475569" fontSize={10} tickLine={false} interval={0} angle={-15} textAnchor="end" />
                   <YAxis yAxisId="left" stroke="#64748b" fontSize={10} tickLine={false} />
-                  <YAxis yAxisId="right" orientation="right" domain={[0, 'auto']} stroke="#fb7185" fontSize={10} tickLine={false} unit="%" />
+                  <YAxis yAxisId="right" orientation="right" domain={[0, 'auto']} stroke="#be123c" fontSize={10} tickLine={false} unit="%" />
                   <Tooltip content={<DualAxisTooltip />} />
                   <Bar yAxisId="left" dataKey="OK" name="Sản Lượng Pass (OK)" stackId="a" fill="#10b981" maxBarSize={28} cursor="pointer" onClick={(item) => handleLineChange(item.payload.lineId.toString())} />
                   <Bar yAxisId="left" dataKey="NG" name="Sản Lượng Fail (NG)" stackId="a" fill="#ef4444" radius={[4, 4, 0, 0]} maxBarSize={28} cursor="pointer" onClick={(item) => handleLineChange(item.payload.lineId.toString())} />
-                  <Line yAxisId="right" type="monotone" dataKey="DefectRate" name="Tỷ lệ lỗi (%)" stroke="#fb7185" strokeWidth={2.5} dot={{ r: 3, fill: '#fb7185' }} />
+                  <Line yAxisId="right" type="monotone" dataKey="DefectRate" name="Tỷ lệ lỗi (%)" stroke="#be123c" strokeWidth={2.5} dot={{ r: 3, fill: '#be123c' }} />
                 </ComposedChart>
               </ResponsiveContainer>
             ) : (
@@ -648,39 +808,39 @@ function Analytics({ lines, stations, channels = [], startDate, endDate, onFilte
 
         {/* Chart B: Model statistics derived from manual Job File mapping */}
         <div className="glass-panel p-4 space-y-3">
-          <div className="flex items-center justify-between border-b border-white/5 pb-2"><h4 className="text-xs font-bold text-slate-200 uppercase tracking-wider flex items-center gap-1.5"><Tag className="w-3.5 h-3.5 text-amber-400"/>Tỷ lệ lỗi theo Model</h4><span className="text-[10px] text-slate-400 font-mono">Job File mapping</span></div>
-          <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-[9px] font-mono"><span className="text-rose-400">■ Fail (NG)</span><span className="text-emerald-400">■ Pass (OK)</span><span className="text-rose-300">— Tỷ lệ lỗi (%)</span></div>
-          <div className="h-64 w-full">{modelChartData.length > 0 ? <ResponsiveContainer width="100%" height="100%"><ComposedChart data={modelChartData} margin={{top:10,right:15,left:-15,bottom:55}} onClick={handleModelChartClick} className="cursor-pointer"><CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)"/><XAxis dataKey="displayName" stroke="#94a3b8" fontSize={9} interval={0} angle={-25} textAnchor="end"/><YAxis yAxisId="left" stroke="#64748b" fontSize={10}/><YAxis yAxisId="right" orientation="right" domain={[0,'auto']} stroke="#fb7185" fontSize={10} unit="%"/><Tooltip content={<DualAxisTooltip/>}/><Bar yAxisId="left" dataKey="OK" name="Pass (OK)" stackId="a" fill="#10b981" maxBarSize={28}/><Bar yAxisId="left" dataKey="NG" name="Fail (NG)" stackId="a" fill="#ef4444" radius={[4,4,0,0]} maxBarSize={28}/><Line yAxisId="right" type="monotone" dataKey="DefectRate" name="Tỷ lệ lỗi (%)" stroke="#fb7185" strokeWidth={2.5} dot={{r:3,fill:'#fb7185'}}/></ComposedChart></ResponsiveContainer> : <div className="h-full flex items-center justify-center text-center text-slate-500 text-xs">Chưa có dữ liệu Model.<br/>Hãy mapping Job File trong Master Data.</div>}</div>
+          <div className="flex items-center justify-between border-b border-slate-200 pb-2"><h4 className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5"><Tag className="w-3.5 h-3.5 text-amber-700"/>Tỷ lệ lỗi theo Model</h4><span className="text-[10px] text-slate-600 font-mono">Job File mapping</span></div>
+          <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-[9px] font-mono"><span className="text-rose-700">■ Fail (NG)</span><span className="text-emerald-700">■ Pass (OK)</span><span className="text-rose-700">— Tỷ lệ lỗi (%)</span></div>
+          <div className="h-64 w-full">{modelChartData.length > 0 ? <ResponsiveContainer width="100%" height="100%"><ComposedChart data={modelChartData} margin={{top:10,right:15,left:-15,bottom:55}} onClick={handleModelChartClick} className="cursor-pointer"><CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0"/><XAxis dataKey="displayName" stroke="#475569" fontSize={9} interval={0} angle={-25} textAnchor="end"/><YAxis yAxisId="left" stroke="#64748b" fontSize={10}/><YAxis yAxisId="right" orientation="right" domain={[0,'auto']} stroke="#be123c" fontSize={10} unit="%"/><Tooltip content={<DualAxisTooltip/>}/><Bar yAxisId="left" dataKey="OK" name="Pass (OK)" stackId="a" fill="#10b981" maxBarSize={28} cursor="pointer" onClick={handleModelChartClick}/><Bar yAxisId="left" dataKey="NG" name="Fail (NG)" stackId="a" fill="#ef4444" radius={[4,4,0,0]} maxBarSize={28} cursor="pointer" onClick={handleModelChartClick}/><Line yAxisId="right" type="monotone" dataKey="DefectRate" name="Tỷ lệ lỗi (%)" stroke="#be123c" strokeWidth={2.5} cursor="pointer" dot={{r:3,fill:'#be123c',cursor:'pointer'}} onClick={handleModelChartClick}/></ComposedChart></ResponsiveContainer> : <div className="h-full flex items-center justify-center text-center text-slate-500 text-xs">Chưa có dữ liệu Model.<br/>Hãy mapping Job File trong Master Data.</div>}</div>
         </div>
 
         {/* Chart B: Station Yield Rate (Top 10 Lowest Yield Rate, Stacked Volume Bars OK+NG + Yield Line) */}
         <div className="glass-panel p-4 space-y-3">
-          <div className="flex items-center justify-between border-b border-white/5 pb-2">
-            <h4 className="text-xs font-bold text-slate-200 uppercase tracking-wider flex items-center gap-1.5">
-              <Cpu className="w-3.5 h-3.5 text-indigo-400" />
+          <div className="flex items-center justify-between border-b border-slate-200 pb-2">
+            <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
+              <Cpu className="w-3.5 h-3.5 text-indigo-700" />
               Top 10 Station (Tỷ lệ lỗi cao nhất)
             </h4>
-            <span className="text-[10px] text-slate-400 font-mono">Click cột để lọc Trạm</span>
+            <span className="text-[10px] text-slate-600 font-mono">Click cột để lọc Trạm</span>
           </div>
 
           <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-[9px] font-mono">
-            <span className="flex items-center gap-1 text-rose-400"><span className="h-2.5 w-2.5 bg-red-500" /> Sản Lượng Fail (NG)</span>
-            <span className="flex items-center gap-1 text-emerald-400"><span className="h-2.5 w-2.5 bg-emerald-500" /> Sản Lượng Pass (OK)</span>
-            <span className="flex items-center gap-1 text-rose-400"><span className="h-0.5 w-3 bg-rose-400" /> Tỷ lệ lỗi (%)</span>
+            <span className="flex items-center gap-1 text-rose-700"><span className="h-2.5 w-2.5 bg-red-500" /> Sản Lượng Fail (NG)</span>
+            <span className="flex items-center gap-1 text-emerald-700"><span className="h-2.5 w-2.5 bg-emerald-500" /> Sản Lượng Pass (OK)</span>
+            <span className="flex items-center gap-1 text-rose-700"><span className="h-0.5 w-3 bg-rose-400" /> Tỷ lệ lỗi (%)</span>
           </div>
 
           <div className="h-64 w-full">
             {stationChartData.length > 0 ? (
               <ResponsiveContainer width="100%" height="100%">
                 <ComposedChart data={stationChartData} margin={{ top: 10, right: 15, left: -15, bottom: 55 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
-                  <XAxis dataKey="displayName" stroke="#94a3b8" fontSize={9} tickLine={false} interval={0} angle={-25} textAnchor="end" />
+                  <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                  <XAxis dataKey="displayName" stroke="#475569" fontSize={9} tickLine={false} interval={0} angle={-25} textAnchor="end" />
                   <YAxis yAxisId="left" stroke="#64748b" fontSize={10} tickLine={false} />
-                  <YAxis yAxisId="right" orientation="right" domain={[0, 'auto']} stroke="#fb7185" fontSize={10} tickLine={false} unit="%" />
+                  <YAxis yAxisId="right" orientation="right" domain={[0, 'auto']} stroke="#be123c" fontSize={10} tickLine={false} unit="%" />
                   <Tooltip content={<DualAxisTooltip />} />
                   <Bar yAxisId="left" dataKey="OK" name="Sản Lượng Pass (OK)" stackId="a" fill="#10b981" maxBarSize={28} cursor="pointer" onClick={(item) => handleStationChange(item.payload.stationId.toString())} />
                   <Bar yAxisId="left" dataKey="NG" name="Sản Lượng Fail (NG)" stackId="a" fill="#ef4444" radius={[4, 4, 0, 0]} maxBarSize={28} cursor="pointer" onClick={(item) => handleStationChange(item.payload.stationId.toString())} />
-                  <Line yAxisId="right" type="monotone" dataKey="DefectRate" name="Tỷ lệ lỗi (%)" stroke="#fb7185" strokeWidth={2.5} dot={{ r: 3, fill: '#fb7185' }} />
+                  <Line yAxisId="right" type="monotone" dataKey="DefectRate" name="Tỷ lệ lỗi (%)" stroke="#be123c" strokeWidth={2.5} dot={{ r: 3, fill: '#be123c' }} />
                 </ComposedChart>
               </ResponsiveContainer>
             ) : (
@@ -693,32 +853,32 @@ function Analytics({ lines, stations, channels = [], startDate, endDate, onFilte
 
         {/* Chart C: Machine / Channel Yield Rate (Top 10 Lowest Yield Rate, Stacked Volume Bars OK+NG + Yield Line) */}
         <div className="glass-panel p-4 space-y-3">
-          <div className="flex items-center justify-between border-b border-white/5 pb-2">
-            <h4 className="text-xs font-bold text-slate-200 uppercase tracking-wider flex items-center gap-1.5">
-              <Activity className="w-3.5 h-3.5 text-cyan-400" />
+          <div className="flex items-center justify-between border-b border-slate-200 pb-2">
+            <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
+              <Activity className="w-3.5 h-3.5 text-cyan-700" />
               Top 10 Máy (Tỷ lệ lỗi cao nhất)
             </h4>
-            <span className="text-[10px] text-slate-400 font-mono">Click cột để lọc Máy</span>
+            <span className="text-[10px] text-slate-600 font-mono">Click cột để lọc Máy</span>
           </div>
 
           <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-[9px] font-mono">
-            <span className="flex items-center gap-1 text-rose-400"><span className="h-2.5 w-2.5 bg-red-500" /> Sản Lượng Fail (NG)</span>
-            <span className="flex items-center gap-1 text-emerald-400"><span className="h-2.5 w-2.5 bg-emerald-500" /> Sản Lượng Pass (OK)</span>
-            <span className="flex items-center gap-1 text-rose-400"><span className="h-0.5 w-3 bg-rose-400" /> Tỷ lệ lỗi (%)</span>
+            <span className="flex items-center gap-1 text-rose-700"><span className="h-2.5 w-2.5 bg-red-500" /> Sản Lượng Fail (NG)</span>
+            <span className="flex items-center gap-1 text-emerald-700"><span className="h-2.5 w-2.5 bg-emerald-500" /> Sản Lượng Pass (OK)</span>
+            <span className="flex items-center gap-1 text-rose-700"><span className="h-0.5 w-3 bg-rose-400" /> Tỷ lệ lỗi (%)</span>
           </div>
 
           <div className="h-64 w-full">
             {machineChartData.length > 0 ? (
               <ResponsiveContainer width="100%" height="100%">
                 <ComposedChart data={machineChartData} margin={{ top: 10, right: 15, left: -15, bottom: 55 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
-                  <XAxis dataKey="displayName" stroke="#94a3b8" fontSize={9} tickLine={false} interval={0} angle={-25} textAnchor="end" />
+                  <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                  <XAxis dataKey="displayName" stroke="#475569" fontSize={9} tickLine={false} interval={0} angle={-25} textAnchor="end" />
                   <YAxis yAxisId="left" stroke="#64748b" fontSize={10} tickLine={false} />
-                  <YAxis yAxisId="right" orientation="right" domain={[0, 'auto']} stroke="#fb7185" fontSize={10} tickLine={false} unit="%" />
+                  <YAxis yAxisId="right" orientation="right" domain={[0, 'auto']} stroke="#be123c" fontSize={10} tickLine={false} unit="%" />
                   <Tooltip content={<DualAxisTooltip />} />
                   <Bar yAxisId="left" dataKey="OK" name="Sản Lượng Pass (OK)" stackId="a" fill="#10b981" maxBarSize={28} cursor="pointer" onClick={(item) => handleChannelChange(item.payload.channelId.toString())} />
                   <Bar yAxisId="left" dataKey="NG" name="Sản Lượng Fail (NG)" stackId="a" fill="#ef4444" radius={[4, 4, 0, 0]} maxBarSize={28} cursor="pointer" onClick={(item) => handleChannelChange(item.payload.channelId.toString())} />
-                  <Line yAxisId="right" type="monotone" dataKey="DefectRate" name="Tỷ lệ lỗi (%)" stroke="#fb7185" strokeWidth={2.5} dot={{ r: 3, fill: '#fb7185' }} />
+                  <Line yAxisId="right" type="monotone" dataKey="DefectRate" name="Tỷ lệ lỗi (%)" stroke="#be123c" strokeWidth={2.5} dot={{ r: 3, fill: '#be123c' }} />
                 </ComposedChart>
               </ResponsiveContainer>
             ) : (
@@ -735,23 +895,32 @@ function Analytics({ lines, stations, channels = [], startDate, endDate, onFilte
         
         {/* Left: Defect Code Pareto Chart (Top 10) */}
         <div className="glass-panel p-5 space-y-3">
-          <div className="flex items-center justify-between border-b border-white/5 pb-2">
-            <h4 className="text-xs font-bold text-rose-300 uppercase tracking-wider flex items-center gap-1.5 font-display">
-              <AlertTriangle className="w-4 h-4 text-rose-400" />
+          <div className="flex items-center justify-between border-b border-slate-200 pb-2">
+            <h4 className="text-xs font-bold text-rose-700 uppercase tracking-wider flex items-center gap-1.5 font-display">
+              <AlertTriangle className="w-4 h-4 text-rose-700" />
               Top 10 Step NG (Defects Pareto)
             </h4>
-            <span className="text-[10px] text-slate-400 font-mono">Click thanh lỗi để lọc</span>
+            <span className="text-[10px] text-slate-600 font-mono">Click thanh lỗi để lọc</span>
           </div>
 
           <div className="h-72 w-full">
             {defectChartData.length > 0 ? (
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart layout="vertical" data={defectChartData} margin={{ top: 5, right: 20, left: 30, bottom: 5 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
+                  <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
                   <XAxis type="number" stroke="#64748b" fontSize={10} />
-                  <YAxis type="category" dataKey="code" stroke="#94a3b8" fontSize={10} width={130} />
+                  <YAxis type="category" dataKey="code" stroke="#475569" fontSize={10} width={130} />
                   <Tooltip 
-                    contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '8px', fontSize: '11px' }}
+                    cursor={{ fill: 'rgba(244, 63, 94, 0.08)' }}
+                    contentStyle={{
+                      backgroundColor: '#ffffff',
+                      border: '1px solid #cbd5e1',
+                      borderRadius: '8px',
+                      boxShadow: '0 10px 25px rgba(15, 23, 42, 0.12)',
+                      fontSize: '11px',
+                    }}
+                    labelStyle={{ color: 'var(--text-main)', fontWeight: 700, marginBottom: '4px' }}
+                    itemStyle={{ color: '#be123c', fontWeight: 600 }}
                     formatter={(val, name, props) => [`${val} lượt (${props.payload.pct}%)`, 'Số Lỗi Phát Sinh']}
                   />
                   <Bar dataKey="count" radius={[0, 4, 4, 0]} maxBarSize={20} cursor="pointer" onClick={(item) => handleErrorCodeChange(item.payload.code)}>
@@ -775,12 +944,12 @@ function Analytics({ lines, stations, channels = [], startDate, endDate, onFilte
 
         {/* Right: Job File Yield Statistics Table / Bar Chart */}
         <div className="glass-panel p-5 space-y-3">
-          <div className="flex items-center justify-between border-b border-white/5 pb-2">
-            <h4 className="text-xs font-bold text-amber-300 uppercase tracking-wider flex items-center gap-1.5 font-display">
-              <FileText className="w-4 h-4 text-amber-400" />
+          <div className="flex items-center justify-between border-b border-slate-200 pb-2">
+            <h4 className="text-xs font-bold text-amber-700 uppercase tracking-wider flex items-center gap-1.5 font-display">
+              <FileText className="w-4 h-4 text-amber-700" />
               Thống Kê Sản Lượng Theo Job File (Model)
             </h4>
-            <span className="text-[10px] text-slate-400 font-mono">Click dòng để lọc Job</span>
+            <span className="text-[10px] text-slate-600 font-mono">Click dòng để lọc Job</span>
           </div>
 
           <div className="h-72 w-full overflow-y-auto pr-1">
@@ -801,21 +970,21 @@ function Analytics({ lines, stations, channels = [], startDate, endDate, onFilte
                       onClick={() => handleJobFileChange(jobFileName)}
                       className={`p-2.5 rounded-xl border text-xs flex items-center justify-between cursor-pointer transition-all ${
                         isSelected 
-                          ? 'bg-amber-500/20 border-amber-500/50 text-white shadow-md shadow-amber-500/10' 
-                          : 'bg-slate-950/60 border-slate-800/80 text-slate-300 hover:border-slate-700 hover:bg-slate-900/60'
+                          ? 'bg-amber-500/20 border-amber-500/50 text-slate-900 shadow-md shadow-amber-500/10' 
+                          : 'bg-slate-50/60 border-slate-200 text-slate-700 hover:border-slate-300 hover:bg-slate-100/60'
                       }`}
                     >
                       <div className="mr-3 flex min-w-0 flex-1 items-start gap-2" title={jobFileName}>
-                        <FileText className={`w-3.5 h-3.5 flex-shrink-0 ${isSelected ? 'text-amber-400' : 'text-slate-400'}`} />
+                        <FileText className={`w-3.5 h-3.5 flex-shrink-0 ${isSelected ? 'text-amber-700' : 'text-slate-600'}`} />
                         <span className="break-all font-mono font-semibold leading-4">{jobFileName}</span>
                       </div>
 
                       <div className="flex flex-shrink-0 items-center gap-4 font-mono text-[11px]">
-                        <div>Total: <span className="text-white font-bold">{total.toLocaleString()}</span></div>
-                        <div>OK: <span className="text-emerald-400">{ok.toLocaleString()}</span></div>
-                        <div>NG: <span className="text-rose-400">{ng.toLocaleString()}</span></div>
+                        <div>Total: <span className="text-slate-900 font-bold">{total.toLocaleString()}</span></div>
+                        <div>OK: <span className="text-emerald-700">{ok.toLocaleString()}</span></div>
+                        <div>NG: <span className="text-rose-700">{ng.toLocaleString()}</span></div>
                         <div title={`Yield: ${yieldRate.toFixed(1)}%`} className={`px-2 py-0.5 rounded-md font-bold text-[10px] ${
-                          defectRate >= 5 ? 'bg-rose-500/20 text-rose-300' : defectRate >= 1.5 ? 'bg-amber-500/20 text-amber-300' : 'bg-emerald-500/20 text-emerald-300'
+                          defectRate >= 5 ? 'bg-rose-500/20 text-rose-700' : defectRate >= 1.5 ? 'bg-amber-500/20 text-amber-700' : 'bg-emerald-500/20 text-emerald-700'
                         }`}>
                           Lỗi {defectRate.toFixed(2)}%
                         </div>
@@ -835,44 +1004,44 @@ function Analytics({ lines, stations, channels = [], startDate, endDate, onFilte
 
       {/* Large Data Warning Modal */}
       {exportWarningModal && (
-        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-50 flex items-center justify-center p-4">
-          <div className="bg-slate-900 border border-amber-500/40 rounded-2xl p-6 max-w-md w-full shadow-2xl space-y-4 animate-in zoom-in-95 duration-200">
-            <div className="flex items-center gap-3 text-amber-400">
+        <div className="fixed inset-0 bg-slate-50/80 backdrop-blur-md z-50 flex items-center justify-center p-4">
+          <div className="bg-slate-100 border border-amber-500/40 rounded-2xl p-6 max-w-md w-full shadow-2xl space-y-4 animate-in zoom-in-95 duration-200">
+            <div className="flex items-center gap-3 text-amber-700">
               <div className="p-3 bg-amber-500/10 rounded-xl border border-amber-500/20">
                 <AlertTriangle className="w-6 h-6" />
               </div>
               <div>
-                <h3 className="text-base font-bold text-white">Cảnh Báo Dữ Liệu Lớn</h3>
-                <p className="text-xs text-amber-400/90 font-mono">
+                <h3 className="text-base font-bold text-slate-900">Cảnh Báo Dữ Liệu Lớn</h3>
+                <p className="text-xs text-amber-700/90 font-mono">
                   Phát hiện {exportWarningModal.count.toLocaleString('vi-VN')} bản ghi
                 </p>
               </div>
             </div>
 
-            <p className="text-xs text-slate-300 leading-relaxed font-sans">
-              Hệ thống tìm thấy tổng cộng <strong className="text-amber-300 font-mono">{exportWarningModal.count.toLocaleString('vi-VN')}</strong> dòng dữ liệu sản xuất khớp với bộ lọc. 
+            <p className="text-xs text-slate-700 leading-relaxed font-sans">
+              Hệ thống tìm thấy tổng cộng <strong className="text-amber-700 font-mono">{exportWarningModal.count.toLocaleString('vi-VN')}</strong> dòng dữ liệu sản xuất khớp với bộ lọc. 
               Việc tải toàn bộ dữ liệu có thể tốn vài giây xử lý. Bạn có muốn tiếp tục tải hết dữ liệu không?
             </p>
 
-            <div className="bg-slate-950/60 p-3 rounded-xl border border-white/5 text-[11px] text-slate-400 space-y-1.5 font-mono">
+            <div className="bg-slate-50/60 p-3 rounded-xl border border-slate-200 text-[11px] text-slate-600 space-y-1.5 font-mono">
               <div className="flex justify-between">
                 <span>Tổng số dòng:</span>
-                <span className="text-white font-semibold">{exportWarningModal.count.toLocaleString('vi-VN')} dòng</span>
+                <span className="text-slate-900 font-semibold">{exportWarningModal.count.toLocaleString('vi-VN')} dòng</span>
               </div>
               <div className="flex justify-between">
                 <span>Dung lượng ước tính:</span>
-                <span className="text-emerald-400 font-semibold">~{(exportWarningModal.count * 0.22 / 1024).toFixed(1)} MB</span>
+                <span className="text-emerald-700 font-semibold">~{(exportWarningModal.count * 0.22 / 1024).toFixed(1)} MB</span>
               </div>
               <div className="flex justify-between">
                 <span>Chế độ xuất:</span>
-                <span className="text-amber-300 font-semibold">Không giới hạn (Export Full)</span>
+                <span className="text-amber-700 font-semibold">Không giới hạn (Export Full)</span>
               </div>
             </div>
 
             <div className="flex items-center justify-end gap-3 pt-2">
               <button
                 onClick={() => setExportWarningModal(null)}
-                className="px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold transition-colors font-sans"
+                className="px-4 py-2.5 rounded-xl bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs font-semibold transition-colors font-sans"
               >
                 Hủy bỏ
               </button>

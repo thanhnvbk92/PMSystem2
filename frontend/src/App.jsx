@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import Sidebar from './components/Sidebar';
 import Header from './components/Header';
 import Dashboard from './components/Dashboard';
@@ -8,11 +8,15 @@ import MasterData from './components/MasterData';
 import CommandControl from './components/CommandControl';
 import Cpk from './components/Cpk';
 import Improvements from './components/Improvements';
+import InvalidPcbResults from './components/InvalidPcbResults';
+import Home from './components/Home';
+import PcMonitor from './components/PcMonitor';
+import { HOME_TAB, moduleOfTab, itemOfTab, normalizeTab } from './modules';
 import { MasterDataApi, ProductionApi } from './services/api';
 import { initSignalR } from './services/signalr';
 import * as signalR from '@microsoft/signalr';
+import { GlobalLanguageTranslator } from './services/language';
 
-const VALID_TABS = ['dashboard', 'analytics', 'cpk', 'improvements', 'pcb-search', 'command', 'master'];
 
 // Production timestamps are factory log clock values stored with a UTC marker.
 // Preserve the local clock components when creating filter boundaries so the
@@ -29,17 +33,8 @@ const getTodayRange = () => {
   return { startDate: toProductionClockIso(start), endDate: toProductionClockIso(end) };
 };
 
-const getInitialTab = () => {
-  const hash = window.location.hash.replace('#', '');
-  if (VALID_TABS.includes(hash)) {
-    return hash;
-  }
-  const savedTab = localStorage.getItem('pmsystem_active_tab');
-  if (savedTab && VALID_TABS.includes(savedTab)) {
-    return savedTab;
-  }
-  return 'dashboard';
-};
+// Opening the site without a page (#...) shows the home page with the module tiles.
+const getInitialTab = () => normalizeTab(window.location.hash.replace('#', '')) || HOME_TAB;
 
 export default function App() {
   const appInitializedRef = useRef(false);
@@ -49,9 +44,19 @@ export default function App() {
   const realtimeResultIdsRef = useRef(new Set());
   const counterSyncInFlightRef = useRef(false);
   const [activeTab, setActiveTabState] = useState(getInitialTab);
+  const [language, setLanguage] = useState(() => localStorage.getItem('pmsystem_language') || 'vi');
+  const [analyticsInitialFilters, setAnalyticsInitialFilters] = useState(null);
+  const changeLanguage = useCallback((value) => {
+    const next = value === 'en' ? 'en' : 'vi';
+    setLanguage(next);
+    localStorage.setItem('pmsystem_language', next);
+    document.documentElement.lang = next;
+  }, []);
 
-  const setActiveTab = useCallback((tab) => {
-    if (VALID_TABS.includes(tab)) {
+  const setActiveTab = useCallback((requested) => {
+    const tab = normalizeTab(requested);
+    if (tab) {
+      if (tab !== 'analytics') setAnalyticsInitialFilters(null);
       setActiveTabState(tab);
       window.location.hash = tab;
       localStorage.setItem('pmsystem_active_tab', tab);
@@ -66,8 +71,10 @@ export default function App() {
     localStorage.setItem('pmsystem_active_tab', currentTab);
 
     const handleHashChange = () => {
-      const hash = window.location.hash.replace('#', '');
-      if (VALID_TABS.includes(hash)) {
+      const raw = window.location.hash.replace('#', '');
+      const hash = normalizeTab(raw) || (raw === '' ? HOME_TAB : null);
+      if (hash) {
+        if (raw !== hash) window.history.replaceState(null, '', `#${hash}`);
         setActiveTabState(hash);
         localStorage.setItem('pmsystem_active_tab', hash);
       }
@@ -91,6 +98,21 @@ export default function App() {
   const [channels, setChannels] = useState([]);
   const [deviceTypes, setDeviceTypes] = useState([]);
   const [devices, setDevices] = useState([]);
+
+  const openImprovementAnalytics = useCallback((improvement) => {
+    const now = new Date();
+    const requestedEnd = improvement.trackingEnd ? new Date(improvement.trackingEnd) : now;
+    setAnalyticsInitialFilters({
+      lineId: improvement.lineId ?? null,
+      stationId: improvement.stationId ?? null,
+      modelId: improvement.modelId ?? null,
+      modelName: models.find(model => model.id === improvement.modelId)?.name || '',
+      errorCode: improvement.errorCode || '',
+      start: improvement.baselineStart ? new Date(improvement.baselineStart) : null,
+      end: requestedEnd > now ? now : requestedEnd,
+    });
+    setActiveTab('analytics');
+  }, [models, setActiveTab]);
 
   // Production State
   const [summary, setSummary] = useState(null);
@@ -333,6 +355,28 @@ export default function App() {
     loadProductionData();
   }, [loadProductionData, activeLineId, activeStationId, activeStartDate, activeEndDate]);
 
+  const masterCounts = useMemo(() => ({
+    lines: lines.length,
+    stations: stations.length,
+    channels: channels.length,
+    buyers: buyers.length,
+    modelGroups: modelGroups.length,
+    models: models.length,
+    stationTypes: stationTypes.length,
+    deviceTypes: deviceTypes.length,
+    devices: devices.length,
+  }), [lines, stations, channels, buyers, modelGroups, models, stationTypes, deviceTypes, devices]);
+
+  // Same rule as the Channels page: an IP address used by more than one channel.
+  const channelIpConflicts = useMemo(() => {
+    const byIp = {};
+    channels.forEach(c => {
+      const ip = (c.ipAddress || '').trim();
+      if (ip && ip !== '127.0.0.1') byIp[ip] = (byIp[ip] || 0) + 1;
+    });
+    return Object.values(byIp).filter(n => n > 1).length;
+  }, [channels]);
+
   const handleFilterChange = useCallback((lineId, stationId, startDate = null, endDate = null) => {
     setActiveLineId(lineId);
     setActiveStationId(stationId);
@@ -340,43 +384,56 @@ export default function App() {
     if (endDate !== undefined) setActiveEndDate(endDate);
   }, []);
 
+  const isHome = activeTab === HOME_TAB;
+  const activeModule = moduleOfTab(activeTab);
+  const masterSubTab = activeTab.startsWith('master/') ? activeTab.slice('master/'.length) : null;
+
   return (
-    <div className="min-h-screen w-full bg-slate-950 text-slate-100 flex relative overflow-x-hidden">
-      {/* Sidebar Navigation */}
-      <Sidebar
-        activeTab={activeTab}
-        setActiveTab={setActiveTab}
-        signalRState={signalRState}
-        summaryData={summary}
-        isCollapsed={isCollapsed}
-        setIsCollapsed={setIsCollapsed}
-      />
+    <div className="min-h-screen w-full bg-slate-50 text-slate-900 flex relative overflow-x-hidden">
+      <GlobalLanguageTranslator language={language} />
+      {/* Sidebar Navigation: pages of the open module (none on the home page) */}
+      {!isHome && (
+        <Sidebar
+          activeTab={activeTab}
+          setActiveTab={setActiveTab}
+          signalRState={signalRState}
+          lastSignalREvent={lastSignalREvent}
+          summaryData={summary}
+          isCollapsed={isCollapsed}
+          setIsCollapsed={setIsCollapsed}
+          module={activeModule}
+          counts={masterCounts}
+          ipConflicts={channelIpConflicts}
+        />
+      )}
 
       {/* Main Content Area */}
       <div
         className={`flex-1 transition-all duration-300 ease-in-out flex flex-col min-w-0 min-h-screen p-4 sm:p-6 ${
-          isCollapsed ? 'ml-20' : 'ml-64'
+          isHome ? '' : isCollapsed ? 'ml-20' : 'ml-64'
         }`}
       >
         {/* Top Header */}
         <Header
           activeTab={activeTab}
+          sectionLabel={masterSubTab ? itemOfTab(activeTab)?.label : null}
+          moduleTitle={activeModule?.title}
           onRefresh={() => {
             loadMasterData();
             loadProductionData();
           }}
-          signalRState={signalRState}
-          lastSignalREvent={lastSignalREvent}
           summaryData={summary}
+          language={language}
+          onLanguageChange={changeLanguage}
         />
 
         {/* Database Connection Alert */}
         {dbError && (
-          <div className="mb-6 p-4 rounded-2xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-sm flex items-center justify-between shadow-xl">
+          <div className="mb-6 p-4 rounded-2xl bg-rose-500/10 border border-rose-500/30 text-rose-700 text-sm flex items-center justify-between shadow-xl">
             <div className="flex items-center gap-3">
               <span className="text-xl">⚠️</span>
               <div>
-                <strong className="block text-white font-semibold">Cảnh báo kết nối CSDL:</strong>
+                <strong className="block text-slate-900 font-semibold">Cảnh báo kết nối CSDL:</strong>
                 <span>{dbError}</span>
               </div>
             </div>
@@ -394,6 +451,8 @@ export default function App() {
 
         {/* Main Tab Content */}
         <main className="flex-1 w-full max-w-[1920px]">
+          {isHome && <Home setActiveTab={setActiveTab} summaryData={summary} counts={masterCounts} />}
+
           {activeTab === 'dashboard' && (
             <Dashboard
               summary={summary}
@@ -403,6 +462,7 @@ export default function App() {
               startDate={activeStartDate}
               endDate={activeEndDate}
               onFilterChange={handleFilterChange}
+              initialFilters={analyticsInitialFilters}
               productionLoadInfo={productionLoadInfo}
             />
           )}
@@ -430,7 +490,13 @@ export default function App() {
 
           {activeTab === 'cpk' && <Cpk lines={lines} stations={stations} channels={channels} />}
 
-          {activeTab === 'improvements' && <Improvements lines={lines} stations={stations} />}
+          {activeTab === 'improvements' && <Improvements lines={lines} stations={stations} models={models} onAnalyze={openImprovementAnalytics} />}
+
+          {activeTab === 'invalid-results' && <InvalidPcbResults />}
+
+          {(activeTab === 'pc-overview' || activeTab === 'pc-list') && (
+            <PcMonitor view={activeTab === 'pc-list' ? 'list' : 'overview'} channels={channels} stations={stations} lines={lines} />
+          )}
 
           {activeTab === 'command' && (
             <CommandControl
@@ -441,8 +507,11 @@ export default function App() {
             />
           )}
 
-          {activeTab === 'master' && (
+          {masterSubTab && (
             <MasterData
+              subTab={masterSubTab}
+              onSubTabChange={(subTab) => setActiveTab(`master/${subTab}`)}
+              hideTabBar
               buyers={buyers}
               modelGroups={modelGroups}
               models={models}
@@ -458,7 +527,7 @@ export default function App() {
         </main>
 
         {/* Footer */}
-        <footer className="mt-12 py-6 border-t border-white/5 text-center text-xs text-slate-500 flex flex-col sm:flex-row items-center justify-between gap-4 font-mono">
+        <footer className="mt-12 py-6 border-t border-slate-200 text-center text-xs text-slate-500 flex flex-col sm:flex-row items-center justify-between gap-4 font-mono">
           <div>
             FCT System Industrial SMT Telemetry System &copy; 2026. Built with .NET 8, SignalR, & TimescaleDB.
           </div>
