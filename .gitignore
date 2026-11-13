@@ -5,6 +5,7 @@
 # Frontend dependencies and build outputs
 **/node_modules/
 frontend/dist/
+backend/wwwroot/uploads/
 
 # IDE and user-specific files
 .vs/

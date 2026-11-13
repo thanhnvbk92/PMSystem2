@@ -40,5 +40,38 @@ if ($LASTEXITCODE -ne 0) {
     exit 1
 }
 
+# Larger scroll-back so earlier output can still be scrolled to in the window.
+try {
+    $rawUi = $Host.UI.RawUI
+    $buffer = $rawUi.BufferSize
+    if ($buffer.Height -lt 30000) {
+        $buffer.Height = 30000
+        $rawUi.BufferSize = $buffer
+    }
+} catch { }
+
+# Also write everything to logs\backend_<time>.log (keep the newest 14 files)
+# so the output can be read later in any editor, even after the window scrolls.
+$logDir = Join-Path $PSScriptRoot 'logs'
+New-Item -ItemType Directory -Force -Path $logDir | Out-Null
+Get-ChildItem -Path $logDir -Filter 'backend_*.log' -ErrorAction SilentlyContinue |
+    Sort-Object LastWriteTime -Descending | Select-Object -Skip 13 |
+    Remove-Item -Force -ErrorAction SilentlyContinue
+$logFile = Join-Path $logDir ("backend_{0}.log" -f (Get-Date -Format 'yyyyMMdd_HHmmss'))
+
 Write-Host "[3/3] Starting PMSystem2.Api backend (Listening on http://0.0.0.0:5000)..." -ForegroundColor Green
-dotnet run --project $ProjectFile
+Write-Host "Log file: $logFile" -ForegroundColor Green
+
+$writer = New-Object System.IO.StreamWriter($logFile, $true, (New-Object System.Text.UTF8Encoding($false)))
+$writer.AutoFlush = $true
+try {
+    # --no-build: the project was just built above.
+    dotnet run --no-build --project $ProjectFile | ForEach-Object {
+        $line = "{0:yyyy-MM-dd HH:mm:ss} {1}" -f (Get-Date), $_
+        $writer.WriteLine($line)
+        $_
+    }
+}
+finally {
+    $writer.Dispose()
+}
