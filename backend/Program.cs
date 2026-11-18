@@ -78,6 +78,7 @@ builder.Services.AddDbContext<AppDbContext>(options =>
 builder.Services.AddSingleton<IMasterDataService, MasterDataService>();
 builder.Services.AddScoped<IPcbService, PcbService>();
 builder.Services.AddScoped<IInvalidPcbResultService, InvalidPcbResultService>();
+builder.Services.AddScoped<QualityReportDataService>();
 builder.Services.AddSingleton<MachineStatusService>();
 builder.Services.AddHostedService<CpkOverviewIndexBootstrapService>();
 builder.Services.AddHostedService<CpkCacheRefreshService>();

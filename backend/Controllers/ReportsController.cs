@@ -39,6 +39,21 @@ public class ReportsController : ControllerBase
         return Ok(files);
     }
 
+    /// <summary>
+    /// Aggregated data for the periodic NTF / Re-test / FPY reports, read from the rollup and summary
+    /// tables (seconds instead of scanning pcb_results). Dates are factory-clock days; endDate is exclusive.
+    /// period = day | week | month.
+    /// </summary>
+    [HttpGet("quality-data")]
+    public async Task<IActionResult> QualityData([FromServices] PMSystem2.Api.Services.QualityReportDataService service,
+        [FromQuery] DateOnly startDate, [FromQuery] DateOnly endDate, [FromQuery] string period = "month",
+        CancellationToken cancellationToken = default)
+    {
+        if (endDate <= startDate) return BadRequest("endDate must be after startDate.");
+        if (endDate.DayNumber - startDate.DayNumber > 800) return BadRequest("Range is limited to 800 days.");
+        return Ok(await service.GetAsync(startDate, endDate, period, cancellationToken));
+    }
+
     /// <summary>Returns one report. download=false opens it in the browser when the browser can show it (PDF, HTML).</summary>
     [HttpGet("{fileName}")]
     public IActionResult Get(string fileName, [FromQuery] bool download = true)
