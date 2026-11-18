@@ -179,6 +179,12 @@ export const InvalidPcbResultsApi = {
   resolve: (id, note = '') => api.patch(`/invalid-pcb-results/${id}/resolve`, { note }),
 };
 
+// Meeting reports (NTF / Re-test / FPY ...) stored as files in the backend Reports folder.
+export const ReportsApi = {
+  list: () => api.get('/reports').then(res => res.data),
+  fileUrl: (name, download = true) => `${API_BASE_URL}/reports/${encodeURIComponent(name)}?download=${download}`,
+};
+
 // PC monitoring: state of every Backup_Log2 PC and the standard Backup_Log2 version.
 export const MachinesApi = {
   getAll: () => api.get('/machines').then(res => res.data),

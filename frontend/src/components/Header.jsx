@@ -1,7 +1,9 @@
-import React from 'react';
-import { Activity, Database, BarChart3, Search, RefreshCw, Radio, Terminal, Gauge, ClipboardCheck, ShieldAlert, Languages, LayoutGrid, ChevronRight, Monitor } from 'lucide-react';
+import React, { useState } from 'react';
+import { Activity, Database, BarChart3, Search, RefreshCw, Radio, Terminal, Gauge, ClipboardCheck, ShieldAlert, Languages, LayoutGrid, ChevronRight, Monitor, FileText } from 'lucide-react';
+import ReportsModal from './ReportsModal';
 
 export default function Header({ activeTab, sectionLabel, moduleTitle, onRefresh, summaryData, language = 'vi', onLanguageChange }) {
+  const [reportsOpen, setReportsOpen] = useState(false);
   const getTabDetails = () => {
     // "master/channels" -> "master"
     switch ((activeTab || '').split('/')[0]) {
@@ -123,6 +125,16 @@ export default function Header({ activeTab, sectionLabel, moduleTitle, onRefresh
         )}
 
         <button
+          type="button"
+          onClick={() => setReportsOpen(true)}
+          className="px-3.5 py-2 rounded-xl bg-violet-600 hover:bg-violet-500 text-xs font-semibold text-white transition-colors flex items-center gap-2 shadow-sm"
+          title="Xem báo cáo họp NTF · Re-test · FPY"
+        >
+          <FileText className="w-3.5 h-3.5" />
+          <span className="hidden sm:inline">Xem báo cáo</span>
+        </button>
+
+        <button
           onClick={onRefresh}
           className="px-3.5 py-2 rounded-xl bg-slate-100/80 hover:bg-slate-200 border border-slate-200 text-xs font-semibold text-slate-700 transition-colors flex items-center gap-2 shadow-sm"
           title="Tải lại dữ liệu"
@@ -131,6 +143,7 @@ export default function Header({ activeTab, sectionLabel, moduleTitle, onRefresh
           <span className="hidden sm:inline">Refresh Data</span>
         </button>
       </div>
+      <ReportsModal open={reportsOpen} onClose={() => setReportsOpen(false)} />
     </header>
   );
 }
