@@ -68,8 +68,9 @@ cur.execute(f"INSERT INTO pcb_rty_summaries {RTY_COLS} SELECT * FROM new_rty"); 
 cur.execute("COMMIT")
 log(f"summaries replaced: {n1:,} PID-Station rows, {n2:,} PID rows")
 
-# PIDs uploaded while the snapshot was being computed.
-cur.execute("SELECT array_agg(DISTINCT pid) FROM pcb_results WHERE created_at >= %s - interval '2 minutes'", (started,))
+# PIDs uploaded while the snapshot was being computed. created_at stores real UTC in a
+# timestamp without time zone column, so compare it with the start time in UTC.
+cur.execute("SELECT array_agg(DISTINCT pid) FROM pcb_results WHERE created_at >= (%s AT TIME ZONE 'UTC') - interval '2 minutes'", (started,))
 pids = cur.fetchone()[0] or []
 for i in range(0, len(pids), 500):
     chunk = pids[i:i + 500]
@@ -77,8 +78,15 @@ for i in range(0, len(pids), 500):
     cur.execute("DELETE FROM pcb_ntf_summaries WHERE pid = ANY(%s)", (chunk,))
     cur.execute("DELETE FROM pcb_rty_summaries WHERE pid = ANY(%s)", (chunk,))
     cur.execute(f"CREATE TEMP TABLE v ON COMMIT DROP AS {VALID.format(extra='AND p.pid = ANY(%s)')}", (chunk,))
-    cur.execute(f"INSERT INTO pcb_ntf_summaries {NTF_COLS} {NTF}")
-    cur.execute(f"INSERT INTO pcb_rty_summaries {RTY_COLS} {RTY}")
+    # Upserts: the backend refreshes the same PIDs concurrently.
+    cur.execute(f"""INSERT INTO pcb_ntf_summaries {NTF_COLS} {NTF}
+        ON CONFLICT (pid, station_id) DO UPDATE SET first_test_time = EXCLUDED.first_test_time,
+            last_test_time = EXCLUDED.last_test_time, test_count = EXCLUDED.test_count, ng_count = EXCLUDED.ng_count,
+            ever_ng = EXCLUDED.ever_ng, updated_at = EXCLUDED.updated_at, job_file = EXCLUDED.job_file, model_id = EXCLUDED.model_id""")
+    cur.execute(f"""INSERT INTO pcb_rty_summaries {RTY_COLS} {RTY}
+        ON CONFLICT (pid) DO UPDATE SET first_test_time = EXCLUDED.first_test_time, last_test_time = EXCLUDED.last_test_time,
+            station_count = EXCLUDED.station_count, test_count = EXCLUDED.test_count, ng_count = EXCLUDED.ng_count,
+            ever_ng = EXCLUDED.ever_ng, updated_at = EXCLUDED.updated_at""")
     cur.execute("COMMIT")
 log(f"caught up {len(pids):,} PIDs uploaded during the rebuild")
 cur.execute("ANALYZE pcb_ntf_summaries"); cur.execute("ANALYZE pcb_rty_summaries")

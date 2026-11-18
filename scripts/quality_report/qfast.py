@@ -69,7 +69,7 @@ def collect(month: str, cfg: dict):
     # ---- A. attempts per day / station / model group (rollup) ----
     att = defaultdict(lambda: [0, 0])        # (day, station, group) -> [attempts, ng]
     errs = defaultdict(int)                  # (day, line, group, code) -> ng
-    cur.execute("""SELECT bucket_date, station_id, job_file, model_id, result, error_code, sum(total_count)
+    cur.execute("""SELECT bucket_date, station_id, job_file, model_id, result, error_code, sum(total_count)::bigint
                    FROM pcb_analytics_daily
                    WHERE bucket_date >= %s AND bucket_date < %s AND error_code <> 'DEFECT_UNSPECIFIED'
                    GROUP BY 1, 2, 3, 4, 5, 6""", WIN)
