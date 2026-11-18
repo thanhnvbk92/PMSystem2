@@ -33,13 +33,14 @@ VALID = """
       AND p.error_code IS DISTINCT FROM 'DEFECT_UNSPECIFIED'
       AND COALESCE(mapping.model_id, p.model_id) IS DISTINCT FROM 0 {extra}"""
 NTF = """
-    SELECT pid, station_id, MIN(inspect_time), MAX(inspect_time), COUNT(*),
-           COUNT(*) FILTER (WHERE result IN ('NG', 'FAIL')), BOOL_OR(result IN ('NG', 'FAIL')), NOW(),
-           (array_agg(job_file ORDER BY inspect_time DESC))[1], (array_agg(model_id ORDER BY inspect_time DESC))[1]
+    SELECT pid, station_id, MIN(inspect_time) AS first_test_time, MAX(inspect_time) AS last_test_time, COUNT(*) AS test_count,
+           COUNT(*) FILTER (WHERE result IN ('NG', 'FAIL')) AS ng_count, BOOL_OR(result IN ('NG', 'FAIL')) AS ever_ng, NOW() AS updated_at,
+           (array_agg(job_file ORDER BY inspect_time DESC))[1] AS job_file, (array_agg(model_id ORDER BY inspect_time DESC))[1] AS model_id
     FROM v GROUP BY pid, station_id"""
 RTY = """
-    SELECT pid, MIN(inspect_time), MAX(inspect_time), COUNT(DISTINCT station_id), COUNT(*),
-           COUNT(*) FILTER (WHERE result IN ('NG', 'FAIL')), BOOL_OR(result IN ('NG', 'FAIL')), NOW()
+    SELECT pid, MIN(inspect_time) AS first_test_time, MAX(inspect_time) AS last_test_time, COUNT(DISTINCT station_id) AS station_count,
+           COUNT(*) AS test_count, COUNT(*) FILTER (WHERE result IN ('NG', 'FAIL')) AS ng_count,
+           BOOL_OR(result IN ('NG', 'FAIL')) AS ever_ng, NOW() AS updated_at
     FROM v GROUP BY pid"""
 NTF_COLS = "(pid, station_id, first_test_time, last_test_time, test_count, ng_count, ever_ng, updated_at, job_file, model_id)"
 RTY_COLS = "(pid, first_test_time, last_test_time, station_count, test_count, ng_count, ever_ng, updated_at)"
