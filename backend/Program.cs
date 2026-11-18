@@ -527,7 +527,7 @@ using (var scope = app.Services.CreateScope())
                           AND result = OLD.result AND error_code = COALESCE(OLD.error_code, '')
                           AND job_file = COALESCE(OLD.job_file, '') AND model_id = COALESCE(OLD.model_id, 0);
                         -- Only the row just decremented (primary key): a table-wide
-                        -- "total_count <= 0" scan made every UPDATE/DELETE take ~0.2 s.
+                        -- 'total_count <= 0' scan made every UPDATE/DELETE take ~0.2 s.
                         DELETE FROM pcb_analytics_daily
                         WHERE bucket_date = old_date AND station_id = OLD.station_id AND channel_id = OLD.channel_id
                           AND result = OLD.result AND error_code = COALESCE(OLD.error_code, '')
