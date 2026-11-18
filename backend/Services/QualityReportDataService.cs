@@ -23,7 +23,7 @@ public class QualityReportDataService
     public record NtfRow(DateOnly Period, int StationId, long Pairs, long NgPairs);
     public record FpyRow(DateOnly Period, long Pcbs, long EverNgPcbs);
     /// <summary>Health of the statistics tables the report relies on.</summary>
-    public record Diagnostics(string DbTimeZone, bool RollupTriggerPresent, bool RollupTriggerFastVersion,
+    public record Diagnostics(string DbTimeZone, string InspectTimeType, bool RollupTriggerPresent, bool RollupTriggerFastVersion,
         long NonePidNtfRows, long NonePidRtyRows, long MergedPids, long MergedPidsStaleSummaries);
     public record QualityReportData(string Period, DateOnly StartDate, DateOnly EndDate, Diagnostics Diagnostics,
         List<AttemptRow> Attempts, List<NtfRow> Ntf, List<FpyRow> Fpy);
@@ -31,8 +31,9 @@ public class QualityReportDataService
     public async Task<QualityReportData> GetAsync(DateOnly start, DateOnly endExclusive, string period, CancellationToken ct)
     {
         var unit = period switch { "day" => "day", "week" => "week", _ => "month" };
-        var fromTs = DateTime.SpecifyKind(start.ToDateTime(TimeOnly.MinValue), DateTimeKind.Utc);
-        var toTs = DateTime.SpecifyKind(endExclusive.ToDateTime(TimeOnly.MinValue), DateTimeKind.Utc);
+        // Factory-clock (wall) bounds, compared as timestamp without time zone.
+        var fromTs = DateTime.SpecifyKind(start.ToDateTime(TimeOnly.MinValue), DateTimeKind.Unspecified);
+        var toTs = DateTime.SpecifyKind(endExclusive.ToDateTime(TimeOnly.MinValue), DateTimeKind.Unspecified);
 
         var conn = _db.Database.GetDbConnection();
         var opened = conn.State != System.Data.ConnectionState.Open;
@@ -40,6 +41,12 @@ public class QualityReportDataService
         try
         {
             var diagnostics = await GetDiagnosticsAsync(conn, ct);
+            // pcb_results.inspect_time holds the factory clock. When it is "timestamp" (no time zone),
+            // the TIMESTAMPTZ summary columns were converted with the session TimeZone on insert, so the
+            // wall clock is recovered with that zone; a timestamptz inspect_time carries it as UTC.
+            var wall = diagnostics.InspectTimeType == "timestamp with time zone"
+                ? "(first_test_time AT TIME ZONE 'UTC')"
+                : "(first_test_time AT TIME ZONE current_setting('TimeZone'))";
 
             var attempts = new List<AttemptRow>();
             await using (var cmd = Command(conn, @"
@@ -58,22 +65,22 @@ public class QualityReportDataService
                         r.GetString(2), r.GetString(3), r.GetInt64(4)));
 
             var ntf = new List<NtfRow>();
-            await using (var cmd = Command(conn, @"
-                SELECT date_trunc(@unit, first_test_time AT TIME ZONE 'UTC')::date AS period, station_id,
+            await using (var cmd = Command(conn, $@"
+                SELECT date_trunc(@unit, {wall})::date AS period, station_id,
                        COUNT(*)::bigint, COUNT(*) FILTER (WHERE ever_ng)::bigint
                 FROM pcb_ntf_summaries
-                WHERE first_test_time >= @fromTs AND first_test_time < @toTs AND pid <> 'None'
+                WHERE {wall} >= @fromTs AND {wall} < @toTs AND pid <> 'None'
                 GROUP BY 1, 2", unit, start, endExclusive, fromTs, toTs))
             await using (var r = await cmd.ExecuteReaderAsync(ct))
                 while (await r.ReadAsync(ct))
                     ntf.Add(new NtfRow(DateOnly.FromDateTime(r.GetDateTime(0)), r.GetInt32(1), r.GetInt64(2), r.GetInt64(3)));
 
             var fpy = new List<FpyRow>();
-            await using (var cmd = Command(conn, @"
-                SELECT date_trunc(@unit, first_test_time AT TIME ZONE 'UTC')::date AS period,
+            await using (var cmd = Command(conn, $@"
+                SELECT date_trunc(@unit, {wall})::date AS period,
                        COUNT(*)::bigint, COUNT(*) FILTER (WHERE ever_ng)::bigint
                 FROM pcb_rty_summaries
-                WHERE first_test_time >= @fromTs AND first_test_time < @toTs AND pid <> 'None'
+                WHERE {wall} >= @fromTs AND {wall} < @toTs AND pid <> 'None'
                 GROUP BY 1", unit, start, endExclusive, fromTs, toTs))
             await using (var r = await cmd.ExecuteReaderAsync(ct))
                 while (await r.ReadAsync(ct))
@@ -96,14 +103,17 @@ public class QualityReportDataService
         cmd.Parameters.Add(new NpgsqlParameter("unit", unit));
         cmd.Parameters.Add(new NpgsqlParameter("from", from));
         cmd.Parameters.Add(new NpgsqlParameter("to", to));
-        if (fromTs.HasValue) cmd.Parameters.Add(new NpgsqlParameter("fromTs", NpgsqlTypes.NpgsqlDbType.TimestampTz) { Value = fromTs.Value });
-        if (toTs.HasValue) cmd.Parameters.Add(new NpgsqlParameter("toTs", NpgsqlTypes.NpgsqlDbType.TimestampTz) { Value = toTs.Value });
+        if (fromTs.HasValue) cmd.Parameters.Add(new NpgsqlParameter("fromTs", NpgsqlTypes.NpgsqlDbType.Timestamp) { Value = fromTs.Value });
+        if (toTs.HasValue) cmd.Parameters.Add(new NpgsqlParameter("toTs", NpgsqlTypes.NpgsqlDbType.Timestamp) { Value = toTs.Value });
         return cmd;
     }
 
     private static async Task<Diagnostics> GetDiagnosticsAsync(DbConnection conn, CancellationToken ct)
     {
         string tz = (string)(await Scalar(conn, "SHOW TimeZone", ct) ?? "");
+        string inspectType = (string)(await Scalar(conn, @"
+            SELECT data_type FROM information_schema.columns
+            WHERE table_name = 'pcb_results' AND column_name = 'inspect_time' LIMIT 1", ct) ?? "");
         // Fast version = the one that deletes only the decremented row (commit a6fe75e).
         var def = (string?)await Scalar(conn, @"
             SELECT pg_get_functiondef(p.oid) FROM pg_proc p
@@ -126,7 +136,7 @@ public class QualityReportDataService
             await using var r = await cmd.ExecuteReaderAsync(ct);
             if (await r.ReadAsync(ct)) { merged = r.GetInt64(0); stale = r.GetInt64(1); }
         }
-        return new Diagnostics(tz, triggerPresent, fast, noneNtf, noneRty, merged, stale);
+        return new Diagnostics(tz, inspectType, triggerPresent, fast, noneNtf, noneRty, merged, stale);
     }
 
     private static async Task<object?> Scalar(DbConnection conn, string sql, CancellationToken ct)
