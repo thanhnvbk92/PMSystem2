@@ -5,9 +5,12 @@ from pptlib import *
 HERE = os.path.dirname(os.path.abspath(__file__))
 D = json.load(open(os.environ["DATA_M"], encoding="utf-8"))
 OUT = sys.argv[1]
-META = D["meta"]; MODELS = D["models"]; SHORT = {"BMW Wave High": "Wave High", "BMW ICON25": "ICON25"}
+META = D["meta"]; MODELS = D["models"]
 RM = dt.datetime.fromisoformat(META["report_month"]); RE = dt.datetime.fromisoformat(META["report_end"])
-BEF = [dt.datetime.fromisoformat(x) for x in META["before"]]; AFT = [dt.datetime.fromisoformat(x) for x in META["after"]]
+MI = D["model_info"]                                         # per model: before / after periods
+for m_ in MI:
+    m_["B"] = [dt.datetime.fromisoformat(x) for x in m_["before"]]; m_["A"] = [dt.datetime.fromisoformat(x) for x in m_["after"]]
+SHORT = {m_["name"]: m_["short"] for m_ in MI}
 FOCUS, CONTROL = META["focus"], META["control"]
 LN = {l["id"]: l["name"] for l in D["lines"]}; FN, CN = LN[FOCUS], LN[CONTROL]
 LAST = RE - dt.timedelta(days=1); MTD = LAST.month == RM.month and RE.day != 1
@@ -26,7 +29,9 @@ def mname(i, short=True):
     return mstart(i).strftime("%b" if short else "%B %Y") + ("*" if i == 0 and MTD and short else "")
 def d2(d): return d.strftime("%d %b")
 MONTH_TITLE = mname(0, False) + (f" (MTD 01–{LAST.strftime('%d %b')})" if MTD else "")
-BEF_TXT = f"{d2(BEF[0])} – {d2(BEF[1] - dt.timedelta(days=1))}"; AFT_TXT = f"{d2(AFT[0])} – {d2(AFT[1] - dt.timedelta(days=1))}"
+def rng(p): return f"{d2(p[0])} – {d2(p[1] - dt.timedelta(days=1))}"
+def ptxt(m_): return f"before {rng(m_['B'])} · after {rng(m_['A'])}"
+STARTS = " · ".join(f"{m_['short']} from {d2(m_['A'][0])}" for m_ in MI)
 def chg(a, b): return (b - a) * 100 / a if a else 0
 def signed(v, unit="%p"): return f"{v:+.2f}{unit}"
 def dcol(v, higher_better=False):
@@ -144,10 +149,10 @@ set_runs(by_name(sd, "Title 1"), ["02"])
 for sh in sd.shapes:
     if sh.name == "Content Placeholder 2" and sh.has_text_frame:
         if sh.top / 914400 < 1: set_runs(sh, [FN, "Improvement Review"])
-        else: set_runs(sh, ["BMW Wave High · BMW ICON25", f"Before {BEF_TXT} · After {AFT_TXT}"]); sh.width = Inches(4.0)
+        else: set_runs(sh, [f"{m_['name']}: improvement from {d2(m_['A'][0])}" for m_ in MI]); sh.width = Inches(4.0)
 
 # ---------- 7. Before vs after by model ----------
-f = Frame(S[6], f"{FN}: Before vs After by Model", f"Before {BEF_TXT} · After {AFT_TXT} · control line {CN} (same models)")
+f = Frame(S[6], f"{FN}: Before vs After by Model", f"Improvement start: {STARTS} · control line {CN} (same models)")
 yy = f.section(f"{FN} key indicators by model", unit="(Unit: %)")
 cw2 = (12.24 - 0.24) / 2
 net = {}
@@ -158,14 +163,15 @@ for k, g in enumerate(MODELS):
     rect(f.s, x, yy, cw2, 1.85, G2, name=f"Model card {SHORT[g]}")
     textbox(f.s, x + 0.25, yy + 0.15, cw2 - 0.5, 0.3, [[(g, {"size": 14, "bold": True}),
             (f"  {num(b['retestAttempts'])} → {num(a['retestAttempts'])} tests" if b and a else "  no data", {"size": 9, "color": G3})]])
+    textbox(f.s, x + 0.25, yy + 0.4, cw2 - 0.5, 0.2, [ptxt(MI[k])], size=8.5, color=G3)
     if not (b and a): continue
     for j, (nm, fn, hb, col) in enumerate((("Re-test", rt, False, VIOLET), ("NTF", ntf, False, DARK), ("RTY", rty, True, GREEN))):
         xx = x + 0.25 + j * (cw2 - 0.5) / 3
-        textbox(f.s, xx, yy + 0.5, 1.8, 0.22, [nm], size=10, color=G3)
-        textbox(f.s, xx, yy + 0.74, 1.85, 0.4, [[(f"{fn(b):.2f} → ", {"size": 13, "color": G3, "bold": True}), (f"{fn(a):.2f}%", {"size": 17, "color": col, "bold": True})]])
+        textbox(f.s, xx, yy + 0.62, 1.8, 0.22, [nm], size=10, color=G3)
+        textbox(f.s, xx, yy + 0.84, 1.85, 0.4, [[(f"{fn(b):.2f} → ", {"size": 13, "color": G3, "bold": True}), (f"{fn(a):.2f}%", {"size": 17, "color": col, "bold": True})]])
         d_ = fn(a) - fn(b)
-        textbox(f.s, xx, yy + 1.17, 1.8, 0.22, [signed(d_)], size=11, color=dcol(d_, hb), bold=True)
-        if cb and ca: textbox(f.s, xx, yy + 1.43, 1.85, 0.22, [f"{CN}: {fn(cb):.2f} → {fn(ca):.2f}"], size=8.5, color=G3)
+        textbox(f.s, xx, yy + 1.24, 1.8, 0.22, [signed(d_)], size=11, color=dcol(d_, hb), bold=True)
+        if cb and ca: textbox(f.s, xx, yy + 1.5, 1.85, 0.22, [f"{CN}: {fn(cb):.2f} → {fn(ca):.2f}"], size=8.5, color=G3)
     if cb and ca:
         net[g] = ((rt(a) - rt(b)) - (rt(ca) - rt(cb)), (ntf(a) - ntf(b)) - (ntf(ca) - ntf(cb)), (rty(a) - rty(b)) - (rty(ca) - rty(cb)))
 y2 = f.section(f"Improvement effect vs control line {CN}", y=yy + 2.1)
@@ -188,11 +194,13 @@ def efmt(i, j, v):
     return o
 table(f.s, 0.53, y2, 12.24, erows, [1.0, 1.5, 0.9, 0.9, 1.0, 0.85, 0.85, 1.0, 0.85, 0.85, 1.0], row_h=0.29, size=8.5, cell_fmt=efmt, name="Before-after by model")
 textbox(f.s, 0.53, y2 + 0.29 * len(erows) + 0.06, 12.24, 0.4,
-        [f"* B = before, A = after. Net effect = change on {FN} minus change on {CN} for the same model (removes shared month-to-month effects). Line RTY = passed all {FN} stations first time."], size=8, color=G3)
+        [f"* B = before, A = after (periods per model, see cards). Net effect = change on {FN} minus change on {CN} for the same model (removes shared month-to-month effects). Line RTY = passed all {FN} stations first time."], size=8, color=G3)
 
 # ---------- 8. Weekly trend by model ----------
-f = Frame(S[7], f"{FN}: Weekly Trend by Model", f"Re-test by ISO week · improvement period from {d2(AFT[0])} (W{AFT[0].isocalendar()[1]})")
-aft_week = AFT[0].isocalendar()[1]
+f = Frame(S[7], f"{FN}: Weekly Trend by Model", f"Re-test by ISO week · improvement start: {STARTS}")
+def is_after(w, k):
+    monday = dt.date.fromisocalendar(MI[k]["A"][0].year, w, 1)
+    return monday + dt.timedelta(days=3) >= MI[k]["A"][0].date()
 wks = sorted({int(k[2:].split("_")[0]) for k in D if k.startswith("wk") and f"_line{FOCUS}_g" in k})
 series = {}
 for k, g in enumerate(MODELS):
@@ -209,15 +217,20 @@ for k, g in enumerate(MODELS):
     wrows.append([f"{SHORT[g]} Re-test %"] + [f"{v:.1f}" if v else "–" for v in series[g]])
     wrows.append([f"{SHORT[g]} tests"] + [f"{q(f'wk{w}_line{FOCUS}_g{k}')['retestAttempts'] / 1000:.1f}k" if q(f"wk{w}_line{FOCUS}_g{k}") else "–" for w in wks])
 table(f.s, 0.53, y2, 12.24, wrows, [2.0] + [1] * len(wks), row_h=0.27, size=7.5,
-      cell_fmt=lambda i, j, v: ({"bold": True} if j == 0 else {}) | ({"fill": LGREEN} if j > 0 and wks[j - 1] >= aft_week else {}), name="Weekly figures by model")
+      cell_fmt=lambda i, j, v: ({"bold": True} if j == 0 else {}) | ({"fill": LGREEN} if i > 0 and j > 0 and is_after(wks[j - 1], (i - 1) // 2) else {}), name="Weekly figures by model")
 avg = []
-for g in MODELS:
-    pre = [v for w, v in zip(wks, series[g]) if w < aft_week and v]; post = [v for w, v in zip(wks, series[g]) if w >= aft_week and v]
-    if pre and post: avg.append(f"{SHORT[g]} {sum(pre) / len(pre):.1f}% → {sum(post) / len(post):.1f}%")
-textbox(f.s, 0.53, y2 + 0.27 * len(wrows) + 0.06, 12.24, 0.2, [f"* Green = improvement period. Average weekly Re-test on {FN}: " + "; ".join(avg) + f". W{wks[-1]} may be partial."], size=8, color=G3)
+for k, g in enumerate(MODELS):
+    ms_ = [(is_after(w, k), q(f"wk{w}_line{FOCUS}_g{k}")) for w in wks if q(f"wk{w}_line{FOCUS}_g{k}")]
+    def wavg(flag):
+        sel = [m for a_, m in ms_ if a_ == flag]
+        t_ = sum(m["retestAttempts"] for m in sel)
+        return sum(m["retestNgAttempts"] for m in sel) * 100 / t_ if t_ else None
+    pre, post = wavg(False), wavg(True)
+    if pre is not None and post is not None: avg.append(f"{SHORT[g]} {pre:.1f}% → {post:.1f}%")
+textbox(f.s, 0.53, y2 + 0.27 * len(wrows) + 0.06, 12.24, 0.2, [f"* Green = improvement period (weeks with most days after the start). Re-test on {FN} before → after (NG / tests): " + "; ".join(avg) + f". W{wks[-1]} may be partial."], size=8, color=G3)
 
 # ---------- 9. By station & model ----------
-f = Frame(S[8], f"{FN}: Results by Station and Model", f"Before {BEF_TXT} vs After {AFT_TXT}")
+f = Frame(S[8], f"{FN}: Results by Station and Model", " · ".join(f"{m_['short']}: {ptxt(m_)}" for m_ in MI))
 srow = []
 for sid, meta in st_meta.items():
     if meta["lineId"] != FOCUS: continue
@@ -264,7 +277,7 @@ for k, g in enumerate(MODELS):
     textbox(f.s, x, yy + 0.36 * len(rows_) + 0.06, 5.84, 0.2, [f"* Tests: before {num(b['retestAttempts'])}, after {num(a['retestAttempts'])}."], size=8, color=G3)
 
 # ---------- 11. Key positive changes ----------
-f = Frame(S[10], "Key Positive Changes", f"{MONTH_TITLE} · {FN} improvement period {AFT_TXT}")
+f = Frame(S[10], "Key Positive Changes", f"{MONTH_TITLE} · {FN} improvement start: {STARTS}")
 yy = f.section("Highlights backed by PMSystem2 data (only changes that improved)")
 cand = []
 for k, g in enumerate(MODELS):
@@ -282,8 +295,12 @@ for (g, c_), (bb, aa) in code_gain.items():
 cand.append((abs(rt(cur) - rt(prev)) * 2, signed(rt(cur) - rt(prev)), "Plant Re-test", f"{mname(1)} {pct(rt(prev))} → {mname(0)} {pct(rt(cur))}; NTF {pct(ntf(prev))} → {pct(ntf(cur))}.", rt(cur) < rt(prev), "plant"))
 cand.append((abs(rty(cur) - rty(prev)) * 2, signed(rty(cur) - rty(prev)), "Plant RTY", f"{mname(1)} {pct(rty(prev))} → {mname(0)} {pct(rty(cur))}.", rty(cur) > rty(prev), "plant"))
 cand.append((improved / max(len(lines), 1), f"{improved}/{len(lines)}", "Lines with lower Re-test", f"Lines that reduced Re-test in {mname(0)} vs {mname(1)}.", improved * 2 > len(lines), "plant"))
-good, caps = [], {"line": 2, "Station": 1, "Error code": 1, "plant": 2}
+good, caps, line_models = [], {"line": 2, "Station": 1, "Error code": 1, "plant": 2}, set()
 for c_ in sorted([c_ for c_ in cand if c_[4]], key=lambda c_: -c_[0]):
+    if c_[5] == "line":
+        mdl = next((g for g in MODELS if f" {SHORT[g]} " in c_[2]), None)
+        if mdl in line_models: continue          # best line-level change of each model
+        line_models.add(mdl)
     if caps[c_[5]] > 0: caps[c_[5]] -= 1; good.append(c_)
 good = sorted(good, key=lambda c_: ["line", "Station", "Error code", "plant"].index(c_[5]))[:6]
 gw, gh = (12.24 - 2 * 0.24) / 3, 2.15
