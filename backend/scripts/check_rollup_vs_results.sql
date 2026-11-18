@@ -1,7 +1,6 @@
 -- Reconciles pcb_analytics_daily (filled by trigger trg_pcb_analytics_daily) with pcb_results.
--- The trigger buckets by inspect_time::date, which depends on the session TimeZone: if the backend
--- and a psql session (e.g. merge_none_pid.sql) use different TimeZone settings, UPDATE/DELETE
--- decrement a bucket that does not exist and the counts drift. Run this after bulk SQL changes.
+-- The trigger buckets by the factory wall-clock day (inspect_time AT TIME ZONE 'UTC')::date.
+-- Run this after bulk SQL changes on pcb_results.
 --
 -- psql -v day_from=2026-08-01 -v day_to=2026-11-19 -v repair=0 -f check_rollup_vs_results.sql
 --   repair=1 rebuilds the rollup rows of every mismatching day before today (days that no
@@ -9,14 +8,15 @@
 \set ON_ERROR_STOP on
 \timing on
 SHOW TimeZone;
-SELECT pg_get_functiondef(p.oid) LIKE '%Only the row just decremented%' AS fast_trigger_installed
+SELECT pg_get_functiondef(p.oid) LIKE '%Only the row just decremented%' AS fast_trigger_installed,
+       pg_get_functiondef(p.oid) LIKE '%AT TIME ZONE ''UTC''%' AS wall_clock_day
 FROM pg_proc p WHERE p.proname = 'update_pcb_analytics_daily';
 
 CREATE TEMP TABLE actual AS
-SELECT inspect_time::date AS d, station_id, channel_id, result, COALESCE(error_code, '') AS error_code,
+SELECT (inspect_time AT TIME ZONE 'UTC')::date AS d, station_id, channel_id, result, COALESCE(error_code, '') AS error_code,
        COALESCE(job_file, '') AS job_file, COALESCE(model_id, 0) AS model_id, count(*)::bigint AS n
 FROM pcb_results
-WHERE inspect_time >= :'day_from'::date AND inspect_time < :'day_to'::date
+WHERE inspect_time >= (:'day_from'::timestamp AT TIME ZONE 'UTC') AND inspect_time < (:'day_to'::timestamp AT TIME ZONE 'UTC')
 GROUP BY 1, 2, 3, 4, 5, 6, 7;
 
 CREATE TEMP TABLE diff AS

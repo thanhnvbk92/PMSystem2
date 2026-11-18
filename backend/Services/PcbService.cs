@@ -101,7 +101,7 @@ namespace PMSystem2.Api.Services
             }
 
             var normalizedResult = NormalizePcbResult(req.Result);
-            var rawInspectTime = req.InspectTime ?? req.StartTime ?? DateTime.UtcNow;
+            var rawInspectTime = req.InspectTime ?? req.StartTime ?? FactoryClockNow();
             var inspectTime = EnsureUtc(rawInspectTime);
             var startTime = req.StartTime.HasValue ? EnsureUtc(req.StartTime.Value) : inspectTime;
 
@@ -444,7 +444,7 @@ namespace PMSystem2.Api.Services
                 if (hierarchy == null) continue;
 
                 var normalizedResult = NormalizePcbResult(req.Result);
-                var rawInspectTime = req.InspectTime ?? req.StartTime ?? DateTime.UtcNow;
+                var rawInspectTime = req.InspectTime ?? req.StartTime ?? FactoryClockNow();
                 var inspectTime = EnsureUtc(rawInspectTime);
                 var startTime = req.StartTime.HasValue ? EnsureUtc(req.StartTime.Value) : inspectTime;
 
@@ -2207,6 +2207,12 @@ namespace PMSystem2.Api.Services
             DateTimeKind.Local => DateTime.SpecifyKind(dt, DateTimeKind.Unspecified),
             _ => dt
         };
+
+        /// <summary>
+        /// Current time in the convention of the stored production timestamps: the factory (server)
+        /// wall clock with a UTC marker, like the start_time read from the machine logs.
+        /// </summary>
+        private static DateTime FactoryClockNow() => DateTime.SpecifyKind(DateTime.Now, DateTimeKind.Utc);
 
         private static DateTime EnsureUtc(DateTime dt)
         {

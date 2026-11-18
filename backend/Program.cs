@@ -521,8 +521,11 @@ using (var scope = app.Services.CreateScope())
                 CREATE OR REPLACE FUNCTION update_pcb_analytics_daily() RETURNS TRIGGER AS $rollup$
                 DECLARE old_date DATE; new_date DATE;
                 BEGIN
+                    -- inspect_time holds the factory clock with a UTC marker. A bare ::date would
+                    -- convert it with the session TimeZone (Asia/Bangkok) and put 17:00-24:00 into
+                    -- the next day, so the wall-clock day is taken in UTC.
                     IF TG_OP IN ('UPDATE', 'DELETE') THEN
-                        old_date := OLD.inspect_time::date;
+                        old_date := (OLD.inspect_time AT TIME ZONE 'UTC')::date;
                         UPDATE pcb_analytics_daily SET total_count = total_count - 1
                         WHERE bucket_date = old_date AND station_id = OLD.station_id AND channel_id = OLD.channel_id
                           AND result = OLD.result AND error_code = COALESCE(OLD.error_code, '')
@@ -536,7 +539,7 @@ using (var scope = app.Services.CreateScope())
                           AND total_count <= 0;
                     END IF;
                     IF TG_OP IN ('UPDATE', 'INSERT') THEN
-                        new_date := NEW.inspect_time::date;
+                        new_date := (NEW.inspect_time AT TIME ZONE 'UTC')::date;
                         INSERT INTO pcb_analytics_daily
                             (bucket_date, station_id, channel_id, result, error_code, job_file, model_id, total_count)
                         VALUES (new_date, NEW.station_id, NEW.channel_id, NEW.result,
@@ -557,10 +560,10 @@ using (var scope = app.Services.CreateScope())
                     IF NOT EXISTS (SELECT 1 FROM pcb_analytics_daily LIMIT 1) THEN
                         INSERT INTO pcb_analytics_daily
                             (bucket_date, station_id, channel_id, result, error_code, job_file, model_id, total_count)
-                        SELECT inspect_time::date, station_id, channel_id, result,
+                        SELECT (inspect_time AT TIME ZONE 'UTC')::date, station_id, channel_id, result,
                             COALESCE(error_code, ''), COALESCE(job_file, ''), COALESCE(model_id, 0), COUNT(*)
                         FROM pcb_results
-                        GROUP BY inspect_time::date, station_id, channel_id, result,
+                        GROUP BY (inspect_time AT TIME ZONE 'UTC')::date, station_id, channel_id, result,
                             COALESCE(error_code, ''), COALESCE(job_file, ''), COALESCE(model_id, 0);
                     END IF;
                 END;
