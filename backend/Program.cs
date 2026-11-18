@@ -526,7 +526,13 @@ using (var scope = app.Services.CreateScope())
                         WHERE bucket_date = old_date AND station_id = OLD.station_id AND channel_id = OLD.channel_id
                           AND result = OLD.result AND error_code = COALESCE(OLD.error_code, '')
                           AND job_file = COALESCE(OLD.job_file, '') AND model_id = COALESCE(OLD.model_id, 0);
-                        DELETE FROM pcb_analytics_daily WHERE total_count <= 0;
+                        -- Only the row just decremented (primary key): a table-wide
+                        -- "total_count <= 0" scan made every UPDATE/DELETE take ~0.2 s.
+                        DELETE FROM pcb_analytics_daily
+                        WHERE bucket_date = old_date AND station_id = OLD.station_id AND channel_id = OLD.channel_id
+                          AND result = OLD.result AND error_code = COALESCE(OLD.error_code, '')
+                          AND job_file = COALESCE(OLD.job_file, '') AND model_id = COALESCE(OLD.model_id, 0)
+                          AND total_count <= 0;
                     END IF;
                     IF TG_OP IN ('UPDATE', 'INSERT') THEN
                         new_date := NEW.inspect_time::date;
