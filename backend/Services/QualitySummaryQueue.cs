@@ -150,30 +150,32 @@ public sealed class QualitySummaryService : BackgroundService
             DELETE FROM pcb_rty_summaries WHERE pid = ANY (@affected_pids);
 
             WITH valid_results AS (
-                SELECT p.pid, p.station_id, p.inspect_time, p.result
+                SELECT p.pid, p.station_id, p.inspect_time, p.result, p.job_file, p.model_id
                 FROM pcb_results p
                 LEFT JOIN job_file_model_mappings mapping ON mapping.job_file = p.job_file
                 WHERE p.pid = ANY (@affected_pids)
                   AND p.error_code IS DISTINCT FROM 'DEFECT_UNSPECIFIED'
-                  AND p.model_id IS DISTINCT FROM 0
-                  AND NOT (p.model_id IS NULL AND COALESCE(mapping.model_id, -1) = 0)
+                  -- Effective model = current job-file mapping, else the stored model id.
+                  AND COALESCE(mapping.model_id, p.model_id) IS DISTINCT FROM 0
             )
             INSERT INTO pcb_ntf_summaries
-                (pid, station_id, first_test_time, last_test_time, test_count, ng_count, ever_ng, updated_at)
+                (pid, station_id, first_test_time, last_test_time, test_count, ng_count, ever_ng, updated_at, job_file, model_id)
             SELECT pid, station_id, MIN(inspect_time), MAX(inspect_time), COUNT(*),
                    COUNT(*) FILTER (WHERE result IN ('NG', 'FAIL')),
-                   BOOL_OR(result IN ('NG', 'FAIL')), NOW()
+                   BOOL_OR(result IN ('NG', 'FAIL')), NOW(),
+                   (array_agg(job_file ORDER BY inspect_time DESC))[1],
+                   (array_agg(model_id ORDER BY inspect_time DESC))[1]
             FROM valid_results
             GROUP BY pid, station_id;
 
             WITH valid_results AS (
-                SELECT p.pid, p.station_id, p.inspect_time, p.result
+                SELECT p.pid, p.station_id, p.inspect_time, p.result, p.job_file, p.model_id
                 FROM pcb_results p
                 LEFT JOIN job_file_model_mappings mapping ON mapping.job_file = p.job_file
                 WHERE p.pid = ANY (@affected_pids)
                   AND p.error_code IS DISTINCT FROM 'DEFECT_UNSPECIFIED'
-                  AND p.model_id IS DISTINCT FROM 0
-                  AND NOT (p.model_id IS NULL AND COALESCE(mapping.model_id, -1) = 0)
+                  -- Effective model = current job-file mapping, else the stored model id.
+                  AND COALESCE(mapping.model_id, p.model_id) IS DISTINCT FROM 0
             )
             INSERT INTO pcb_rty_summaries
                 (pid, first_test_time, last_test_time, station_count, test_count, ng_count, ever_ng, updated_at)

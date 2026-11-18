@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { FileText, X, Download, ExternalLink, RefreshCw, Presentation } from 'lucide-react';
+import { FileText, X, Download, ExternalLink, RefreshCw, Presentation, Play, Loader2, CheckCircle2, AlertTriangle } from 'lucide-react';
 import { ReportsApi } from '../services/api';
 
 const formatSize = (bytes) => {
@@ -11,10 +11,19 @@ const formatSize = (bytes) => {
 // Browsers can show these inline; PowerPoint/Excel/Word files are downloaded and opened in Office.
 const VIEWABLE = new Set(['.pdf', '.html']);
 
+const currentMonth = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+};
+
 export default function ReportsModal({ open, onClose }) {
   const [reports, setReports] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [month, setMonth] = useState(currentMonth);
+  const [job, setJob] = useState(null);
+  const [jobError, setJobError] = useState(null);
+  const running = job?.status === 'running';
 
   const load = async () => {
     setLoading(true);
@@ -28,6 +37,36 @@ export default function ReportsModal({ open, onClose }) {
       setLoading(false);
     }
   };
+
+  const refreshJob = async () => {
+    try {
+      const status = await ReportsApi.generateStatus();
+      setJob(prev => {
+        // A finished job adds a file: reload the list once.
+        if (prev?.status === 'running' && status.status !== 'running') load();
+        return status;
+      });
+    } catch { /* status is optional; ignore */ }
+  };
+
+  const startJob = async () => {
+    setJobError(null);
+    try {
+      setJob(await ReportsApi.generate(month));
+    } catch (err) {
+      setJobError(err.response?.data?.error || 'Không bắt đầu được việc tạo báo cáo.');
+      refreshJob();
+    }
+  };
+
+  // Poll the job while it runs (and once when the dialog opens).
+  useEffect(() => {
+    if (!open) return undefined;
+    refreshJob();
+    if (!running) return undefined;
+    const timer = window.setInterval(refreshJob, 3000);
+    return () => window.clearInterval(timer);
+  }, [open, running]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!open) return undefined;
@@ -53,8 +92,8 @@ export default function ReportsModal({ open, onClose }) {
           <div className="flex items-center gap-2.5">
             <FileText className="h-5 w-5 text-violet-700" />
             <div>
-              <h2 id="reports-modal-title" className="text-base font-bold text-slate-900">Báo cáo họp</h2>
-              <p className="text-[11px] text-slate-500">Báo cáo NTF · Re-test · FPY và các báo cáo khác trên server</p>
+              <h2 id="reports-modal-title" className="text-base font-bold text-slate-900">Báo cáo tháng</h2>
+              <p className="text-[11px] text-slate-500">Monthly Quality Report · NTF · Re-test · RTY</p>
             </div>
           </div>
           <div className="flex items-center gap-1">
@@ -65,6 +104,32 @@ export default function ReportsModal({ open, onClose }) {
               <X className="h-4 w-4" />
             </button>
           </div>
+        </div>
+
+        <div className="border-b border-slate-100 px-5 py-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <label htmlFor="report-month" className="text-xs font-semibold text-slate-600">Tháng</label>
+            <input id="report-month" type="month" value={month} max={currentMonth()} onChange={(e) => setMonth(e.target.value)}
+                   disabled={running} className="rounded-lg border border-slate-200 px-2 py-1.5 text-xs text-slate-800" />
+            <button type="button" onClick={startJob} disabled={running || !month}
+                    className="flex items-center gap-1.5 rounded-lg bg-violet-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-violet-500 disabled:cursor-not-allowed disabled:opacity-60">
+              {running ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
+              {running ? 'Đang tạo…' : 'Xuất báo cáo'}
+            </button>
+          </div>
+          {jobError && <div className="mt-2 text-xs text-rose-700">{jobError}</div>}
+          {job && job.status !== 'idle' && (
+            <div className={`mt-2 flex items-start gap-1.5 text-xs ${job.status === 'failed' ? 'text-rose-700' : job.status === 'succeeded' ? 'text-emerald-700' : 'text-slate-600'}`}>
+              {job.status === 'running' && <Loader2 className="mt-0.5 h-3.5 w-3.5 shrink-0 animate-spin" />}
+              {job.status === 'succeeded' && <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0" />}
+              {job.status === 'failed' && <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />}
+              <span>
+                {job.status === 'running' && `Tháng ${job.month}: ${job.step || 'đang chạy'}…`}
+                {job.status === 'succeeded' && `Đã tạo ${job.fileName} (${job.month}).`}
+                {job.status === 'failed' && `Tạo báo cáo ${job.month} lỗi: ${job.error || 'không rõ nguyên nhân'}`}
+              </span>
+            </div>
+          )}
         </div>
 
         <div className="max-h-[60vh] overflow-y-auto p-3">

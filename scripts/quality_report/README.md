@@ -1,18 +1,24 @@
-# NTF · Re-test · FPY reports (English)
+# Monthly Quality Report (NTF · Re-test · RTY)
 
-Weekly and monthly decks on the `Report Template/23.1.Haengsung Template.pptx` design, saved to
-`Reports/` so they appear under the **Xem báo cáo** button of the web UI.
+Generated from the web: **Xem báo cáo → choose month → Xuất báo cáo** (`POST /api/v1/reports/generate?month=YYYY-MM`).
+The backend runs `generate.py`, which writes `Reports/Monthly_Quality_Report_YYYY-MM.pptx`
+(design: `Report Template/23.1.Haengsung Template.pptx`, pre-built frame in `assets/skeleton_monthly.pptx`).
 
-1. `python -I qdata.py` – reads `pcb_results` directly (connection from `backend/appsettings.Local.json`),
-   writes `data.json` (week) and `data_m.json` (month), ~35 min. Edit the dates at the top first
-   (`WIN_FROM/WIN_TO`, weekly `END`, monthly `RM/RE`, `BEFORE/AFTER`, focus/control line).
-2. Skeletons from the template: weekly = `fix_sections.py` on an unpacked template keeping slides
-   7, 8, 17 (+6 copies via the pptx skill's `add_slide.py`), 12; monthly =
-   `python make_skeleton.py <pptx skill dir> <template> skeleton_m.pptx`.
-3. `python build_w.py report_w.pptx` / `python build_m.py report_m.pptx`, then copy into `Reports/`.
+| File | Role |
+|---|---|
+| `report_config.json` | improvement review settings: focus / control line, model groups, baseline and improvement start |
+| `qfast.py` | data from the statistics tables (seconds–minutes) |
+| `build_monthly.py`, `pptlib.py` | slides |
+| `generate.py` | qfast → build → atomic save into `Reports/` |
+| `make_skeleton.py` | rebuilds `assets/skeleton_monthly.pptx` from the template (needs the pptx skill's `add_slide.py`) |
 
-Definitions = PMSystem2 `/production/quality-modes`:
-- Re-test = NG attempts / attempts; NTF = PID–Station pairs ever NG / pairs tested; FPY = plant PIDs never NG / PIDs.
-- `DEFECT_UNSPECIFIED` and unassigned-model rows excluded. Periods by **test start time** on the factory clock
-  (`start_time AT TIME ZONE 'UTC'`). "Ever NG" comes from the full history in `pcb_results`.
-- Line/Station FPY = 100% − NTF. Tests with an infinite or future start time fall outside every period.
+Manual run: `python -I generate.py --month 2026-11 --out-dir ../../Reports`
+(connection string from `PMS_CONNECTION` or `backend/appsettings.Local.json`; Python packages: python-pptx, psycopg2-binary, lxml).
+
+## Definitions
+- **Re-test** = NG test attempts / test attempts (`pcb_analytics_daily`, factory wall-clock day).
+- **NTF** = PID–Station pairs ever NG / pairs, cohort = first test at the station in the period (`pcb_ntf_summaries`).
+- **RTY** = PCBs that passed every station first time / PCBs, cohort = first test in the period.
+  Plant: all stations (`pcb_rty_summaries`); line: stations of the line; station: that station.
+- **Model** = Job File mapping (Master Data), else the model id sent by the PC. Effective model 0 (Unassigned) and
+  `DEFECT_UNSPECIFIED` rows are excluded. Tests with an infinite / future start time fall outside every period.

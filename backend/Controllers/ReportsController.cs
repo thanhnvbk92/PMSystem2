@@ -54,6 +54,20 @@ public class ReportsController : ControllerBase
         return Ok(await service.GetAsync(startDate, endDate, period, cancellationToken));
     }
 
+    /// <summary>Starts generating the monthly report for month (YYYY-MM) in the background.</summary>
+    [HttpPost("generate")]
+    public IActionResult Generate([FromServices] PMSystem2.Api.Services.ReportGenerationService generator, [FromQuery] string month)
+    {
+        if (generator.TryStart(month, out var problem)) return Accepted(generator.GetStatus());
+        return problem != null && problem.StartsWith("A report") ? Conflict(new { error = problem, status = generator.GetStatus() })
+                                                                 : BadRequest(new { error = problem });
+    }
+
+    /// <summary>State of the current / last report generation (idle, running, succeeded, failed).</summary>
+    [HttpGet("generate/status")]
+    public IActionResult GenerateStatus([FromServices] PMSystem2.Api.Services.ReportGenerationService generator)
+        => Ok(generator.GetStatus());
+
     /// <summary>Returns one report. download=false opens it in the browser when the browser can show it (PDF, HTML).</summary>
     [HttpGet("{fileName}")]
     public IActionResult Get(string fileName, [FromQuery] bool download = true)

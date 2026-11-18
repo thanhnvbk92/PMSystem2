@@ -182,6 +182,8 @@ export const InvalidPcbResultsApi = {
 // Meeting reports (NTF / Re-test / FPY ...) stored as files in the backend Reports folder.
 export const ReportsApi = {
   list: () => api.get('/reports').then(res => res.data),
+  generate: (month) => api.post('/reports/generate', null, { params: { month } }).then(res => res.data),
+  generateStatus: () => api.get('/reports/generate/status').then(res => res.data),
   fileUrl: (name, download = true) => `${API_BASE_URL}/reports/${encodeURIComponent(name)}?download=${download}`,
 };
 

@@ -728,20 +728,20 @@ namespace PMSystem2.Api.Services
                 // duplicate rescans merely correct ownership and must not inflate KPIs.
                 var insertedResultDtos = resultDtos.TakeLast(newEntities.Count).ToList();
                 var insertedJobFiles = insertedResultDtos
-                    .Where(x => x.ModelId == null && !string.IsNullOrWhiteSpace(x.JobFile))
+                    .Where(x => !string.IsNullOrWhiteSpace(x.JobFile))
                     .Select(x => x.JobFile!)
                     .Distinct()
                     .ToList();
-                var unassignedJobFiles = insertedJobFiles.Count == 0
-                    ? new HashSet<string>(StringComparer.Ordinal)
+                // Effective model = Job File mapping, else the model id sent by the PC (same rule as KPIs).
+                var jobModel = insertedJobFiles.Count == 0
+                    ? new Dictionary<string, int>(StringComparer.Ordinal)
                     : (await _db.JobFileModelMappings.AsNoTracking()
-                        .Where(x => x.ModelId == 0 && insertedJobFiles.Contains(x.JobFile))
-                        .Select(x => x.JobFile)
-                        .ToListAsync()).ToHashSet(StringComparer.Ordinal);
+                        .Where(x => x.ModelId != null && insertedJobFiles.Contains(x.JobFile))
+                        .Select(x => new { x.JobFile, x.ModelId })
+                        .ToListAsync()).ToDictionary(x => x.JobFile, x => x.ModelId!.Value, StringComparer.Ordinal);
                 insertedResultDtos = insertedResultDtos
                     .Where(x => !string.Equals(x.ErrorCode, "DEFECT_UNSPECIFIED", StringComparison.OrdinalIgnoreCase)
-                        && x.ModelId != 0
-                        && !(x.ModelId == null && x.JobFile != null && unassignedJobFiles.Contains(x.JobFile)))
+                        && (x.JobFile != null && jobModel.TryGetValue(x.JobFile, out var mapped) ? mapped : x.ModelId) != 0)
                     .ToList();
                 var latestDto = insertedResultDtos.LastOrDefault();
                 if (latestDto != null)
@@ -2187,12 +2187,16 @@ namespace PMSystem2.Api.Services
                 .Where(x => x.ModelId == 0)
                 .Select(x => x.JobFile);
 
-            // An explicit PCB ModelId takes precedence over the Job File mapping.
-            // Exclude only records explicitly marked as Unassigned (Model 0), or
-            // records without ModelId whose Job File is mapped to Model 0.
+            var mappedJobs = _db.JobFileModelMappings.AsNoTracking()
+                .Where(x => x.ModelId != null)
+                .Select(x => x.JobFile);
+
+            // The Job File mapping is authoritative (the model id sent by the PC is only the model
+            // selected on that PC and is 0 when none was set). Fall back to pcb_results.model_id
+            // only for unmapped Job Files. Exclude records whose effective model is Unassigned (0).
             return query.Where(x => (x.ErrorCode == null || x.ErrorCode != "DEFECT_UNSPECIFIED")
-                && x.ModelId != 0
-                && !(x.ModelId == null && x.JobFile != null && unassignedJobs.Contains(x.JobFile)));
+                && !(x.JobFile != null && unassignedJobs.Contains(x.JobFile))
+                && !(x.ModelId == 0 && (x.JobFile == null || !mappedJobs.Contains(x.JobFile))));
         }
 
         /// <summary>

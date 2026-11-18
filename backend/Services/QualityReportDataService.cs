@@ -56,8 +56,9 @@ public class QualityReportDataService
                 FROM pcb_analytics_daily d
                 LEFT JOIN channels c ON c.id = d.channel_id
                 WHERE d.bucket_date >= @from AND d.bucket_date < @to
-                  AND NOT (d.model_id = 0 AND d.job_file IN
-                           (SELECT job_file FROM job_file_model_mappings WHERE model_id = 0))
+                  -- effective model = Job File mapping, else the stored model id (0 also for NULL)
+                  AND COALESCE((SELECT m.model_id FROM job_file_model_mappings m
+                                WHERE m.job_file = d.job_file AND m.model_id IS NOT NULL), d.model_id) <> 0
                 GROUP BY 1, 2, 3, 4", unit, start, endExclusive))
             await using (var r = await cmd.ExecuteReaderAsync(ct))
                 while (await r.ReadAsync(ct))

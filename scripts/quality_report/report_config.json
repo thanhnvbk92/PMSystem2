@@ -1,0 +1,9 @@
+{
+  "focus_line_id": 11,
+  "control_line_id": 12,
+  "model_groups": ["BMW Wave High", "BMW ICON25"],
+  "baseline_start": "2026-08-01",
+  "improvement_start": "2026-10-01",
+  "trend_months": 6,
+  "weekly_trend_start": "2026-08-03"
+}

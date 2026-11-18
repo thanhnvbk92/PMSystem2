@@ -79,6 +79,7 @@ builder.Services.AddSingleton<IMasterDataService, MasterDataService>();
 builder.Services.AddScoped<IPcbService, PcbService>();
 builder.Services.AddScoped<IInvalidPcbResultService, InvalidPcbResultService>();
 builder.Services.AddScoped<QualityReportDataService>();
+builder.Services.AddSingleton<ReportGenerationService>();
 builder.Services.AddSingleton<MachineStatusService>();
 builder.Services.AddHostedService<CpkOverviewIndexBootstrapService>();
 builder.Services.AddHostedService<CpkCacheRefreshService>();
@@ -172,6 +173,13 @@ using (var scope = app.Services.CreateScope())
             );
             CREATE INDEX IF NOT EXISTS ix_pcb_rty_summaries_ever_ng
                 ON pcb_rty_summaries (ever_ng);
+
+            -- Model of a PID-Station (job file and model id of its latest test) for reports by model,
+            -- and first-test indexes for period cohorts (reports, quality-data).
+            ALTER TABLE pcb_ntf_summaries ADD COLUMN IF NOT EXISTS job_file TEXT;
+            ALTER TABLE pcb_ntf_summaries ADD COLUMN IF NOT EXISTS model_id INT;
+            CREATE INDEX IF NOT EXISTS ix_pcb_ntf_summaries_first_test ON pcb_ntf_summaries (first_test_time);
+            CREATE INDEX IF NOT EXISTS ix_pcb_rty_summaries_first_test ON pcb_rty_summaries (first_test_time);
         ");
 
         // Ensure all missing ClickHouse master data tables and columns exist in PostgreSQL

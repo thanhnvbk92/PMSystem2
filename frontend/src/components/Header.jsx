@@ -128,7 +128,7 @@ export default function Header({ activeTab, sectionLabel, moduleTitle, onRefresh
           type="button"
           onClick={() => setReportsOpen(true)}
           className="px-3.5 py-2 rounded-xl bg-violet-600 hover:bg-violet-500 text-xs font-semibold text-white transition-colors flex items-center gap-2 shadow-sm"
-          title="Xem báo cáo họp NTF · Re-test · FPY"
+          title="Báo cáo tháng NTF · Re-test · RTY"
         >
           <FileText className="w-3.5 h-3.5" />
           <span className="hidden sm:inline">Xem báo cáo</span>
