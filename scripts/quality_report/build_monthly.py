@@ -292,8 +292,8 @@ for i, (_, big, head, detail, _, _) in enumerate(good):
     rect(f.s, x, y, gw, gh, G2, name=f"Positive change {i + 1}")
     textbox(f.s, x + 0.25, y + 0.2, 0.4, 0.3, [f"{i + 1:02d}"], size=12, color=G3, bold=True)
     textbox(f.s, x + 0.25, y + 0.5, gw - 0.5, 0.6, [big], size=30, color=GREEN, bold=True)
-    textbox(f.s, x + 0.25, y + 1.15, gw - 0.5, 0.3, [head], size=12, bold=True)
-    textbox(f.s, x + 0.25, y + 1.45, gw - 0.5, 0.6, [detail], size=9.5, color=DARK)
+    textbox(f.s, x + 0.25, y + 1.15, gw - 0.5, 0.3, [head if len(head) <= 34 else head[:33] + "…"], size=12, bold=True)
+    textbox(f.s, x + 0.25, y + 1.5, gw - 0.5, 0.55, [detail], size=9.5, color=DARK)
 print("positive changes:", [g[2] for g in good])
 
 # ---------- 12. Remaining issues ----------
