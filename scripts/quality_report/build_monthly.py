@@ -563,10 +563,9 @@ for num_, x in enumerate(IMP, 1):
         mj = JIG.search(n_)
         if mj and (x["line"], x["station"], mj.group(3)) not in seen_jig:
             seen_jig.add((x["line"], x["station"], mj.group(3)))
-            plan.append((1, "Jig", f"#{num_} {x['line']} {x['station']}: {codes_short(x['code'])} back to {mj.group(2)}% in {mj.group(1)}; "
-                                   f"{mj.group(3)} = {mj.group(4)}% of the NG ({mj.group(5)} NG / {mj.group(6)} tests)",
-                         f"Check pins / RF contact of {mj.group(3).split(' (')[0]} (repeat the fix: {x['action'][:60]}); compare with the other jigs; "
-                         f"stop the jig if NG stays > 3%", D_URG))
+            jn = mj.group(3).split(" (")[0]; ip = mj.group(3)[len(jn):].strip(" ()").replace("IP ", "")
+            plan.append((1, "Jig", f"{x['line']} {x['station']} {jn}: {codes_short(x['code'])} NG up again ({mj.group(5)}/{mj.group(6)} tests)",
+                         f"Check pins / RF contact of {jn}" + (f" (IP {ip})" if ip else ""), D_URG))
 rises, sides = [], []
 for n, m, pm in lines:
     if not pm or rt(m) <= rt(pm): continue
@@ -576,35 +575,35 @@ for n, m, pm in lines:
     if best[0] < 0.2: continue
     acted = [k for k, x in enumerate(IMP, 1) if x["line"] == n and best[1] in x["code"]]
     if acted:
-        plan.append((3, "Monitor", f"{n}: Re-test {pct(rt(pm))} → {pct(rt(m))}; {best[1]} +{best[0]:.2f}% of tests",
-                     f"Action already taken (#{', #'.join(map(str, acted))}); confirm the code stays down for 4 weeks", D_REV))
+        plan.append((3, "Monitor", f"{n}: {best[1]} (Re-test {pct(rt(pm), 1)} → {pct(rt(m), 1)})",
+                     f"Confirm the effect of #{', #'.join(map(str, acted))}", D_REV))
     else:
-        rises.append((best[0], 2, "Line Re-test", f"{n}: Re-test {pct(rt(pm))} → {pct(rt(m))}; main cause {best[1]} +{best[0]:.2f}% of tests",
-                     f"Find the station / jig with most {best[1]} NG, analyse NG logs and define a corrective action; add it to ImprovementList", D_URG))
+        rises.append((best[0], 2, "Line Re-test", f"{n}: Re-test {pct(rt(pm), 1)} → {pct(rt(m), 1)}, mainly {best[1]}",
+                     f"Find the station / jig with most {best[1]} NG and define a corrective action", D_URG))
 plan += [r[1:] for r in sorted(rises, reverse=True)[:3]]
 WATCH = re.compile(r"watch: (.+) rose \+([\d.]+)% at the same station")
 for num_, x in enumerate(IMP, 1):
     for n_ in x["notes"]:
         mw = WATCH.search(n_)
         if mw and float(mw.group(2)) >= 0.5:
-            sides.append((float(mw.group(2)), 2, "Side effect", f"#{num_} {x['line']} {x['station']} ({SHORT.get(x['model'], x['model'])}): {mw.group(1)} rose +{mw.group(2)}% after the action",
-                         f"Check whether the action on {codes_short(x['code'])} caused it (same jig / pin?); define an action if it stays high", D_URG))
+            sides.append((float(mw.group(2)), 2, "Side effect", f"{x['line']} {x['station']}: {mw.group(1)} +{mw.group(2)}% after action #{num_}",
+                         f"Check if action #{num_} caused it (same jig / pin)", D_URG))
 plan += [r[1:] for r in sorted(sides, reverse=True)[:2]]
 early = [k for k, x in enumerate(IMP, 1) if "(early)" in x["verdict"] or (x["days_after"] or 0) < 14 and x["verdict"] != "Insufficient data"]
 if early:
-    plan.append((3, "Monitor", f"Improvements with < 14 days of data after the action: #{', #'.join(map(str, early))}",
-                 "Keep tracking weekly; confirm the verdict with ≥ 4 weeks of data at the next monthly review", D_REV))
+    plan.append((3, "Monitor", f"New actions #{', #'.join(map(str, early))}: less than 2 weeks of data",
+                 "Track weekly; confirm the verdict with 4 weeks of data", D_REV))
 insuf = [(k, x) for k, x in enumerate(IMP, 1) if x["verdict"] == "Insufficient data"]
 if insuf:
     lns = sorted({f"{x['line']} {x['station']}" for _, x in insuf})
-    plan.append((2, "Data", f"Cannot verify #{', #'.join(str(k) for k, _ in insuf)} ({', '.join(lns)}): too few test logs after the action",
-                 "Restore the test-log upload of these stations to PMSystem2, then re-run the verification", D_URG))
+    plan.append((2, "Data", f"{', '.join(lns)}: test logs missing (#{', #'.join(str(k) for k, _ in insuf)} not verifiable)",
+                 "Restore the log upload to PMSystem2", D_URG))
 st_by_id = {int(k): v for k, v in st_meta.items()} if isinstance(next(iter(st_meta), 0), str) else st_meta
 for sid_, v in sorted(D.get("excl_m0_st", {}).items(), key=lambda kv: -kv[1]):
     mt, m = st_by_id.get(int(sid_)), q(f"m0_st{sid_}")
     if not mt or not m or v * 100 < m["retestAttempts"] * 1.0: continue
-    plan.append((2, "Data", f"{mt['lineName']} {mt['name']} ({mt['modelGroupName']}): {num(v)} NG ({v * 100 / m['retestAttempts']:.1f}% of tests) "
-                            f"without an error in the log (UNKNOWN)", "Send sample logs to update the log reader so the real error code is recorded", D_URG))
+    plan.append((2, "Data", f"{mt['lineName']} {mt['name']}: {num(v)} NG without error code (UNKNOWN)",
+                 "Send sample logs to fix the log reader", D_URG))
 if not plan:
     plan.append((3, "Monitor", "No open finding from the data", "Keep the current controls", D_REV))
 plan.sort(key=lambda x: x[0])
@@ -618,7 +617,7 @@ for c in CATS:
     if not g: continue
     if c in MERGE and len(g) > 1:
         acts = list(dict.fromkeys(x[3] for x in g))
-        picked.append((min(x[0] for x in g), c, "; ".join(x[2] for x in g), " / ".join(acts)))
+        picked.append((min(x[0] for x in g), c, ["• " + x[2] for x in g], ["• " + a_ for a_ in acts] if len(acts) > 1 else acts[0]))
         grp[c] = []
     else:
         picked.append(g[0][:4]); grp[c] = g[1:]
