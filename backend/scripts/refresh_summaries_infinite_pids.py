@@ -17,14 +17,13 @@ conn.autocommit = True
 cur = conn.cursor()
 t0 = time.time()
 cur.execute("SELECT array_agg(DISTINCT pid) FROM pcb_results WHERE NOT isfinite(inspect_time) AND pid IS NOT NULL")
-pids = cur.fetchone()[0] or []
+pids = sorted(cur.fetchone()[0] or [])          # same order as QualitySummaryService (fewer deadlocks)
 print(f"PIDs with infinite start time records: {len(pids):,}", flush=True)
 VALID = """SELECT p.pid, p.station_id, p.inspect_time, p.result, p.job_file, p.model_id
     FROM pcb_results p LEFT JOIN job_file_model_mappings mapping ON mapping.job_file = p.job_file
     WHERE p.pid = ANY(%s) AND p.error_code IS DISTINCT FROM 'DEFECT_UNSPECIFIED' AND isfinite(p.inspect_time)
       AND COALESCE(mapping.model_id, p.model_id) IS DISTINCT FROM 0"""
-for i in range(0, len(pids), 1000):
-    chunk = pids[i:i + 1000]
+def run_chunk(chunk):
     cur.execute("BEGIN")
     cur.execute("DELETE FROM pcb_ntf_summaries WHERE pid = ANY(%s)", (chunk,))
     cur.execute("DELETE FROM pcb_rty_summaries WHERE pid = ANY(%s)", (chunk,))
@@ -45,6 +44,17 @@ for i in range(0, len(pids), 1000):
             station_count = EXCLUDED.station_count, test_count = EXCLUDED.test_count, ng_count = EXCLUDED.ng_count,
             ever_ng = EXCLUDED.ever_ng, updated_at = EXCLUDED.updated_at""", (chunk,))
     cur.execute("COMMIT")
+
+for i in range(0, len(pids), 200):
+    chunk = pids[i:i + 200]
+    for attempt in range(10):
+        try:
+            run_chunk(chunk); break
+        except (psycopg2.errors.DeadlockDetected, psycopg2.errors.LockNotAvailable):
+            cur.execute("ROLLBACK"); time.sleep(2 + attempt)        # the backend refreshed the same PIDs; retry
+    else:
+        raise SystemExit(f"chunk {i} failed after retries")
+    if i % 20000 == 0: print(f"  {i:,} / {len(pids):,}", flush=True)
 cur.execute("SELECT count(*) FROM pcb_ntf_summaries WHERE NOT isfinite(first_test_time) OR NOT isfinite(last_test_time)")
 print(f"done in {time.time() - t0:.0f}s; NTF rows still infinite: {cur.fetchone()[0]}", flush=True)
 conn.close()
