@@ -161,10 +161,11 @@ textbox(f.s, 5.13, yy + rh * len(lrows) + 0.06, 7.64, 0.4,
 MIX = S[35]
 mx = [(n, m, pm) for n, m, pm in lines if pm]
 T0 = sum(m["retestAttempts"] for _, m, _ in mx); T1 = sum(pm["retestAttempts"] for _, _, pm in mx)
-vol = [(n, pm["retestAttempts"] * 100 / T1, m["retestAttempts"] * 100 / T0, rt(pm), rt(m)) for n, m, pm in mx]   # name, share prev, share cur, Re-test prev, cur
+vol = [(n, pm["retestAttempts"] * 100 / T1, m["retestAttempts"] * 100 / T0, rt(pm), rt(m), pm["retestAttempts"], m["retestAttempts"]) for n, m, pm in mx]
+# name, share prev, share cur (used to pick the lines), Re-test prev, cur, tests prev, cur
 vol.sort(key=lambda x: -x[4])
 R1, R0 = rt(prev), rt(cur)
-R_fix = sum(s1 * r0 for _, s1, _, _, r0 in vol) / 100          # this month's line Re-test with last month's volumes
+R_fix = sum(x[1] * x[4] for x in vol) / 100          # this month's line Re-test with last month's volumes
 hi = max(vol, key=lambda x: x[4])
 low_more = [x for x in vol if x[4] < R0 and x[2] - x[1] >= 1.0]
 hi_less = [x for x in vol if x[4] > R0 and x[1] - x[2] >= 1.0]
@@ -172,29 +173,27 @@ n_up = sum(1 for x in vol if x[4] > x[3])
 went = "fell" if R0 < R1 else "rose"
 f = Frame(MIX, f"Why Plant Re-test {went.capitalize()}: Production Volume by Line",
           "Plant Re-test = all NG attempts / all test attempts, so a line that tests more weighs more")
-yy = f.section(f"Share of plant test attempts by line – {mname(1)} vs {mname(0)}", w=5.9, unit="(Unit: % of tests)")
+yy = f.section(f"Test attempts by line – {mname(1)} vs {mname(0)}", w=5.9, unit="(Unit: tests)")
 rv_ = vol[::-1]                                         # bar charts draw the first category at the bottom
-column_chart(f.s, 0.53, yy, 5.9, 4.95, [x[0] for x in rv_], [(mname(1), [round(x[1], 1) for x in rv_]), (mname(0), [round(x[2], 1) for x in rv_])],
-             ["BFBFBF", VIOLET], fmt='0.0', bar=True, gap=50, overlap=-10, lo=0, name="Test share by line")
+column_chart(f.s, 0.53, yy, 5.9, 4.95, [x[0] for x in rv_], [(mname(1), [x[5] for x in rv_]), (mname(0), [x[6] for x in rv_])],
+             ["BFBFBF", VIOLET], fmt='#,##0', bar=True, gap=50, overlap=-10, lo=0, name="Test share by line")
 yk = f.section("Key points", x=6.73, w=6.04)
 pts = [[("Plant Re-test ", {}), (f"{R1:.2f}% → {R0:.2f}%", {"bold": True, "color": GREEN if R0 < R1 else RED}),
         (f" although {n_up} of {len(vol)} lines rose.", {})],
-       [(f"{hi[0]} ", {"bold": True}), (f"has the highest Re-test ({hi[4]:.2f}%, {hi[3]:.2f}% in {mname(1)}), but its share of plant tests went "
-                                         f"{hi[1]:.1f}% → {hi[2]:.1f}%.", {})]]
-if hi_less[1:] or (hi_less and hi_less[0][0] != hi[0]):
-    pts.append([("Other lines above plant Re-test with fewer tests: ", {}),
-                (", ".join(f"{x[0]} {x[1]:.1f}→{x[2]:.1f}%" for x in hi_less if x[0] != hi[0]), {"bold": True})])
+       [(f"{hi[0]} ", {"bold": True}), (f"has the highest Re-test ({hi[4]:.2f}%, {hi[3]:.2f}% in {mname(1)}), but it ran far fewer tests: "
+                                         f"{num(hi[5])} → {num(hi[6])}.", {})]]
 if low_more:
-    pts.append([("Lines below plant Re-test with more tests: ", {}),
-                (", ".join(f"{x[0]} {x[1]:.1f}→{x[2]:.1f}%" for x in low_more), {"bold": True})])
+    pts.append([("Lines with low Re-test (", {}), (", ".join(x[0] for x in low_more), {"bold": True}),
+                (f") dropped less in volume, so they weigh more in {mname(0)}.", {})])
 pts.append([(f"With the {mname(1)} volume per line, plant Re-test in {mname(0)} would be ", {}),
             (f"{R_fix:.2f}%", {"bold": True, "color": RED if R_fix > R1 else GREEN}),
             (f" ({R_fix - R1:+.2f}% vs {mname(1)}): the fall comes mainly from the volume change, not from better lines.", {})])
+if MTD: pts.append([(f"{mname(0)} = {RM:%d}–{LAST:%d %b} only ({LAST.day} days), so its test counts are lower for every line.", {"color": G3})])
 textbox(f.s, 6.73, yk, 6.04, 1.75, [[("• " + r[0][0], r[0][1])] + r[1:] for r in pts], size=9, name="Key points")
-yt = f.section("Re-test and share of tests by line", x=6.73, y=yk + 1.85, w=6.04, unit="(Unit: %)")
-vrows = [["Line", f"Re-test {mname(1)}", f"Re-test {mname(0)}", f"Share {mname(1)}", f"Share {mname(0)}"]]
-for n, s1, s0, r1, r0 in vol:
-    vrows.append([n, f"{r1:.2f}", f"{r0:.2f}", f"{s1:.1f}", f"{s0:.1f}"])
+yt = f.section("Re-test and test attempts by line", x=6.73, y=yk + 1.85, w=6.04, unit="(Unit: %, tests)")
+vrows = [["Line", f"Re-test {mname(1)}", f"Re-test {mname(0)}", f"Tests {mname(1)}", f"Tests {mname(0)}"]]
+for n, s1, s0, r1, r0, t1, t0 in vol:
+    vrows.append([n, f"{r1:.2f}", f"{r0:.2f}", num(t1), num(t0)])
 def vfmt(i, j, v):
     o = {"bold": True} if j == 0 else {}
     if i and j == 2: o["color"] = RED if vol[i - 1][4] > vol[i - 1][3] else GREEN
@@ -566,7 +565,7 @@ for num_, x in enumerate(IMP, 1):
             seen_jig.add((x["line"], x["station"], mj.group(3)))
             plan.append((1, "Jig", f"#{num_} {x['line']} {x['station']}: {codes_short(x['code'])} back to {mj.group(2)}% in {mj.group(1)}; "
                                    f"{mj.group(3)} = {mj.group(4)}% of the NG ({mj.group(5)} NG / {mj.group(6)} tests)",
-                         f"Check pins / RF contact of {mj.group(3).split(' (')[0]} (same fix as #{num_}: {x['action'][:60]}); compare with the other jigs; "
+                         f"Check pins / RF contact of {mj.group(3).split(' (')[0]} (repeat the fix: {x['action'][:60]}); compare with the other jigs; "
                          f"stop the jig if NG stays > 3%", D_URG))
 rises, sides = [], []
 for n, m, pm in lines:
@@ -609,7 +608,24 @@ for sid_, v in sorted(D.get("excl_m0_st", {}).items(), key=lambda kv: -kv[1]):
 if not plan:
     plan.append((3, "Monitor", "No open finding from the data", "Keep the current controls", D_REV))
 plan.sort(key=lambda x: x[0])
-plan = plan[:12]
+# 5 actions: one per category (same-category findings merged), then fill with the remaining ones
+CATS = ["Jig", "Line Re-test", "Side effect", "Data", "Monitor"]
+MERGE = {"Jig", "Data", "Monitor"}
+grp = {c: [x for x in plan if x[1] == c] for c in CATS}
+picked = []
+for c in CATS:
+    g = grp[c]
+    if not g: continue
+    if c in MERGE and len(g) > 1:
+        acts = list(dict.fromkeys(x[3] for x in g))
+        picked.append((min(x[0] for x in g), c, "; ".join(x[2] for x in g), " / ".join(acts)))
+        grp[c] = []
+    else:
+        picked.append(g[0][:4]); grp[c] = g[1:]
+rest = sorted((x for c in CATS for x in grp[c]), key=lambda x: x[0])
+picked += [x[:4] for x in rest[:max(0, 5 - len(picked))]]
+picked = sorted(picked[:5], key=lambda x: x[0])
+plan = [x + (due(nxt + dt.timedelta(days=7 * min(i, 3))),) for i, x in enumerate(picked)]   # next week ... +3 weeks (~1 month)
 yy = f.section("Actions", unit="(PIC to be assigned in the meeting)")
 PRI = {1: ("High", RED), 2: ("Medium", "F4B183"), 3: ("Low", "FFEB9C")}
 arows = [["#", "Priority", "Category", "Issue (from data)", "Action", "PIC", "Due date", "Status"]]
@@ -622,11 +638,11 @@ def afmt(i, j, v):
     if j == 2: o["bold"] = True
     if j in (3, 4): o["align"] = PP_ALIGN.LEFT
     return o
-arh = min(0.5, (6.85 - yy - 0.3) / len(plan))
-table(f.s, 0.53, yy, 12.24, arows, [0.3, 0.7, 0.95, 4.2, 4.04, 0.65, 0.85, 0.55], row_h=arh, size=8, header_h=0.3, cell_fmt=afmt, name="Action plan")
+arh = min(0.85, (6.85 - yy - 0.3) / len(plan))
+table(f.s, 0.53, yy, 12.24, arows, [0.3, 0.7, 0.95, 4.2, 4.04, 0.65, 0.85, 0.55], row_h=arh, size=9, header_h=0.3, cell_fmt=afmt, name="Action plan")
 textbox(f.s, 0.53, yy + 0.3 + arh * len(plan) + 0.05, 12.24, 0.2,
         [f"* Generated from this report: jig rises after an action, lines with higher Re-test vs {mname(1)}, side effects, early verdicts, missing logs and NG without an error code. "
-         f"High = due next week."], size=7.5, color=G3)
+         f"Due dates spread over the next month by priority."], size=7.5, color=G3)
 
 # ---------- 14. End ----------
 strip_annotations(S[39])
