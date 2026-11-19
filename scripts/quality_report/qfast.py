@@ -73,6 +73,7 @@ def collect(month: str, cfg: dict):
     att = defaultdict(lambda: [0, 0])        # (day, station, group) -> [attempts, ng]
     errs = defaultdict(int)                  # (day, line, group, code) -> ng
     errs_st = defaultdict(int)               # (day, station, group, code) -> ng
+    excl_st = defaultdict(int)               # (day, station) -> ng with an excluded code
     cur.execute("""SELECT bucket_date, station_id, job_file, model_id, result, error_code, sum(total_count)::bigint
                    FROM pcb_analytics_daily
                    WHERE bucket_date >= %s AND bucket_date < %s AND error_code <> 'DEFECT_UNSPECIFIED'
@@ -88,6 +89,8 @@ def collect(month: str, cfg: dict):
             if c_ not in EXCL:
                 errs[(day, st_line.get(sid, 0), g, c_)] += n
                 errs_st[(day, sid, g, c_)] += n
+            else:
+                excl_st[(day, sid)] += n
     log(f"rollup rows aggregated ({len(att)} day-station-model keys)")
 
     # ---- B. NTF pairs per first-test day / station / model group ----
@@ -180,6 +183,9 @@ def collect(month: str, cfg: dict):
         for lid in (FOCUS, CONTROL):
             out[f"m{i}_line{lid}"] = qm(a, b, line=lid)
             for k, g in enumerate(GROUPS): out[f"m{i}_line{lid}_g{k}"] = qm(a, b, line=lid, model=g)
+    a0, b0 = mrange(0)
+    out["excl_m0_st"] = {str(s_): v for s_, v in
+                         ((s_, sum(v for (d_, s2), v in excl_st.items() if s2 == s_ and a0 <= d_ < b0)) for s_ in {s2 for _, s2 in excl_st}) if v}
     for l in lines:
         if l["id"] in (0, FOCUS, CONTROL): continue
         for i in (0, 1):

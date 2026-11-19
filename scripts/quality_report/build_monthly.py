@@ -1,5 +1,5 @@
 """Monthly Quality Report (English): NTF / Re-test / RTY + Line 6-1 improvement review by model."""
-import json, os, sys, datetime as dt
+import json, os, re, sys, datetime as dt
 from pptlib import *
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -157,59 +157,51 @@ textbox(f.s, 5.13, yy + rh * len(lrows) + 0.06, 7.64, 0.4,
          f"(UNKNOWN = NG without an error in the log, not used as a cause). "
          f"Line RTY = PCBs that passed every station of the line first time. Green row = {FN}."], size=8, color=G3)
 
-# ---------- 5b. Plant Re-test change: line rates vs line mix ----------
-# shift-share: R = sum(s_i * r_i), s = share of test attempts, r = Re-test of the line.
-# dR = sum(avg(s) * dr)  [rate effect]  +  sum(avg(r) * ds)  [mix effect]; the two add up exactly.
+# ---------- 5b. Why plant Re-test fell: production volume by line ----------
 MIX = S[35]
 mx = [(n, m, pm) for n, m, pm in lines if pm]
 T0 = sum(m["retestAttempts"] for _, m, _ in mx); T1 = sum(pm["retestAttempts"] for _, _, pm in mx)
-mrows_ = []
-for n, m, pm in mx:
-    s0, s1 = m["retestAttempts"] * 100 / T0, pm["retestAttempts"] * 100 / T1
-    r0, r1 = rt(m), rt(pm)
-    re_ = (s0 + s1) / 2 * (r0 - r1) / 100; me_ = (r0 + r1) / 2 * (s0 - s1) / 100
-    mrows_.append((n, s1, s0, r1, r0, re_, me_))
-R1 = sum(s1 * r1 for _, s1, _, r1, *_ in mrows_) / 100; R0 = sum(s0 * r0 for _, _, s0, _, r0, *_ in mrows_) / 100
-RE = sum(x[5] for x in mrows_); ME = sum(x[6] for x in mrows_)
-R1, R0 = rt(prev), rt(cur)                      # plant figures as on the KPI summary page (line sum differs only by rounding)
-mrows_.sort(key=lambda x: x[5] + x[6])
-top_mix = min(mrows_, key=lambda x: x[6])
-f = Frame(MIX, f"Why Plant Re-test {'Fell' if R0 < R1 else 'Rose'} While Some Lines {'Rose' if R0 < R1 else 'Fell'}",
-          f"Plant Re-test {mname(1)} → {mname(0)} split into line Re-test change and line-mix change")
-yy = f.section(f"Plant Re-test change – {mname(1)} vs {mname(0)}", unit="(Unit: %)")
-cw = 3.92
-for i, (nm, sub_, v, det) in enumerate([
-        ("Plant Re-test", f"{mname(1)} → {mname(0)}", R0 - R1, f"{R1:.2f}% → {R0:.2f}% (all lines, weighted by test attempts)"),
-        ("Line mix", "share of tests moved", ME, f"Largest: {top_mix[0]} share {top_mix[1]:.1f}% → {top_mix[2]:.1f}% of all tests"),
-        ("Line Re-test", "real change on the lines", RE, f"{sum(1 for x in mrows_ if x[4] < x[3])} of {len(mrows_)} lines lower, "
-                                                         f"{sum(1 for x in mrows_ if x[4] > x[3])} higher")]):
-    x = 0.53 + i * (cw + 0.24)
-    rect(f.s, x, yy, cw, 1.12, G2, name=f"Mix card {i}")
-    textbox(f.s, x + 0.25, yy + 0.08, cw - 0.5, 0.3, [[(nm, {"size": 13, "bold": True}), (f"  {sub_}", {"size": 9.5, "color": G3})]])
-    textbox(f.s, x + 0.25, yy + 0.33, cw - 0.5, 0.5, [f"{v:+.2f}%"], size=26, bold=True, color=GREEN if v < 0 else RED)
-    textbox(f.s, x + 0.25, yy + 0.83, cw - 0.5, 0.25, [det], size=8.5, color=G3)
-y2 = f.section("Contribution of each line to the plant change", y=yy + 1.32, w=5.4, unit="(Unit: %)")
-rv_ = mrows_[::-1]                                   # bar charts draw the first category at the bottom
-mch = column_chart(f.s, 0.53, y2, 5.4, 3.3, [x[0] for x in rv_], [("Line Re-test", [round(x[5], 3) for x in rv_]),
-                   ("Line mix", [round(x[6], 3) for x in rv_])], [VIOLET, "BFBFBF"], fmt='+0.00;-0.00;0', bar=True, gap=40, overlap=-5,
-                   name="Mix contribution")
-f.section("Detail by line", x=6.17, y=yy + 1.32, w=6.6, unit="(Unit: %)")
-trows_ = [["Line", f"Share {mname(1)}", f"Share {mname(0)}", f"Re-test {mname(1)}", f"Re-test {mname(0)}", "Line Re-test effect", "Line mix effect"]]
-for n, s1, s0, r1, r0, re_, me_ in sorted(mrows_, key=lambda x: x[5] + x[6]):
-    sg = lambda v: f"{v:+.2f}" if abs(v) >= 0.005 else "0.00"
-    trows_.append([n, f"{s1:.1f}", f"{s0:.1f}", f"{r1:.2f}", f"{r0:.2f}", sg(re_), sg(me_)])
-trows_.append(["Total", "100", "100", f"{R1:.2f}", f"{R0:.2f}", f"{RE:+.2f}", f"{ME:+.2f}"])
-def mfmt(i, j, v):
-    o = {"bold": True} if j == 0 or i == len(trows_) - 1 else {}
-    if j >= 5 and v not in ("+0.00", "-0.00"): o["color"] = GREEN if v.startswith("-") else RED
-    if trows_[i][0] == FN: o["fill"] = LGREEN
-    if i == len(trows_) - 1: o["fill"] = LVIOLET
+vol = [(n, pm["retestAttempts"] * 100 / T1, m["retestAttempts"] * 100 / T0, rt(pm), rt(m)) for n, m, pm in mx]   # name, share prev, share cur, Re-test prev, cur
+vol.sort(key=lambda x: -x[4])
+R1, R0 = rt(prev), rt(cur)
+R_fix = sum(s1 * r0 for _, s1, _, _, r0 in vol) / 100          # this month's line Re-test with last month's volumes
+hi = max(vol, key=lambda x: x[4])
+low_more = [x for x in vol if x[4] < R0 and x[2] - x[1] >= 1.0]
+hi_less = [x for x in vol if x[4] > R0 and x[1] - x[2] >= 1.0]
+n_up = sum(1 for x in vol if x[4] > x[3])
+went = "fell" if R0 < R1 else "rose"
+f = Frame(MIX, f"Why Plant Re-test {went.capitalize()}: Production Volume by Line",
+          "Plant Re-test = all NG attempts / all test attempts, so a line that tests more weighs more")
+yy = f.section(f"Share of plant test attempts by line – {mname(1)} vs {mname(0)}", w=5.9, unit="(Unit: % of tests)")
+rv_ = vol[::-1]                                         # bar charts draw the first category at the bottom
+column_chart(f.s, 0.53, yy, 5.9, 4.95, [x[0] for x in rv_], [(mname(1), [round(x[1], 1) for x in rv_]), (mname(0), [round(x[2], 1) for x in rv_])],
+             ["BFBFBF", VIOLET], fmt='0.0', bar=True, gap=50, overlap=-10, lo=0, name="Test share by line")
+yk = f.section("Key points", x=6.73, w=6.04)
+pts = [[("Plant Re-test ", {}), (f"{R1:.2f}% → {R0:.2f}%", {"bold": True, "color": GREEN if R0 < R1 else RED}),
+        (f" although {n_up} of {len(vol)} lines rose.", {})],
+       [(f"{hi[0]} ", {"bold": True}), (f"has the highest Re-test ({hi[4]:.2f}%, {hi[3]:.2f}% in {mname(1)}), but its share of plant tests went "
+                                         f"{hi[1]:.1f}% → {hi[2]:.1f}%.", {})]]
+if hi_less[1:] or (hi_less and hi_less[0][0] != hi[0]):
+    pts.append([("Other lines above plant Re-test with fewer tests: ", {}),
+                (", ".join(f"{x[0]} {x[1]:.1f}→{x[2]:.1f}%" for x in hi_less if x[0] != hi[0]), {"bold": True})])
+if low_more:
+    pts.append([("Lines below plant Re-test with more tests: ", {}),
+                (", ".join(f"{x[0]} {x[1]:.1f}→{x[2]:.1f}%" for x in low_more), {"bold": True})])
+pts.append([(f"With the {mname(1)} volume per line, plant Re-test in {mname(0)} would be ", {}),
+            (f"{R_fix:.2f}%", {"bold": True, "color": RED if R_fix > R1 else GREEN}),
+            (f" ({R_fix - R1:+.2f}% vs {mname(1)}): the fall comes mainly from the volume change, not from better lines.", {})])
+textbox(f.s, 6.73, yk, 6.04, 1.75, [[("• " + r[0][0], r[0][1])] + r[1:] for r in pts], size=9, name="Key points")
+yt = f.section("Re-test and share of tests by line", x=6.73, y=yk + 1.85, w=6.04, unit="(Unit: %)")
+vrows = [["Line", f"Re-test {mname(1)}", f"Re-test {mname(0)}", f"Share {mname(1)}", f"Share {mname(0)}"]]
+for n, s1, s0, r1, r0 in vol:
+    vrows.append([n, f"{r1:.2f}", f"{r0:.2f}", f"{s1:.1f}", f"{s0:.1f}"])
+def vfmt(i, j, v):
+    o = {"bold": True} if j == 0 else {}
+    if i and j == 2: o["color"] = RED if vol[i - 1][4] > vol[i - 1][3] else GREEN
+    if i and j == 4 and abs(vol[i - 1][2] - vol[i - 1][1]) >= 1.0: o.update({"bold": True, "color": DARK})
+    if vrows[i][0] == FN: o["fill"] = LGREEN
     return o
-mrh = min(0.25, 3.0 / len(trows_))
-table(f.s, 6.17, y2, 6.6, trows_, [1.0, 0.85, 0.85, 0.95, 0.95, 1.0, 1.0], row_h=mrh, size=8, cell_fmt=mfmt, name="Mix detail")
-textbox(f.s, 6.17, y2 + mrh * len(trows_) + 0.04, 6.6, 0.4,
-        [f"* Share = line tests / all tests. Line Re-test effect = Re-test change × average share; line mix effect = share change × average Re-test. "
-         f"Both add up to the plant change. Red = pushes plant Re-test up, green = pulls it down."], size=7.5, color=G3)
+table(f.s, 6.73, yt, 6.04, vrows, [1.24, 1.2, 1.2, 1.2, 1.2], row_h=min(0.235, (7.0 - yt) / len(vrows)), size=8, cell_fmt=vfmt, name="Volume by line")
 
 # ---------- 6. Section divider ----------
 def section_slide(sl, lines_):
@@ -560,21 +552,81 @@ table(f.s, 8.13, yy, 4.64, prow, [0.3, 2.6, 0.7, 0.55], row_h=0.36, size=8, alig
 textbox(f.s, 8.13, yy + 0.36 * len(prow) + 0.06, 4.64, 0.2, [f"* Top 10 = {sum(p['pct'] for p in par[:10]):.1f}% of NG attempts."], size=8, color=G3)
 
 # ---------- 13. Action plan ----------
-f = Frame(S[38], "Action Plan", f"Follow-up from the {mname(0, False)} review")
-yy = f.section("Actions", unit="(To be completed by the owner)")
-items = [(f"{tops[0][0]['name']} · {tops[0][0]['lineName']}", f"Most NG attempts ({tops[0][1]['retestNgAttempts'] * 100 / tot_ng:.1f}% of plant), Re-test {pct(rt(tops[0][1]))}")]
-if par: items.append((par[0]["code"], f"Top error code, {par[0]['pct']:.1f}% of NG attempts"))
-for k, g in enumerate(MODELS):
-    b, a = q(f"line{FOCUS}_before_g{k}"), q(f"line{FOCUS}_after_g{k}")
-    if b and a: items.append((f"{FN} · {SHORT[g]}", f"Re-test {pct(rt(b))} → {pct(rt(a))}, RTY {pct(rty(b))} → {pct(rty(a))}"))
-arows = [["#", "Focus area", "Finding", "Action", "Owner", "Due date", "Status"]]
-for i in range(6):
-    a_, b_ = items[i] if i < len(items) else ("", "")
-    arows.append([str(i + 1), a_, b_, "", "", "", ""])
-table(f.s, 0.53, yy, 12.24, arows, [0.35, 2.0, 3.0, 3.9, 1.1, 1.0, 0.9], row_h=0.62, size=9, header_h=0.32,
-      aligns=[PP_ALIGN.CENTER, PP_ALIGN.LEFT, PP_ALIGN.LEFT, PP_ALIGN.LEFT, PP_ALIGN.CENTER, PP_ALIGN.CENTER, PP_ALIGN.CENTER],
-      cell_fmt=lambda i, j, v: {"bold": True} if j == 1 else None, name="Action plan")
-textbox(f.s, 0.53, yy + 0.32 + 0.62 * 6 + 0.06, 12.24, 0.2, ["* Focus areas are suggested from the data; actions, owners and due dates to be added by the team."], size=8, color=G3)
+f = Frame(S[38], "Action Plan", f"Follow-up from the {mname(0, False)} review · generated from the findings of this report")
+nxt = LAST + dt.timedelta(days=7 - LAST.weekday() + 4)          # Friday of next week
+def due(d): return f"{d:%d/%m} (W{d.isocalendar()[1]})"
+D_URG, D_REV = due(nxt), due(nxt + dt.timedelta(days=21))
+plan = []                                                        # (priority, category, issue, action, due)
+JIG = re.compile(r"(W\d+|\d\d/\d\d) rise to ([\d.]+)%: (Jig \d+(?: \(IP [\d.]+\))?) = (\d+)% of the NG \((\d+) NG / ([\d,]+) tests")
+seen_jig = set()
+for num_, x in enumerate(IMP, 1):
+    for n_ in x["notes"]:
+        mj = JIG.search(n_)
+        if mj and (x["line"], x["station"], mj.group(3)) not in seen_jig:
+            seen_jig.add((x["line"], x["station"], mj.group(3)))
+            plan.append((1, "Jig", f"#{num_} {x['line']} {x['station']}: {codes_short(x['code'])} back to {mj.group(2)}% in {mj.group(1)}; "
+                                   f"{mj.group(3)} = {mj.group(4)}% of the NG ({mj.group(5)} NG / {mj.group(6)} tests)",
+                         f"Check pins / RF contact of {mj.group(3).split(' (')[0]} (same fix as #{num_}: {x['action'][:60]}); compare with the other jigs; "
+                         f"stop the jig if NG stays > 3%", D_URG))
+rises, sides = [], []
+for n, m, pm in lines:
+    if not pm or rt(m) <= rt(pm): continue
+    rb_ = {p_["code"]: p_["count"] * 100 / pm["retestAttempts"] for p_ in D.get(f"pareto_m1_line{line_id[n]}", [])}
+    ra_ = {p_["code"]: p_["count"] * 100 / m["retestAttempts"] for p_ in D.get(f"pareto_m0_line{line_id[n]}", [])}
+    best = max(((ra_.get(c, 0) - rb_.get(c, 0), c) for c in set(rb_) | set(ra_)), default=(0, ""))
+    if best[0] < 0.2: continue
+    acted = [k for k, x in enumerate(IMP, 1) if x["line"] == n and best[1] in x["code"]]
+    if acted:
+        plan.append((3, "Monitor", f"{n}: Re-test {pct(rt(pm))} → {pct(rt(m))}; {best[1]} +{best[0]:.2f}% of tests",
+                     f"Action already taken (#{', #'.join(map(str, acted))}); confirm the code stays down for 4 weeks", D_REV))
+    else:
+        rises.append((best[0], 2, "Line Re-test", f"{n}: Re-test {pct(rt(pm))} → {pct(rt(m))}; main cause {best[1]} +{best[0]:.2f}% of tests",
+                     f"Find the station / jig with most {best[1]} NG, analyse NG logs and define a corrective action; add it to ImprovementList", D_URG))
+plan += [r[1:] for r in sorted(rises, reverse=True)[:3]]
+WATCH = re.compile(r"watch: (.+) rose \+([\d.]+)% at the same station")
+for num_, x in enumerate(IMP, 1):
+    for n_ in x["notes"]:
+        mw = WATCH.search(n_)
+        if mw and float(mw.group(2)) >= 0.5:
+            sides.append((float(mw.group(2)), 2, "Side effect", f"#{num_} {x['line']} {x['station']} ({SHORT.get(x['model'], x['model'])}): {mw.group(1)} rose +{mw.group(2)}% after the action",
+                         f"Check whether the action on {codes_short(x['code'])} caused it (same jig / pin?); define an action if it stays high", D_URG))
+plan += [r[1:] for r in sorted(sides, reverse=True)[:2]]
+early = [k for k, x in enumerate(IMP, 1) if "(early)" in x["verdict"] or (x["days_after"] or 0) < 14 and x["verdict"] != "Insufficient data"]
+if early:
+    plan.append((3, "Monitor", f"Improvements with < 14 days of data after the action: #{', #'.join(map(str, early))}",
+                 "Keep tracking weekly; confirm the verdict with ≥ 4 weeks of data at the next monthly review", D_REV))
+insuf = [(k, x) for k, x in enumerate(IMP, 1) if x["verdict"] == "Insufficient data"]
+if insuf:
+    lns = sorted({f"{x['line']} {x['station']}" for _, x in insuf})
+    plan.append((2, "Data", f"Cannot verify #{', #'.join(str(k) for k, _ in insuf)} ({', '.join(lns)}): too few test logs after the action",
+                 "Restore the test-log upload of these stations to PMSystem2, then re-run the verification", D_URG))
+st_by_id = {int(k): v for k, v in st_meta.items()} if isinstance(next(iter(st_meta), 0), str) else st_meta
+for sid_, v in sorted(D.get("excl_m0_st", {}).items(), key=lambda kv: -kv[1]):
+    mt, m = st_by_id.get(int(sid_)), q(f"m0_st{sid_}")
+    if not mt or not m or v * 100 < m["retestAttempts"] * 1.0: continue
+    plan.append((2, "Data", f"{mt['lineName']} {mt['name']} ({mt['modelGroupName']}): {num(v)} NG ({v * 100 / m['retestAttempts']:.1f}% of tests) "
+                            f"without an error in the log (UNKNOWN)", "Send sample logs to update the log reader so the real error code is recorded", D_URG))
+if not plan:
+    plan.append((3, "Monitor", "No open finding from the data", "Keep the current controls", D_REV))
+plan.sort(key=lambda x: x[0])
+plan = plan[:12]
+yy = f.section("Actions", unit="(PIC to be assigned in the meeting)")
+PRI = {1: ("High", RED), 2: ("Medium", "F4B183"), 3: ("Low", "FFEB9C")}
+arows = [["#", "Priority", "Category", "Issue (from data)", "Action", "PIC", "Due date", "Status"]]
+for i, (pr, cat, iss, act, dd_) in enumerate(plan, 1):
+    arows.append([str(i), PRI[pr][0], cat, iss, act, "", dd_, "Open"])
+def afmt(i, j, v):
+    if i == 0: return None
+    o = {}
+    if j == 1: o.update({"fill": PRI[plan[i - 1][0]][1], "bold": True, "color": WHITE if plan[i - 1][0] == 1 else BLACK})
+    if j == 2: o["bold"] = True
+    if j in (3, 4): o["align"] = PP_ALIGN.LEFT
+    return o
+arh = min(0.5, (6.85 - yy - 0.3) / len(plan))
+table(f.s, 0.53, yy, 12.24, arows, [0.3, 0.7, 0.95, 4.2, 4.04, 0.65, 0.85, 0.55], row_h=arh, size=8, header_h=0.3, cell_fmt=afmt, name="Action plan")
+textbox(f.s, 0.53, yy + 0.3 + arh * len(plan) + 0.05, 12.24, 0.2,
+        [f"* Generated from this report: jig rises after an action, lines with higher Re-test vs {mname(1)}, side effects, early verdicts, missing logs and NG without an error code. "
+         f"High = due next week."], size=7.5, color=G3)
 
 # ---------- 14. End ----------
 strip_annotations(S[39])
