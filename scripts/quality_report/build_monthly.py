@@ -5,9 +5,12 @@ from pptlib import *
 HERE = os.path.dirname(os.path.abspath(__file__))
 D = json.load(open(os.environ["DATA_M"], encoding="utf-8"))
 OUT = sys.argv[1]
-META = D["meta"]; MODELS = D["models"]; SHORT = {"BMW Wave High": "Wave High", "BMW ICON25": "ICON25"}
+META = D["meta"]; MODELS = D["models"]
 RM = dt.datetime.fromisoformat(META["report_month"]); RE = dt.datetime.fromisoformat(META["report_end"])
-BEF = [dt.datetime.fromisoformat(x) for x in META["before"]]; AFT = [dt.datetime.fromisoformat(x) for x in META["after"]]
+MI = D["model_info"]                                         # per model: before / after periods
+for m_ in MI:
+    m_["B"] = [dt.datetime.fromisoformat(x) for x in m_["before"]]; m_["A"] = [dt.datetime.fromisoformat(x) for x in m_["after"]]
+SHORT = {m_["name"]: m_["short"] for m_ in MI}
 FOCUS, CONTROL = META["focus"], META["control"]
 LN = {l["id"]: l["name"] for l in D["lines"]}; FN, CN = LN[FOCUS], LN[CONTROL]
 LAST = RE - dt.timedelta(days=1); MTD = LAST.month == RM.month and RE.day != 1
@@ -26,7 +29,9 @@ def mname(i, short=True):
     return mstart(i).strftime("%b" if short else "%B %Y") + ("*" if i == 0 and MTD and short else "")
 def d2(d): return d.strftime("%d %b")
 MONTH_TITLE = mname(0, False) + (f" (MTD 01–{LAST.strftime('%d %b')})" if MTD else "")
-BEF_TXT = f"{d2(BEF[0])} – {d2(BEF[1] - dt.timedelta(days=1))}"; AFT_TXT = f"{d2(AFT[0])} – {d2(AFT[1] - dt.timedelta(days=1))}"
+def rng(p): return f"{d2(p[0])} – {d2(p[1] - dt.timedelta(days=1))}"
+def ptxt(m_): return f"before {rng(m_['B'])} · after {rng(m_['A'])}"
+STARTS = " · ".join(f"{m_['short']} from {d2(m_['A'][0])}" for m_ in MI)
 def chg(a, b): return (b - a) * 100 / a if a else 0
 def signed(v, unit="%p"): return f"{v:+.2f}{unit}"
 def dcol(v, higher_better=False):
@@ -50,8 +55,10 @@ for r in range(len(gt.rows)):
         for extra in runs[1:]: extra._r.getparent().remove(extra._r)
 
 # ---------- 2. Contents ----------
-TOC = [("Monthly KPI Summary", "3"), (f"{FN} Improvement Review", "6"), ("Key Positive Changes", "11"),
-       ("Remaining Issues", "12"), ("Action Plan", "13")]
+_imp = D.get("improvements") or []
+_ntp = min(6, (len(_imp) + 3) // 4)
+TOC = [("Monthly KPI Summary", "3"), (f"{FN} Improvement Review", "6"), ("Improvement Verification", "11"),
+       ("Key Positive Changes", str(13 + _ntp)), ("Remaining Issues", str(14 + _ntp)), ("Action Plan", str(15 + _ntp))]
 t = S[1]; strip_annotations(t); rows = {}
 for sh in list(t.shapes):
     if sh.has_text_frame and sh.name == "Content Placeholder 2": rows.setdefault(round(sh.top / 914400 / 0.555), []).append(sh)
@@ -144,10 +151,10 @@ set_runs(by_name(sd, "Title 1"), ["02"])
 for sh in sd.shapes:
     if sh.name == "Content Placeholder 2" and sh.has_text_frame:
         if sh.top / 914400 < 1: set_runs(sh, [FN, "Improvement Review"])
-        else: set_runs(sh, ["BMW Wave High · BMW ICON25", f"Before {BEF_TXT} · After {AFT_TXT}"]); sh.width = Inches(4.0)
+        else: set_runs(sh, [f"{m_['name']}: improvement from {d2(m_['A'][0])}" for m_ in MI]); sh.width = Inches(4.0)
 
 # ---------- 7. Before vs after by model ----------
-f = Frame(S[6], f"{FN}: Before vs After by Model", f"Before {BEF_TXT} · After {AFT_TXT} · control line {CN} (same models)")
+f = Frame(S[6], f"{FN}: Before vs After by Model", f"Improvement start: {STARTS} · control line {CN} (same models)")
 yy = f.section(f"{FN} key indicators by model", unit="(Unit: %)")
 cw2 = (12.24 - 0.24) / 2
 net = {}
@@ -158,14 +165,15 @@ for k, g in enumerate(MODELS):
     rect(f.s, x, yy, cw2, 1.85, G2, name=f"Model card {SHORT[g]}")
     textbox(f.s, x + 0.25, yy + 0.15, cw2 - 0.5, 0.3, [[(g, {"size": 14, "bold": True}),
             (f"  {num(b['retestAttempts'])} → {num(a['retestAttempts'])} tests" if b and a else "  no data", {"size": 9, "color": G3})]])
+    textbox(f.s, x + 0.25, yy + 0.4, cw2 - 0.5, 0.2, [ptxt(MI[k])], size=8.5, color=G3)
     if not (b and a): continue
     for j, (nm, fn, hb, col) in enumerate((("Re-test", rt, False, VIOLET), ("NTF", ntf, False, DARK), ("RTY", rty, True, GREEN))):
         xx = x + 0.25 + j * (cw2 - 0.5) / 3
-        textbox(f.s, xx, yy + 0.5, 1.8, 0.22, [nm], size=10, color=G3)
-        textbox(f.s, xx, yy + 0.74, 1.85, 0.4, [[(f"{fn(b):.2f} → ", {"size": 13, "color": G3, "bold": True}), (f"{fn(a):.2f}%", {"size": 17, "color": col, "bold": True})]])
+        textbox(f.s, xx, yy + 0.62, 1.8, 0.22, [nm], size=10, color=G3)
+        textbox(f.s, xx, yy + 0.84, 1.85, 0.4, [[(f"{fn(b):.2f} → ", {"size": 13, "color": G3, "bold": True}), (f"{fn(a):.2f}%", {"size": 17, "color": col, "bold": True})]])
         d_ = fn(a) - fn(b)
-        textbox(f.s, xx, yy + 1.17, 1.8, 0.22, [signed(d_)], size=11, color=dcol(d_, hb), bold=True)
-        if cb and ca: textbox(f.s, xx, yy + 1.43, 1.85, 0.22, [f"{CN}: {fn(cb):.2f} → {fn(ca):.2f}"], size=8.5, color=G3)
+        textbox(f.s, xx, yy + 1.24, 1.8, 0.22, [signed(d_)], size=11, color=dcol(d_, hb), bold=True)
+        if cb and ca: textbox(f.s, xx, yy + 1.5, 1.85, 0.22, [f"{CN}: {fn(cb):.2f} → {fn(ca):.2f}"], size=8.5, color=G3)
     if cb and ca:
         net[g] = ((rt(a) - rt(b)) - (rt(ca) - rt(cb)), (ntf(a) - ntf(b)) - (ntf(ca) - ntf(cb)), (rty(a) - rty(b)) - (rty(ca) - rty(cb)))
 y2 = f.section(f"Improvement effect vs control line {CN}", y=yy + 2.1)
@@ -188,11 +196,13 @@ def efmt(i, j, v):
     return o
 table(f.s, 0.53, y2, 12.24, erows, [1.0, 1.5, 0.9, 0.9, 1.0, 0.85, 0.85, 1.0, 0.85, 0.85, 1.0], row_h=0.29, size=8.5, cell_fmt=efmt, name="Before-after by model")
 textbox(f.s, 0.53, y2 + 0.29 * len(erows) + 0.06, 12.24, 0.4,
-        [f"* B = before, A = after. Net effect = change on {FN} minus change on {CN} for the same model (removes shared month-to-month effects). Line RTY = passed all {FN} stations first time."], size=8, color=G3)
+        [f"* B = before, A = after (periods per model, see cards). Net effect = change on {FN} minus change on {CN} for the same model (removes shared month-to-month effects). Line RTY = passed all {FN} stations first time."], size=8, color=G3)
 
 # ---------- 8. Weekly trend by model ----------
-f = Frame(S[7], f"{FN}: Weekly Trend by Model", f"Re-test by ISO week · improvement period from {d2(AFT[0])} (W{AFT[0].isocalendar()[1]})")
-aft_week = AFT[0].isocalendar()[1]
+f = Frame(S[7], f"{FN}: Weekly Trend by Model", f"Re-test by ISO week · improvement start: {STARTS}")
+def is_after(w, k):
+    monday = dt.date.fromisocalendar(MI[k]["A"][0].year, w, 1)
+    return monday + dt.timedelta(days=3) >= MI[k]["A"][0].date()
 wks = sorted({int(k[2:].split("_")[0]) for k in D if k.startswith("wk") and f"_line{FOCUS}_g" in k})
 series = {}
 for k, g in enumerate(MODELS):
@@ -209,15 +219,20 @@ for k, g in enumerate(MODELS):
     wrows.append([f"{SHORT[g]} Re-test %"] + [f"{v:.1f}" if v else "–" for v in series[g]])
     wrows.append([f"{SHORT[g]} tests"] + [f"{q(f'wk{w}_line{FOCUS}_g{k}')['retestAttempts'] / 1000:.1f}k" if q(f"wk{w}_line{FOCUS}_g{k}") else "–" for w in wks])
 table(f.s, 0.53, y2, 12.24, wrows, [2.0] + [1] * len(wks), row_h=0.27, size=7.5,
-      cell_fmt=lambda i, j, v: ({"bold": True} if j == 0 else {}) | ({"fill": LGREEN} if j > 0 and wks[j - 1] >= aft_week else {}), name="Weekly figures by model")
+      cell_fmt=lambda i, j, v: ({"bold": True} if j == 0 else {}) | ({"fill": LGREEN} if i > 0 and j > 0 and is_after(wks[j - 1], (i - 1) // 2) else {}), name="Weekly figures by model")
 avg = []
-for g in MODELS:
-    pre = [v for w, v in zip(wks, series[g]) if w < aft_week and v]; post = [v for w, v in zip(wks, series[g]) if w >= aft_week and v]
-    if pre and post: avg.append(f"{SHORT[g]} {sum(pre) / len(pre):.1f}% → {sum(post) / len(post):.1f}%")
-textbox(f.s, 0.53, y2 + 0.27 * len(wrows) + 0.06, 12.24, 0.2, [f"* Green = improvement period. Average weekly Re-test on {FN}: " + "; ".join(avg) + f". W{wks[-1]} may be partial."], size=8, color=G3)
+for k, g in enumerate(MODELS):
+    ms_ = [(is_after(w, k), q(f"wk{w}_line{FOCUS}_g{k}")) for w in wks if q(f"wk{w}_line{FOCUS}_g{k}")]
+    def wavg(flag):
+        sel = [m for a_, m in ms_ if a_ == flag]
+        t_ = sum(m["retestAttempts"] for m in sel)
+        return sum(m["retestNgAttempts"] for m in sel) * 100 / t_ if t_ else None
+    pre, post = wavg(False), wavg(True)
+    if pre is not None and post is not None: avg.append(f"{SHORT[g]} {pre:.1f}% → {post:.1f}%")
+textbox(f.s, 0.53, y2 + 0.27 * len(wrows) + 0.06, 12.24, 0.2, [f"* Green = improvement period (weeks with most days after the start). Re-test on {FN} before → after (NG / tests): " + "; ".join(avg) + f". W{wks[-1]} may be partial."], size=8, color=G3)
 
 # ---------- 9. By station & model ----------
-f = Frame(S[8], f"{FN}: Results by Station and Model", f"Before {BEF_TXT} vs After {AFT_TXT}")
+f = Frame(S[8], f"{FN}: Results by Station and Model", " · ".join(f"{m_['short']}: {ptxt(m_)}" for m_ in MI))
 srow = []
 for sid, meta in st_meta.items():
     if meta["lineId"] != FOCUS: continue
@@ -243,28 +258,116 @@ column_chart(f.s, 0.53, y4, 12.24, 6.85 - y4, [f"{n} · {SHORT[g]}" for n, g, _,
              name="Station re-test before after")
 
 # ---------- 10. Error codes by model ----------
-f = Frame(S[9], f"{FN}: Error Codes by Model", "NG per 1,000 test attempts (normalised for volume) · before vs after")
+f = Frame(S[9], f"{FN}: Error Codes by Model", "Error-code rate in % of test attempts (normalised for volume) · before vs after")
 code_gain = {}
 for k, g in enumerate(MODELS):
     b, a = q(f"line{FOCUS}_before_g{k}"), q(f"line{FOCUS}_after_g{k}")
     x = 0.53 + k * (5.84 + 0.56)
-    yy = f.section(f"{g}", x=x, w=5.84, unit="(Unit: NG / 1k tests)")
+    yy = f.section(f"{g}", x=x, w=5.84, unit="(Unit: % of tests)")
     if not (b and a): continue
-    rb = {p["code"]: p["count"] * 1000 / b["retestAttempts"] for p in D.get(f"pareto_line{FOCUS}_before_g{k}", [])}
-    ra = {p["code"]: p["count"] * 1000 / a["retestAttempts"] for p in D.get(f"pareto_line{FOCUS}_after_g{k}", [])}
+    rb = {p["code"]: p["count"] * 100 / b["retestAttempts"] for p in D.get(f"pareto_line{FOCUS}_before_g{k}", [])}
+    ra = {p["code"]: p["count"] * 100 / a["retestAttempts"] for p in D.get(f"pareto_line{FOCUS}_after_g{k}", [])}
     codes = sorted(set(list(rb)[:8]) | set(list(ra)[:4]), key=lambda c_: -max(rb.get(c_, 0), ra.get(c_, 0)))[:11]
     rows_ = [["Error code", "Before", "After", "Δ", "Change"]]
     for c_ in codes:
         bb, aa = rb.get(c_, 0), ra.get(c_, 0)
-        rows_.append([c_, f"{bb:.2f}", f"{aa:.2f}", f"{aa - bb:+.2f}", f"{chg(bb, aa):+.0f}%" if bb else "new"])
+        rows_.append([c_, f"{bb:.2f}%", f"{aa:.2f}%", f"{aa - bb:+.2f}%p", f"{chg(bb, aa):+.0f}%" if bb else "new"])
         code_gain[(g, c_)] = (bb, aa)
     table(f.s, x, yy, 5.84, rows_, [2.75, 0.75, 0.75, 0.75, 0.8], row_h=0.36, size=8,
           cell_fmt=lambda i, j, v: {"bold": True, "align": PP_ALIGN.LEFT} if j == 0 else ({"color": GREEN if v.startswith("-") else RED} if j in (3, 4) else None),
           name=f"Error codes {SHORT[g]}")
     textbox(f.s, x, yy + 0.36 * len(rows_) + 0.06, 5.84, 0.2, [f"* Tests: before {num(b['retestAttempts'])}, after {num(a['retestAttempts'])}."], size=8, color=G3)
 
-# ---------- 11. Key positive changes ----------
-f = Frame(S[10], "Key Positive Changes", f"{MONTH_TITLE} · {FN} improvement period {AFT_TXT}")
+
+# ---------- 11. Improvement verification (section, summary, trend pages) ----------
+IMP = D.get("improvements") or []
+VCOL = {"Effective": GREEN, "Worse": RED, "Small improvement": GREEN, "Improving (not significant)": "BF8F00",
+        "No clear effect": G3, "Insufficient data": G3, "Code not seen": G3, "No baseline": G3, "No error code": G3}
+VFILL = {"Effective": "C6EFCE", "Worse": "FFC7CE", "Small improvement": "E2EFDA", "Improving (not significant)": "FFEB9C"}
+sd2 = S[10]; strip_annotations(sd2)
+set_runs(by_name(sd2, "Title 1"), ["03"])
+n_eff = sum(1 for x in IMP if x["verdict"] == "Effective")
+for sh in sd2.shapes:
+    if sh.name == "Content Placeholder 2" and sh.has_text_frame:
+        if sh.top / 914400 < 1: set_runs(sh, ["Improvement", "Verification"])
+        else: set_runs(sh, [f"{len(IMP)} improvements · {n_eff} effective", "Before vs after with trends"]); sh.width = Inches(4.0)
+def pc(v, d=2): return "–" if v is None else f"{v:.{d}f}%"
+def dd(s): return dt.date.fromisoformat(s).strftime("%d/%m")
+f = Frame(S[11], "Improvement Verification", f"{len(IMP)} improvements from ImprovementList.xlsx · error-code rate before vs after")
+yy = f.section("Summary", unit="(Unit: % of test attempts)")
+rows = [["#", "Line", "Station", "Model", "Error code", "Action", "Date", "Code B", "Code A", "Change", "Re-test B → A", "Verdict"]]
+for i, x in enumerate(IMP, 1):
+    rows.append([str(i), x["line"], x["station"], x["model"].replace("BMW ", ""), (x["code"] or "–") + (" *" if x.get("auto_code") else ""),
+                 (x["action"][:58] + "…") if len(x["action"]) > 59 else (x["action"] or "–"), dd(x["date"]),
+                 pc(x["rate_before"]), pc(x["rate_after"]), "–" if x["change_pct"] is None else f"{x['change_pct']:+.0f}%",
+                 f"{pc(x['retest_before'], 1)} → {pc(x['retest_after'], 1)}", x["verdict"]])
+def ifmt2(i, j, v):
+    x = IMP[i - 1]
+    if j in (4, 5): return {"align": PP_ALIGN.LEFT}
+    if j == 9 and v != "–": return {"bold": True, "color": GREEN if v.startswith("-") else RED}
+    if j == 11: return {"bold": True, "color": VCOL.get(x["verdict"], DARK), "fill": VFILL.get(x["verdict"])}
+rh_ = min(0.34, 4.75 / max(len(rows), 1))
+if IMP:
+    table(f.s, 0.53, yy, 12.24, rows, [0.3, 0.75, 0.8, 1.3, 2.0, 3.0, 0.55, 0.65, 0.65, 0.65, 1.1, 1.3], row_h=rh_, size=7.5,
+          cell_fmt=ifmt2, name="Improvement summary")
+    textbox(f.s, 0.53, yy + rh_ * len(rows) + 0.06, 12.24, 0.4,
+            ["* Code B/A = NG attempts with that error code / test attempts at the line + station + model, 28 days before vs up to 28 days after "
+             "(action day excluded). Effective = −30% or more and p < 0.05. * = error code detected from the data (not given in the list)."], size=8, color=G3)
+else:
+    textbox(f.s, 0.53, yy + 0.2, 12.24, 0.4, ["Reports/ImprovementList.xlsx not found or empty."], size=12, color=G3)
+
+PER_PAGE = 4
+pages = [IMP[i:i + PER_PAGE] for i in range(0, len(IMP), PER_PAGE)]
+TREND_SLIDES = S[12:18]
+pages = pages[:len(TREND_SLIDES)]
+cwx, chy = (12.24 - 0.3) / 2, 2.45
+for pn, (sl, page) in enumerate(zip(TREND_SLIDES, pages)):
+    first = pn * PER_PAGE + 1
+    f = Frame(sl, "Improvement Trends", f"Improvements {first}–{first + len(page) - 1} of {len(IMP)} · error-code rate by week (by day when < 14 days after) · grey = before, green = after")
+    f.section("Trend before vs after", unit="(Unit: % of test attempts)")
+    for k, x in enumerate(page):
+        cx, cy = 0.53 + (k % 2) * (cwx + 0.3), 1.85 + (k // 2) * (chy + 0.08)
+        rect(f.s, cx, cy, cwx, chy, G2, name=f"Improvement {first + k}")
+        textbox(f.s, cx + 0.15, cy + 0.08, cwx - 0.3, 0.22, [[(f"#{first + k}  {x['line']} · {x['station']} · {x['model']}", {"bold": True, "size": 10}),
+                (f"   {dd(x['date'])}", {"size": 9, "color": G3})]])
+        act = x["action"] or "(no action text)"
+        textbox(f.s, cx + 0.15, cy + 0.32, cwx - 0.3, 0.2,
+                [f"{x['code'] or '–'}{' (detected)' if x.get('auto_code') else ''} · {act[:80] + '…' if len(act) > 81 else act}"], size=8, color=DARK)
+        pts = [p for p in x["trend"] if p[1] is not None]
+        if pts:
+            cd = CategoryChartData(); cd.categories = [p[0] for p in pts]
+            cd.add_series("Code rate %", [round(p[1], 3) for p in pts])
+            gf = f.s.shapes.add_chart(XL_CHART_TYPE.COLUMN_CLUSTERED, Inches(cx + 0.1), Inches(cy + 0.55), Inches(cwx - 0.2), Inches(1.5), cd)
+            gf.name = f"Trend {first + k}"
+            ch = gf.chart; chart_text(ch, 7); ch.has_legend = False
+            plot = ch.plots[0]; plot.gap_width = 40
+            ser = plot.series[0]
+            for i_, p in enumerate(pts):
+                pt = ser.points[i_]; pt.format.fill.solid(); pt.format.fill.fore_color.rgb = rgb(GREEN if p[2] else "BFBFBF")
+            labels(ser, '0.00', XL_LABEL_POSITION.OUTSIDE_END, size=6.5)
+            axis_quiet(ch.value_axis, True, '0.0', 0, None); axis_quiet(ch.category_axis, False)
+            ch.value_axis.tick_labels.font.size = Pt(7); ch.category_axis.tick_labels.font.size = Pt(7)
+        line_ = [(f"Code {pc(x['rate_before'])} → {pc(x['rate_after'])}", {"bold": True})]
+        if x["change_pct"] is not None: line_.append((f" ({x['change_pct']:+.0f}%)", {"bold": True, "color": GREEN if x["change_pct"] < 0 else RED}))
+        line_ += [(f" · Re-test {pc(x['retest_before'], 1)} → {pc(x['retest_after'], 1)} · ", {"color": G3}),
+                  (x["verdict"], {"bold": True, "color": VCOL.get(x["verdict"], DARK)})]
+        textbox(f.s, cx + 0.15, cy + 2.07, cwx - 0.3, 0.2, [line_], size=8.5)
+        if x["notes"]:
+            textbox(f.s, cx + 0.15, cy + 2.25, cwx - 0.3, 0.18, ["Note: " + "; ".join(x["notes"])[:120]], size=7, color=G3)
+# remove the trend pages that are not needed
+def drop_slide(slide):
+    sldIdLst = prs.slides._sldIdLst
+    for sldId in list(sldIdLst):
+        if prs.part.related_part(sldId.rId) is slide.part:
+            for el in prs.part._element.iter("{http://schemas.microsoft.com/office/powerpoint/2010/main}sldId"):
+                if el.get("id") == str(sldId.id): el.getparent().remove(el)
+            prs.part.drop_rel(sldId.rId); sldIdLst.remove(sldId); return
+for sl in TREND_SLIDES[len(pages):]:
+    drop_slide(sl)
+N_TREND = len(pages)
+
+# ---------- 12. Key positive changes ----------
+f = Frame(S[18], "Key Positive Changes", f"{MONTH_TITLE} · {FN} improvement start: {STARTS}")
 yy = f.section("Highlights backed by PMSystem2 data (only changes that improved)")
 cand = []
 for k, g in enumerate(MODELS):
@@ -278,12 +381,16 @@ for k, g in enumerate(MODELS):
 for n, g, b, a in srow:
     cand.append((abs(rt(a) - rt(b)), signed(rt(a) - rt(b)), f"{n} · {SHORT[g]} ({FN})", f"Re-test {pct(rt(b))} → {pct(rt(a))}; NTF {pct(ntf(b))} → {pct(ntf(a))}.", rt(a) < rt(b), "Station"))
 for (g, c_), (bb, aa) in code_gain.items():
-    if bb >= 1: cand.append((abs(chg(bb, aa)) / 20, f"{chg(bb, aa):+.0f}%", f"{c_[:28]} · {SHORT[g]}", f"{bb:.1f} → {aa:.1f} NG per 1k tests on {FN}.", aa < bb * 0.85, "Error code"))
+    if bb >= 0.1: cand.append((abs(chg(bb, aa)) / 20, f"{chg(bb, aa):+.0f}%", f"{c_[:28]} · {SHORT[g]}", f"{bb:.2f}% → {aa:.2f}% of tests on {FN}.", aa < bb * 0.85, "Error code"))
 cand.append((abs(rt(cur) - rt(prev)) * 2, signed(rt(cur) - rt(prev)), "Plant Re-test", f"{mname(1)} {pct(rt(prev))} → {mname(0)} {pct(rt(cur))}; NTF {pct(ntf(prev))} → {pct(ntf(cur))}.", rt(cur) < rt(prev), "plant"))
 cand.append((abs(rty(cur) - rty(prev)) * 2, signed(rty(cur) - rty(prev)), "Plant RTY", f"{mname(1)} {pct(rty(prev))} → {mname(0)} {pct(rty(cur))}.", rty(cur) > rty(prev), "plant"))
 cand.append((improved / max(len(lines), 1), f"{improved}/{len(lines)}", "Lines with lower Re-test", f"Lines that reduced Re-test in {mname(0)} vs {mname(1)}.", improved * 2 > len(lines), "plant"))
-good, caps = [], {"line": 2, "Station": 1, "Error code": 1, "plant": 2}
+good, caps, line_models = [], {"line": 2, "Station": 1, "Error code": 1, "plant": 2}, set()
 for c_ in sorted([c_ for c_ in cand if c_[4]], key=lambda c_: -c_[0]):
+    if c_[5] == "line":
+        mdl = next((g for g in MODELS if f" {SHORT[g]} " in c_[2]), None)
+        if mdl in line_models: continue          # best line-level change of each model
+        line_models.add(mdl)
     if caps[c_[5]] > 0: caps[c_[5]] -= 1; good.append(c_)
 good = sorted(good, key=lambda c_: ["line", "Station", "Error code", "plant"].index(c_[5]))[:6]
 gw, gh = (12.24 - 2 * 0.24) / 3, 2.15
@@ -297,7 +404,7 @@ for i, (_, big, head, detail, _, _) in enumerate(good):
 print("positive changes:", [g[2] for g in good])
 
 # ---------- 12. Remaining issues ----------
-f = Frame(S[11], "Remaining Issues", f"{MONTH_TITLE} · plant-wide")
+f = Frame(S[19], "Remaining Issues", f"{MONTH_TITLE} · plant-wide")
 tops = sorted([(st_meta.get(int(k[5:])), q(k)) for k in D if k.startswith("m0_st") and q(k)], key=lambda x: -x[1]["retestNgAttempts"])[:10]
 tot_ng = cur["retestNgAttempts"]
 yy = f.section("Top 10 stations by NG attempts", w=7.3, unit="(Unit: attempts, %)")
@@ -321,7 +428,7 @@ table(f.s, 8.13, yy, 4.64, prow, [0.3, 2.6, 0.7, 0.55], row_h=0.36, size=8, alig
 textbox(f.s, 8.13, yy + 0.36 * len(prow) + 0.06, 4.64, 0.2, [f"* Top 10 = {sum(p['pct'] for p in par[:10]):.1f}% of NG attempts."], size=8, color=G3)
 
 # ---------- 13. Action plan ----------
-f = Frame(S[12], "Action Plan", f"Follow-up from the {mname(0, False)} review")
+f = Frame(S[20], "Action Plan", f"Follow-up from the {mname(0, False)} review")
 yy = f.section("Actions", unit="(To be completed by the owner)")
 items = [(f"{tops[0][0]['name']} · {tops[0][0]['lineName']}", f"Most NG attempts ({tops[0][1]['retestNgAttempts'] * 100 / tot_ng:.1f}% of plant), Re-test {pct(rt(tops[0][1]))}")]
 if par: items.append((par[0]["code"], f"Top error code, {par[0]['pct']:.1f}% of NG attempts"))
@@ -338,8 +445,8 @@ table(f.s, 0.53, yy, 12.24, arows, [0.35, 2.0, 3.0, 3.9, 1.1, 1.0, 0.9], row_h=0
 textbox(f.s, 0.53, yy + 0.32 + 0.62 * 6 + 0.06, 12.24, 0.2, ["* Focus areas are suggested from the data; actions, owners and due dates to be added by the team."], size=8, color=G3)
 
 # ---------- 14. End ----------
-strip_annotations(S[13])
-for idx, sl in enumerate(S, 1):
+strip_annotations(S[21])
+for idx, sl in enumerate(list(prs.slides), 1):
     for sh in sl.shapes:
         if sh.name.startswith("슬라이드 번호") and sh.has_text_frame and not sh._element.findall(".//" + qn("a:fld")) and sh.text_frame.paragraphs[0].runs:
             set_runs(sh, [str(idx)])

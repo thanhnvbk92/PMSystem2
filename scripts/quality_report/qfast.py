@@ -41,10 +41,11 @@ def collect(month: str, cfg: dict):
     RE = min(nxt, today)                                   # exclusive; today is still running
     if RE <= RM: raise SystemExit(f"No complete day in {month} yet.")
     FOCUS, CONTROL = cfg["focus_line_id"], cfg["control_line_id"]
-    GROUPS = cfg["model_groups"]
-    BEFORE = (dt.date.fromisoformat(cfg["baseline_start"]), dt.date.fromisoformat(cfg["improvement_start"]))
-    AFTER = (BEFORE[1], RE)
-    WIN = (min(month_start(RM, cfg["trend_months"] - 1), BEFORE[0]), RE)
+    GROUPS = [g["name"] for g in cfg["model_groups"]]
+    # Each model group has its own improvement start: before = [baseline_start, improvement_start), after = [improvement_start, RE)
+    PERIODS = [((dt.date.fromisoformat(g["baseline_start"]), dt.date.fromisoformat(g["improvement_start"])),
+                (dt.date.fromisoformat(g["improvement_start"]), RE)) for g in cfg["model_groups"]]
+    WIN = (min([month_start(RM, cfg["trend_months"] - 1)] + [p[0][0] for p in PERIODS]), RE)
     conn = connect(); cur = conn.cursor()
 
     cur.execute("SELECT id, name FROM models")
@@ -153,10 +154,12 @@ def collect(month: str, cfg: dict):
         return [{"code": c, "count": n, "pct": round(n * 100.0 / s, 2)} for c, n in sorted(tot.items(), key=lambda kv: -kv[1])[:top]]
 
     def mrange(i): return month_start(RM, i), (RE if i == 0 else month_start(RM, i - 1))
+    iso = lambda x: dt.datetime.combine(x, dt.time()).isoformat()
     out = {"lines": lines, "stations": stations, "models": GROUPS,
+           "model_info": [{"name": g["name"], "short": g.get("short", g["name"]),
+                           "before": [iso(PERIODS[k][0][0]), iso(PERIODS[k][0][1])],
+                           "after": [iso(PERIODS[k][1][0]), iso(PERIODS[k][1][1])]} for k, g in enumerate(cfg["model_groups"])],
            "meta": {"report_month": dt.datetime.combine(RM, dt.time()).isoformat(), "report_end": dt.datetime.combine(RE, dt.time()).isoformat(),
-                    "before": [dt.datetime.combine(x, dt.time()).isoformat() for x in BEFORE],
-                    "after": [dt.datetime.combine(x, dt.time()).isoformat() for x in AFTER],
                     "focus": FOCUS, "control": CONTROL, "generated_at": dt.datetime.now().isoformat(timespec="seconds"),
                     "source": "rollup + summaries (first-test cohorts)"}}
     for i in range(cfg["trend_months"]):
@@ -175,15 +178,13 @@ def collect(month: str, cfg: dict):
         for lid in (FOCUS, CONTROL):
             for k, g in enumerate(GROUPS): out[f"wk{n}_line{lid}_g{k}"] = qm(w, e, line=lid, model=g)
         w += dt.timedelta(days=7)
-    for tag, (a, b) in (("before", BEFORE), ("after", AFTER)):
-        for lid in (FOCUS, CONTROL):
-            out[f"line{lid}_{tag}"] = qm(a, b, line=lid)
-            for k, g in enumerate(GROUPS):
+    for k, g in enumerate(GROUPS):
+        for tag, (a, b) in zip(("before", "after"), PERIODS[k]):
+            for lid in (FOCUS, CONTROL):
                 out[f"line{lid}_{tag}_g{k}"] = qm(a, b, line=lid, model=g)
                 out[f"pareto_line{lid}_{tag}_g{k}"] = pareto(a, b, line=lid, model=g)
-        for s in stations:
-            if s["lineId"] in (FOCUS, CONTROL):
-                for k, g in enumerate(GROUPS): out[f"st{s['id']}_{tag}_g{k}"] = qm(a, b, station=s["id"], model=g)
+            for s in stations:
+                if s["lineId"] in (FOCUS, CONTROL): out[f"st{s['id']}_{tag}_g{k}"] = qm(a, b, station=s["id"], model=g)
     for i in (0, 1):
         a, b = mrange(i); out[f"pareto_m{i}"] = pareto(a, b, top=20)
     a, b = mrange(0)
