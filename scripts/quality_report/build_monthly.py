@@ -33,7 +33,7 @@ def rng(p): return f"{d2(p[0])} – {d2(p[1] - dt.timedelta(days=1))}"
 def ptxt(m_): return f"before {rng(m_['B'])} · after {rng(m_['A'])}"
 STARTS = " · ".join(f"{m_['short']} from {d2(m_['A'][0])}" for m_ in MI)
 def chg(a, b): return (b - a) * 100 / a if a else 0
-def signed(v, unit="%p"): return f"{v:+.2f}{unit}"
+def signed(v, unit="%"): return f"{v:+.2f}{unit}"
 def dcol(v, higher_better=False):
     if abs(v) < 0.005: return G3
     return GREEN if (v > 0) == higher_better else RED
@@ -56,7 +56,7 @@ for r in range(len(gt.rows)):
 
 # ---------- 2. Contents ----------
 _imp = D.get("improvements") or []
-_ntp = min(6, (sum(1 for x in _imp if x["verdict"] != "Insufficient data") + 3) // 4)
+_ntp = min(24, sum(1 for x in _imp if x["verdict"] != "Insufficient data"))
 TOC = [("Monthly KPI Summary", "3"), (f"{FN} Improvement Review", "6"), ("Improvement Verification", "11"),
        ("Key Positive Changes", str(13 + _ntp)), ("Remaining Issues", str(14 + _ntp)), ("Action Plan", str(15 + _ntp))]
 t = S[1]; strip_annotations(t); rows = {}
@@ -76,7 +76,7 @@ for sh in list(t.shapes):
 
 # ---------- 3. Monthly KPI summary ----------
 f = Frame(S[2], "Monthly KPI Summary", f"{MONTH_TITLE} · vs {mname(1, False)}")
-yy = f.section(f"Key indicators – {mname(0, False)}", unit="(Unit: %, %p = percentage points)")
+yy = f.section(f"Key indicators – {mname(0, False)}", unit="(Unit: %)")
 cards = [("RTY", "plant-wide", rty, True, f"{num(cur['rtyStraightThroughPcbs'])} straight-through PCBs / {num(cur['rtyPcbs'])} PCBs", GREEN),
          ("Re-test", "NG test attempts", rt, False, f"{num(cur['retestNgAttempts'])} NG / {num(cur['retestAttempts'])} test attempts", VIOLET),
          ("NTF", "PID–Station ever NG", ntf, False, f"{num(cur['ntfNgPcbStations'])} NG / {num(cur['ntfPcbStations'])} PID–Stations", DARK)]
@@ -154,7 +154,7 @@ for sh in sd.shapes:
         else: set_runs(sh, [f"{m_['name']}: improvement from {d2(m_['A'][0])}" for m_ in MI]); sh.width = Inches(4.0)
 
 # ---------- 7. Before vs after by model ----------
-f = Frame(S[6], f"{FN}: Before vs After by Model", f"Improvement start: {STARTS} · control line {CN} (same models)")
+f = Frame(S[6], f"{FN}: Improvement Results by Model", f"Improvement start: {STARTS} · control line {CN} (same models)")
 yy = f.section(f"{FN} key indicators by model", unit="(Unit: %)")
 cw2 = (12.24 - 0.24) / 2
 net = {}
@@ -163,8 +163,7 @@ for k, g in enumerate(MODELS):
     cb, ca = q(f"line{CONTROL}_before_g{k}"), q(f"line{CONTROL}_after_g{k}")
     x = 0.53 + k * (cw2 + 0.24)
     rect(f.s, x, yy, cw2, 1.85, G2, name=f"Model card {SHORT[g]}")
-    textbox(f.s, x + 0.25, yy + 0.15, cw2 - 0.5, 0.3, [[(g, {"size": 14, "bold": True}),
-            (f"  {num(b['retestAttempts'])} → {num(a['retestAttempts'])} tests" if b and a else "  no data", {"size": 9, "color": G3})]])
+    textbox(f.s, x + 0.25, yy + 0.15, cw2 - 0.5, 0.3, [[(g, {"size": 14, "bold": True})] + ([] if b and a else [("  no data", {"size": 9, "color": G3})])])
     textbox(f.s, x + 0.25, yy + 0.4, cw2 - 0.5, 0.2, [ptxt(MI[k])], size=8.5, color=G3)
     if not (b and a): continue
     for j, (nm, fn, hb, col) in enumerate((("Re-test", rt, False, VIOLET), ("NTF", ntf, False, DARK), ("RTY", rty, True, GREEN))):
@@ -176,7 +175,7 @@ for k, g in enumerate(MODELS):
         if cb and ca: textbox(f.s, xx, yy + 1.5, 1.85, 0.22, [f"{CN}: {fn(cb):.2f} → {fn(ca):.2f}"], size=8.5, color=G3)
     if cb and ca:
         net[g] = ((rt(a) - rt(b)) - (rt(ca) - rt(cb)), (ntf(a) - ntf(b)) - (ntf(ca) - ntf(cb)), (rty(a) - rty(b)) - (rty(ca) - rty(cb)))
-def drivers(before, b_att, after, a_att, n=4):
+def drivers(before, b_att, after, a_att, n=3):
     """Error codes behind a change: (increases, decreases) as (code, before %, after %, delta %p)."""
     rb_ = {p["code"]: p["count"] * 100 / b_att for p in before}; ra_ = {p["code"]: p["count"] * 100 / a_att for p in after}
     rows_ = [(c_, rb_.get(c_, 0), ra_.get(c_, 0), ra_.get(c_, 0) - rb_.get(c_, 0)) for c_ in set(rb_) | set(ra_)]
@@ -192,7 +191,7 @@ for k, g in enumerate(MODELS):
     wr = [["", "Error code", "Before", "After", "Δ"]]
     for lab, lst in (("▲ worse", ups), ("▼ better", downs)):
         for j_, (c_, bb, aa, dd_) in enumerate(lst):
-            wr.append([lab if j_ == 0 else "", c_, f"{bb:.2f}%", f"{aa:.2f}%", f"{dd_:+.2f}%p"])
+            wr.append([lab if j_ == 0 else "", c_, f"{bb:.2f}%", f"{aa:.2f}%", f"{dd_:+.2f}%"])
     table(f.s, x, y2, cw2, wr, [0.85, 2.85, 0.75, 0.75, 0.8], row_h=0.25, size=8,
           cell_fmt=lambda i, j, v, wr=wr: ({"bold": True, "color": RED if wr[i][4].startswith("+") else GREEN} if j in (0, 4)
                                           else ({"align": PP_ALIGN.LEFT} if j == 1 else None)), name=f"What changed {SHORT[g]}")
@@ -248,7 +247,7 @@ for n, g, b, a in srow:
     k_ = MODELS.index(g); sid_ = sid_of.get((n, FOCUS))
     ups, downs = drivers(D.get(f"pareto_st{sid_}_before_g{k_}", []), b["retestAttempts"], D.get(f"pareto_st{sid_}_after_g{k_}", []), a["retestAttempts"], n=1)
     lst = ups if rt(a) > rt(b) else downs
-    cause = f"{lst[0][0]} {lst[0][3]:+.2f}%p" if lst else "–"
+    cause = f"{lst[0][0]} {lst[0][3]:+.2f}%" if lst else "–"
     trs.append([SHORT[g], n, num(b["retestAttempts"]), num(a["retestAttempts"]), f"{rt(b):.2f}", f"{rt(a):.2f}", signed(rt(a) - rt(b)),
                 f"{ntf(b):.2f}", f"{ntf(a):.2f}", signed(ntf(a) - ntf(b)), cause])
 def sfmt(i, j, v):
@@ -275,10 +274,10 @@ for k, g in enumerate(MODELS):
     rb = {p["code"]: p["count"] * 100 / b["retestAttempts"] for p in D.get(f"pareto_line{FOCUS}_before_g{k}", [])}
     ra = {p["code"]: p["count"] * 100 / a["retestAttempts"] for p in D.get(f"pareto_line{FOCUS}_after_g{k}", [])}
     codes = sorted(set(list(rb)[:8]) | set(list(ra)[:4]), key=lambda c_: -max(rb.get(c_, 0), ra.get(c_, 0)))[:11]
-    rows_ = [["Error code", "Before", "After", "Δ", "Change"]]
+    rows_ = [["Error code", "Before", "After", "Δ", "Rel. change"]]
     for c_ in codes:
         bb, aa = rb.get(c_, 0), ra.get(c_, 0)
-        rows_.append([c_, f"{bb:.2f}%", f"{aa:.2f}%", f"{aa - bb:+.2f}%p", f"{chg(bb, aa):+.0f}%" if bb else "new"])
+        rows_.append([c_, f"{bb:.2f}%", f"{aa:.2f}%", f"{aa - bb:+.2f}%", f"{chg(bb, aa):+.0f}%" if bb else "new"])
         code_gain[(g, c_)] = (bb, aa)
     table(f.s, x, yy, 5.84, rows_, [2.75, 0.75, 0.75, 0.75, 0.8], row_h=0.36, size=8,
           cell_fmt=lambda i, j, v: {"bold": True, "align": PP_ALIGN.LEFT} if j == 0 else ({"color": GREEN if v.startswith("-") else RED} if j in (3, 4) else None),
@@ -335,48 +334,86 @@ if IMP:
     textbox(f.s, 0.53, yy + rh_ * len(rows) + 0.06, 12.24, 0.4,
             ["* Code B/A = NG attempts with that error code / test attempts at the line + station + model, 28 days before vs up to 28 days after "
              "(action day excluded). Effective = −30% or more and p < 0.05. * = error code detected from the data. "
-             "(early) = fewer than 7 days after the action. Trends are shown for every improvement except 'Insufficient data'."], size=8, color=G3)
+             "(early) = fewer than 7 days after the action. One 'Verify Permanent Corrective Action' page with the trend follows for each improvement "
+             "except 'Insufficient data'."], size=8, color=G3)
 else:
     textbox(f.s, 0.53, yy + 0.2, 12.24, 0.4, ["Reports/ImprovementList.xlsx not found or empty."], size=12, color=G3)
 
-PER_PAGE = 4
 TRENDED = [(i, x) for i, x in enumerate(IMP, 1) if x["verdict"] != "Insufficient data"]   # numbers as in the summary table
-pages = [TRENDED[i:i + PER_PAGE] for i in range(0, len(TRENDED), PER_PAGE)]
-TREND_SLIDES = S[12:18]
-pages = pages[:len(TREND_SLIDES)]
-cwx, chy = (12.24 - 0.3) / 2, 2.45
-for pn, (sl, page) in enumerate(zip(TREND_SLIDES, pages)):
-    f = Frame(sl, "Improvement Trends", f"Page {pn + 1} of {len(pages)} · error-code rate by ISO week (by day when < 14 days after) · grey = before, green = after")
-    f.section("Trend before vs after (# as in the summary table)", unit="(Unit: % of test attempts)")
-    for k, (num_, x) in enumerate(page):
-        cx, cy = 0.53 + (k % 2) * (cwx + 0.3), 1.85 + (k // 2) * (chy + 0.08)
-        rect(f.s, cx, cy, cwx, chy, G2, name=f"Improvement {num_}")
-        textbox(f.s, cx + 0.15, cy + 0.08, cwx - 0.3, 0.22, [[(f"#{num_}  {x['line']} · {x['station']} · {x['model']}", {"bold": True, "size": 10}),
-                (f"   action {ddw(x['date'])}", {"size": 9, "bold": True, "color": GREEN})]])
-        act = x["action"] or "(no action text)"
-        textbox(f.s, cx + 0.15, cy + 0.3, cwx - 0.3, 0.3,
-                [[(f"{codes_short(x['code']) or '–'}{' (detected)' if x.get('auto_code') else ''} · ", {"bold": True}), (act, {})]], size=7.5, color=DARK)
-        pts = [p for p in x["trend"] if p[1] is not None]
-        if pts:
-            cd = CategoryChartData(); cd.categories = [p[0] for p in pts]
-            cd.add_series("Code rate %", [round(p[1], 3) for p in pts])
-            gf = f.s.shapes.add_chart(XL_CHART_TYPE.COLUMN_CLUSTERED, Inches(cx + 0.1), Inches(cy + 0.6), Inches(cwx - 0.2), Inches(1.33), cd)
-            gf.name = f"Trend {num_}"
-            ch = gf.chart; chart_text(ch, 7); ch.has_legend = False
-            plot = ch.plots[0]; plot.gap_width = 40
-            ser = plot.series[0]
-            for i_, p in enumerate(pts):
-                pt = ser.points[i_]; pt.format.fill.solid(); pt.format.fill.fore_color.rgb = rgb(GREEN if p[2] else "BFBFBF")
-            labels(ser, '0.00', XL_LABEL_POSITION.OUTSIDE_END, size=6.5)
-            axis_quiet(ch.value_axis, True, '0.0', 0, None); axis_quiet(ch.category_axis, False)
-            ch.value_axis.tick_labels.font.size = Pt(7); ch.category_axis.tick_labels.font.size = Pt(7)
-        line_ = [(f"Code {pc(x['rate_before'])} → {pc(x['rate_after'])}", {"bold": True})]
-        if x["change_pct"] is not None: line_.append((f" ({x['change_pct']:+.0f}%)", {"bold": True, "color": GREEN if x["change_pct"] < 0 else RED}))
-        line_ += [(f" · Re-test {pc(x['retest_before'], 1)} → {pc(x['retest_after'], 1)} · ", {"color": G3}),
-                  (x["verdict"], {"bold": True, "color": VCOL.get(vbase(x["verdict"]), DARK)})]
-        textbox(f.s, cx + 0.15, cy + 1.95, cwx - 0.3, 0.2, [line_], size=8.5)
-        if x["notes"]:
-            textbox(f.s, cx + 0.15, cy + 2.14, cwx - 0.3, 0.28, ["Note: " + "; ".join(x["notes"])], size=7, color=G3)
+TREND_SLIDES = S[12:36]
+pages = TRENDED[:len(TREND_SLIDES)]
+BORDER = "ADADAD"
+STATUS = {"Effective": ("OK", GREEN, BLACK), "Small improvement": ("Monitor", "FFEB9C", BLACK),
+          "Improving (not significant)": ("Monitor", "FFEB9C", BLACK), "Worse": ("NG", RED, WHITE),
+          "No clear effect": ("NG", "F4B183", BLACK)}
+def status_of(v):
+    st, fill, fc = STATUS.get(vbase(v), ("Check", G1, BLACK))
+    return (st + "\n(early)" if v.endswith("(early)") else st), fill, fc
+COLS = [0.53, 4.59, 4.71, 0.77, 0.95, 0.68]           # as the "Verify Permanent Corrective Action" page
+TX, TY, H0, H1 = 0.53, 1.81, 0.52, 4.13
+def pca_cell(cell, paras, size=9.5, align=PP_ALIGN.LEFT, anchor=MSO_ANCHOR.TOP, fill=WHITE, color=BLACK, left=BORDER, right=BORDER):
+    style_cell(cell, paras, size=size, color=color, fill=fill, align=align, top=BORDER, bottom=BORDER, left=left, right=right)
+    cell.vertical_anchor = anchor
+    cell.margin_left = Inches(0.08); cell.margin_top = Inches(0.08); cell.margin_right = Inches(0.05)
+for sl, (num_, x) in zip(TREND_SLIDES, pages):
+    d_ = dt.date.fromisoformat(x["date"]); wk_ = f"W{d_.isocalendar()[1]}"
+    f = Frame(sl, "Verify Permanent Corrective Action", f"#{num_} · {x['line']} · {x['station']} · {x['model']}")
+    f.section(f"Issue: {codes_short(x['code']) or '–'}" + (" (detected from data)" if x.get("auto_code") else ""), unit="(Unit: % of test attempts)")
+    gf = f.s.shapes.add_table(2, 6, Inches(TX), Inches(TY), Inches(sum(COLS)), Inches(H0 + H1)); gf.name = f"PCA table {num_}"
+    tbl = gf.table; tblPr = tbl._tbl.tblPr; tblPr.set("firstRow", "0"); tblPr.set("bandRow", "0")
+    sid_ = tblPr.find(qn("a:tableStyleId"))
+    if sid_ is None: sid_ = etree.SubElement(tblPr, qn("a:tableStyleId"))
+    sid_.text = NOSTYLE
+    for c_, w_ in enumerate(COLS): tbl.columns[c_].width = Inches(w_)
+    tbl.rows[0].height = Inches(H0); tbl.rows[1].height = Inches(H1)
+    for c_, h_ in enumerate(["No", "Issue & Corrective Action", "Actual Check", "PIC", "Due\nDate", "Status"]):
+        pca_cell(tbl.cell(0, c_), h_.split("\n"), size=10, align=PP_ALIGN.CENTER, anchor=MSO_ANCHOR.MIDDLE, fill=BLACK, color=WHITE,
+                 left=None if c_ == 0 else BORDER, right=None if c_ == 5 else BORDER)
+    pca_cell(tbl.cell(1, 0), [str(num_)], size=10.5, align=PP_ALIGN.CENTER, anchor=MSO_ANCHOR.MIDDLE, left=None)
+    res_col = GREEN if (x["change_pct"] or 0) < 0 else RED
+    paras = [[("Issue", {"bold": True})],
+             f"{codes_short(x['code']) or '–'} on {x['line']} {x['station']} ({x['model']}): {pc(x['rate_before'])} of tests before the action.",
+             "",
+             [("Corrective action", {"bold": True})],
+             x["action"] or "–",
+             f"Done {d_:%d/%m/%Y} ({wk_})",
+             "",
+             [("Result", {"bold": True})],
+             [("Error code: ", {}), (f"{pc(x['rate_before'])} → {pc(x['rate_after'])}", {"bold": True, "color": res_col}),
+              (f" ({x['change_pct']:+.0f}%)" if x["change_pct"] is not None else "", {"color": res_col})],
+             f"Station Re-test: {pc(x['retest_before'], 1)} → {pc(x['retest_after'], 1)}",
+             [("Verdict: ", {}), (x["verdict"], {"bold": True, "color": VCOL.get(vbase(x["verdict"]), DARK)})],
+             f"Before {dd(x['before'][0])}–{dd((dt.date.fromisoformat(x['before'][1]) - dt.timedelta(days=1)).isoformat())}, "
+             f"after {dd(x['after'][0])}–{dd((dt.date.fromisoformat(x['after'][1]) - dt.timedelta(days=1)).isoformat())}"]
+    if x["notes"]:
+        paras += ["", [("Notes", {"bold": True})]] + [[("• " + n_, {"color": G3, "size": 8.5})] for n_ in x["notes"]]
+    pca_cell(tbl.cell(1, 1), paras, size=9.5)
+    pca_cell(tbl.cell(1, 2), [""], size=8)
+    textbox(f.s, TX + COLS[0] + COLS[1] + 0.08, TY + H0 + H1 - 0.3, COLS[2] - 0.16, 0.22,
+            ["grey = before · green = after · " + ("by day" if x["trend_daily"] else "by ISO week") + f" · action {dd(x['date'])} ({wk_})"],
+            size=8, color=G3, align=PP_ALIGN.CENTER, name=f"Trend legend {num_}")
+    pca_cell(tbl.cell(1, 3), [""], align=PP_ALIGN.CENTER, anchor=MSO_ANCHOR.MIDDLE)
+    pca_cell(tbl.cell(1, 4), [f"{d_:%d/%m/%Y}", f"({wk_})"], size=10, align=PP_ALIGN.CENTER, anchor=MSO_ANCHOR.MIDDLE)
+    st_, sfill, sfc = status_of(x["verdict"])
+    pca_cell(tbl.cell(1, 5), st_.split("\n"), size=10.5, align=PP_ALIGN.CENTER, anchor=MSO_ANCHOR.MIDDLE, fill=sfill, color=sfc, right=None)
+    # trend chart inside the "Actual Check" cell
+    pts = [p for p in x["trend"] if p[1] is not None]
+    if pts:
+        cx = TX + COLS[0] + COLS[1] + 0.08; cy = TY + H0 + 0.1
+        cd = CategoryChartData(); cd.categories = [p[0] for p in pts]
+        cd.add_series("Code rate %", [round(p[1], 3) for p in pts])
+        gch = f.s.shapes.add_chart(XL_CHART_TYPE.COLUMN_CLUSTERED, Inches(cx), Inches(cy), Inches(COLS[2] - 0.16), Inches(H1 - 0.45), cd)
+        gch.name = f"Trend {num_}"
+        ch = gch.chart; chart_text(ch, 8); ch.has_legend = False
+        ch.has_title = True; ch.chart_title.text_frame.text = f"{codes_short(x['code'])} – % of tests"
+        for r_ in ch.chart_title.text_frame.paragraphs[0].runs: font(r_, 9, DARK, True)
+        plot = ch.plots[0]; plot.gap_width = 40
+        ser = plot.series[0]
+        for i_, p in enumerate(pts):
+            pt = ser.points[i_]; pt.format.fill.solid(); pt.format.fill.fore_color.rgb = rgb(GREEN if p[2] else "BFBFBF")
+        labels(ser, '0.00', XL_LABEL_POSITION.OUTSIDE_END, size=7)
+        axis_quiet(ch.value_axis, True, '0.0', 0, None); axis_quiet(ch.category_axis, False)
+        ch.category_axis.tick_labels.font.size = Pt(7.5)
 # remove the trend pages that are not needed
 def drop_slide(slide):
     sldIdLst = prs.slides._sldIdLst
@@ -390,7 +427,7 @@ for sl in TREND_SLIDES[len(pages):]:
 N_TREND = len(pages)
 
 # ---------- 12. Key positive changes ----------
-f = Frame(S[18], "Key Positive Changes", f"{MONTH_TITLE} · {FN} improvement start: {STARTS}")
+f = Frame(S[36], "Key Positive Changes", f"{MONTH_TITLE} · {FN} improvement start: {STARTS}")
 yy = f.section("Highlights backed by PMSystem2 data (only changes that improved)")
 cand = []
 for k, g in enumerate(MODELS):
@@ -427,7 +464,7 @@ for i, (_, big, head, detail, _, _) in enumerate(good):
 print("positive changes:", [g[2] for g in good])
 
 # ---------- 12. Remaining issues ----------
-f = Frame(S[19], "Remaining Issues", f"{MONTH_TITLE} · plant-wide")
+f = Frame(S[37], "Remaining Issues", f"{MONTH_TITLE} · plant-wide")
 tops = sorted([(st_meta.get(int(k[5:])), q(k)) for k in D if k.startswith("m0_st") and q(k)], key=lambda x: -x[1]["retestNgAttempts"])[:10]
 tot_ng = cur["retestNgAttempts"]
 yy = f.section("Top 10 stations by NG attempts", w=7.3, unit="(Unit: attempts, %)")
@@ -451,7 +488,7 @@ table(f.s, 8.13, yy, 4.64, prow, [0.3, 2.6, 0.7, 0.55], row_h=0.36, size=8, alig
 textbox(f.s, 8.13, yy + 0.36 * len(prow) + 0.06, 4.64, 0.2, [f"* Top 10 = {sum(p['pct'] for p in par[:10]):.1f}% of NG attempts."], size=8, color=G3)
 
 # ---------- 13. Action plan ----------
-f = Frame(S[20], "Action Plan", f"Follow-up from the {mname(0, False)} review")
+f = Frame(S[38], "Action Plan", f"Follow-up from the {mname(0, False)} review")
 yy = f.section("Actions", unit="(To be completed by the owner)")
 items = [(f"{tops[0][0]['name']} · {tops[0][0]['lineName']}", f"Most NG attempts ({tops[0][1]['retestNgAttempts'] * 100 / tot_ng:.1f}% of plant), Re-test {pct(rt(tops[0][1]))}")]
 if par: items.append((par[0]["code"], f"Top error code, {par[0]['pct']:.1f}% of NG attempts"))
@@ -468,7 +505,7 @@ table(f.s, 0.53, yy, 12.24, arows, [0.35, 2.0, 3.0, 3.9, 1.1, 1.0, 0.9], row_h=0
 textbox(f.s, 0.53, yy + 0.32 + 0.62 * 6 + 0.06, 12.24, 0.2, ["* Focus areas are suggested from the data; actions, owners and due dates to be added by the team."], size=8, color=G3)
 
 # ---------- 14. End ----------
-strip_annotations(S[21])
+strip_annotations(S[39])
 for idx, sl in enumerate(list(prs.slides), 1):
     for sh in sl.shapes:
         if sh.name.startswith("슬라이드 번호") and sh.has_text_frame and not sh._element.findall(".//" + qn("a:fld")) and sh.text_frame.paragraphs[0].runs:

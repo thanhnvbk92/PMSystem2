@@ -115,7 +115,7 @@ def analyze(conn, path, today):
             notes.append(f"after-period tests dropped to {ta:,} (logs missing?)")
         if rtb is not None and rta is not None and rta - rtb >= 0.2 and ta >= 2000:
             ups = sorted(((ca.get(c, 0) / ta - cb.get(c, 0) / tb) * 100, c) for c in set(cb) | set(ca))[::-1][:2]
-            ups = [f"{c} +{v:.2f}%p" for v, c in ups if v > 0]
+            ups = [f"{c} +{v:.2f}%" for v, c in ups if v > 0]
             if ups: notes.insert(0, "station Re-test up mainly from " + ", ".join(ups))
         # a new job file (program) taking over right after the action also changes the result
         jb, ja = defaultdict(int), defaultdict(int)
@@ -137,7 +137,7 @@ def analyze(conn, path, today):
         if rel is not None and rel <= -30 and ta:
             moved = max(((ca.get(c, 0) / ta - cb.get(c, 0) / tb) * 100, c) for c in set(cb) | set(ca) if not _in_family(c, it["code"]))
             if moved[0] >= 0.3 * (rb - ra):
-                notes.append(f"watch: {moved[1]} rose +{moved[0]:.2f}%p at the same station")
+                notes.append(f"watch: {moved[1]} rose +{moved[0]:.2f}% at the same station")
         if ta < 2000 or days_after < 3: verdict = "Insufficient data"
         elif not it["code"]: verdict = "No error code"
         elif not tb or rb is None: verdict = "No baseline"

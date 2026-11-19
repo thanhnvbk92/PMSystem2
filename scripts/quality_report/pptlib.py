@@ -225,9 +225,9 @@ def pct(v, d=2): return f"{v:.{d}f}%"
 def num(v): return f"{int(v):,}"
 def delta(v_cur, v_prev, higher_better):
     d = round(v_cur - v_prev, 2)
-    if abs(d) < 0.005: return ("■ 0.00%p", G3)
+    if abs(d) < 0.005: return ("■ 0.00%", G3)
     good = (d > 0) == higher_better
-    return (f"{'▲' if d > 0 else '▼'} {abs(d):.2f}%p", GREEN if good else RED)
+    return (f"{'▲' if d > 0 else '▼'} {abs(d):.2f}%", GREEN if good else RED)
 
 # ---------- content slide frame (from template slide 17) ----------
 class Frame:
