@@ -26,6 +26,15 @@ for r in wb.worksheets[0].iter_rows(values_only=True):
     items.append(dict(line=str(line).strip(), station=str(station).strip(), code=str(code).strip(),
                       model=str(model).strip(), action=(action or "").strip(), date=d))
 
+# Corrections confirmed by the user (19/11): the 13 Oct RF5G row is the solder-pad cleaning; its error code was not
+# given, the code it improved was identified from the data (largest significant decrease at that station/model).
+CORRECTIONS = {("Line 6-1", "RF5G", "BMW ICON25 NAD", dt.date(2026, 10, 13)):
+               dict(code="RFCal_LockResource", action="Clean solder pad which location contact between pin and jig board",
+                    code_note="mã lỗi xác định từ dữ liệu (không có trong danh sách gốc)")}
+for it in items:
+    c = CORRECTIONS.get((it["line"], it["station"], it["model"], it["date"]))
+    if c: it.update(c)
+
 cfg = json.load(open(r"D:\1. Project\PMSystem2\backend\appsettings.Local.json", encoding="utf-8"))
 kv = {k.strip().lower(): v for k, v in (p.split("=", 1) for p in cfg["ConnectionStrings"]["DefaultConnection"].split(";") if "=" in p)}
 conn = psycopg2.connect(host=kv["host"], port=kv["port"], dbname=kv["database"], user=kv["username"], password=kv["password"],
@@ -119,8 +128,9 @@ for it in items:
             "sau 30/10 các job Wave High Main của RF4G/RF5G Line 3-2 gần như không còn trong PMSystem2 (log chương trình QUTS chưa được upload)"),
         ("Line 6-1", "FID", "READ_NORMAL_CURRENT(mA)", "2026-10-21"): ("Hiệu quả một phần",
             "cùng lúc đổi job FID_CURRENT_Ver1.4_261020; mã mới [34465A] READ_BOOT_CURRENT(mA) tăng 1.25 → 48.6/1k (lỗi chuyển mã); Re-test Station vẫn giảm 18.6% → 6.1%"),
-        ("Line 6-1", "RF5G", "[34465A] READ_CURRENT(mA)", "2026-10-13"): ("Mã lỗi không xuất hiện",
-            "mã này chỉ có ở FID (ICON25 NAD); dòng này có thể nhập nhầm Station và chưa ghi hành động"),
+        ("Line 6-1", "RF5G", "RFCal_LockResource", "2026-10-13"): ("Hiệu quả",
+            "giảm chủ yếu ở Jig 3 (36.7 → 10.6/1k) và Jig 9 (25.9 → 13.3); cũng giảm RFCal_Init_V3_LTE −18%, Get_CP_FW_Version −100%. "
+            "Re-test Station tăng 9.0% → 12.1% do LTE_B5/B2_Connected tăng ở Jig 6/2/7 (W44–W45), không cùng Jig được vệ sinh"),
     }
     if key in EXTRA:
         verdict, extra_note = EXTRA[key]; note.insert(0, extra_note)
