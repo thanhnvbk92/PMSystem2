@@ -176,27 +176,28 @@ for k, g in enumerate(MODELS):
         if cb and ca: textbox(f.s, xx, yy + 1.5, 1.85, 0.22, [f"{CN}: {fn(cb):.2f} → {fn(ca):.2f}"], size=8.5, color=G3)
     if cb and ca:
         net[g] = ((rt(a) - rt(b)) - (rt(ca) - rt(cb)), (ntf(a) - ntf(b)) - (ntf(ca) - ntf(cb)), (rty(a) - rty(b)) - (rty(ca) - rty(cb)))
-y2 = f.section(f"Improvement effect vs control line {CN}", y=yy + 2.1)
-erows = [["Model", "Line", "Re-test B", "Re-test A", "Δ Re-test", "NTF B", "NTF A", "Δ NTF", "RTY B", "RTY A", "Δ RTY"]]
+def drivers(before, b_att, after, a_att, n=4):
+    """Error codes behind a change: (increases, decreases) as (code, before %, after %, delta %p)."""
+    rb_ = {p["code"]: p["count"] * 100 / b_att for p in before}; ra_ = {p["code"]: p["count"] * 100 / a_att for p in after}
+    rows_ = [(c_, rb_.get(c_, 0), ra_.get(c_, 0), ra_.get(c_, 0) - rb_.get(c_, 0)) for c_ in set(rb_) | set(ra_)]
+    ups = sorted([r for r in rows_ if r[3] > 0.005], key=lambda r: -r[3])[:n]
+    downs = sorted([r for r in rows_ if r[3] < -0.005], key=lambda r: r[3])[:n]
+    return ups, downs
 for k, g in enumerate(MODELS):
-    for lid, lab in ((FOCUS, FN), (CONTROL, f"{CN} (control)")):
-        b, a = q(f"line{lid}_before_g{k}"), q(f"line{lid}_after_g{k}")
-        if not (b and a): erows.append([SHORT[g], lab] + ["–"] * 9); continue
-        erows.append([SHORT[g], lab, f"{rt(b):.2f}", f"{rt(a):.2f}", signed(rt(a) - rt(b)), f"{ntf(b):.2f}", f"{ntf(a):.2f}",
-                      signed(ntf(a) - ntf(b)), f"{rty(b):.2f}", f"{rty(a):.2f}", signed(rty(a) - rty(b))])
-    if g in net:
-        nr, nn, ny = net[g]; erows.append([SHORT[g], "Net effect", "", "", signed(nr), "", "", signed(nn), "", "", signed(ny)])
-def efmt(i, j, v):
-    o = {"bold": True} if j in (0, 1) and erows[i][1] == "Net effect" else ({"bold": True} if j == 0 else {})
-    if j in (4, 7, 10) and v not in ("", "–"):
-        good = v.startswith("-") if j != 10 else v.startswith("+")
-        o.update({"bold": True, "color": GREEN if good else RED})
-        if erows[i][1] == "Net effect": o["fill"] = LGREEN if good else "FADBD8"
-    elif erows[i][1] == "Net effect": o["fill"] = G2
-    return o
-table(f.s, 0.53, y2, 12.24, erows, [1.0, 1.5, 0.9, 0.9, 1.0, 0.85, 0.85, 1.0, 0.85, 0.85, 1.0], row_h=0.29, size=8.5, cell_fmt=efmt, name="Before-after by model")
-textbox(f.s, 0.53, y2 + 0.29 * len(erows) + 0.06, 12.24, 0.4,
-        [f"* B = before, A = after (periods per model, see cards). Net effect = change on {FN} minus change on {CN} for the same model (removes shared month-to-month effects). Line RTY = passed all {FN} stations first time."], size=8, color=G3)
+    b, a = q(f"line{FOCUS}_before_g{k}"), q(f"line{FOCUS}_after_g{k}")
+    x = 0.53 + k * (cw2 + 0.24)
+    y2 = f.section(f"What changed – {SHORT[g]} on {FN}", x=x, y=yy + 2.1, w=cw2, unit="(Unit: % of tests)")
+    if not (b and a): continue
+    ups, downs = drivers(D.get(f"pareto_line{FOCUS}_before_g{k}", []), b["retestAttempts"], D.get(f"pareto_line{FOCUS}_after_g{k}", []), a["retestAttempts"])
+    wr = [["", "Error code", "Before", "After", "Δ"]]
+    for lab, lst in (("▲ worse", ups), ("▼ better", downs)):
+        for j_, (c_, bb, aa, dd_) in enumerate(lst):
+            wr.append([lab if j_ == 0 else "", c_, f"{bb:.2f}%", f"{aa:.2f}%", f"{dd_:+.2f}%p"])
+    table(f.s, x, y2, cw2, wr, [0.85, 2.85, 0.75, 0.75, 0.8], row_h=0.25, size=8,
+          cell_fmt=lambda i, j, v, wr=wr: ({"bold": True, "color": RED if wr[i][4].startswith("+") else GREEN} if j in (0, 4)
+                                          else ({"align": PP_ALIGN.LEFT} if j == 1 else None)), name=f"What changed {SHORT[g]}")
+textbox(f.s, 0.53, 6.62, 12.24, 0.2, [f"* Error codes with the largest increase (red) and decrease (green) in % of test attempts on {FN}, before vs after for each model; "
+                                       f"together they explain the change of Re-test in the cards. Line RTY = passed all {FN} stations first time."], size=8, color=G3)
 
 # ---------- 8. Weekly trend by model ----------
 f = Frame(S[7], f"{FN}: Weekly Trend by Model", f"Re-test by ISO week · improvement start: {STARTS}")
@@ -241,16 +242,22 @@ for sid, meta in st_meta.items():
         if b and a and b["retestAttempts"] >= 500 and a["retestAttempts"] >= 500: srow.append((meta["name"], g, b, a))
 srow.sort(key=lambda x: (MODELS.index(x[1]), -x[2]["retestNgAttempts"]))
 yy = f.section("Station table", unit="(Unit: tests, %)")
-trs = [["Model", "Station", "Tests B", "Tests A", "Re-test B", "Re-test A", "Δ Re-test", "NTF B", "NTF A", "Δ NTF", "RTY B", "RTY A"]]
+trs = [["Model", "Station", "Tests B", "Tests A", "Re-test B", "Re-test A", "Δ Re-test", "NTF B", "NTF A", "Δ NTF", "Main cause of the Re-test change"]]
+sid_of = {(m_["name"], m_["lineId"]): i_ for i_, m_ in st_meta.items()}
 for n, g, b, a in srow:
+    k_ = MODELS.index(g); sid_ = sid_of.get((n, FOCUS))
+    ups, downs = drivers(D.get(f"pareto_st{sid_}_before_g{k_}", []), b["retestAttempts"], D.get(f"pareto_st{sid_}_after_g{k_}", []), a["retestAttempts"], n=1)
+    lst = ups if rt(a) > rt(b) else downs
+    cause = f"{lst[0][0]} {lst[0][3]:+.2f}%p" if lst else "–"
     trs.append([SHORT[g], n, num(b["retestAttempts"]), num(a["retestAttempts"]), f"{rt(b):.2f}", f"{rt(a):.2f}", signed(rt(a) - rt(b)),
-                f"{ntf(b):.2f}", f"{ntf(a):.2f}", signed(ntf(a) - ntf(b)), f"{rty(b):.2f}", f"{rty(a):.2f}"])
+                f"{ntf(b):.2f}", f"{ntf(a):.2f}", signed(ntf(a) - ntf(b)), cause])
 def sfmt(i, j, v):
     o = {"bold": True} if j in (0, 1) else {}
     if j in (6, 9): o.update({"bold": True, "color": GREEN if v.startswith("-") else RED})
+    if j == 10: o.update({"align": PP_ALIGN.LEFT, "color": GREEN if "-" in v.split(" ")[-1] else RED})
     return o
 rh9 = 0.27
-table(f.s, 0.53, yy, 12.24, trs, [0.9, 1.1, 1.0, 1.0, 0.95, 0.95, 1.0, 0.85, 0.85, 0.95, 0.85, 0.85], row_h=rh9, size=8.5, cell_fmt=sfmt, name="Stations by model")
+table(f.s, 0.53, yy, 12.24, trs, [0.8, 0.9, 0.85, 0.85, 0.8, 0.8, 0.85, 0.7, 0.7, 0.8, 3.0], row_h=rh9, size=8, cell_fmt=sfmt, name="Stations by model")
 y3 = yy + rh9 * len(trs) + 0.15
 y4 = f.section("Re-test by station – before vs after", y=y3, unit="(Unit: %)")
 column_chart(f.s, 0.53, y4, 12.24, 6.85 - y4, [f"{n} · {SHORT[g]}" for n, g, _, _ in srow],
@@ -378,9 +385,9 @@ for k, g in enumerate(MODELS):
     if not (b and a): continue
     nr, nn, ny = net.get(g, (0, 0, 0))
     cand.append((abs(rt(a) - rt(b)) * 3, signed(rt(a) - rt(b)), f"{FN} {SHORT[g]} Re-test",
-                 f"{pct(rt(b))} → {pct(rt(a))} ({chg(rt(b), rt(a)):+.0f}%); net {signed(nr)} vs {CN}.", rt(a) < rt(b), "line"))
-    cand.append((abs(ntf(a) - ntf(b)) * 3, signed(ntf(a) - ntf(b)), f"{FN} {SHORT[g]} NTF", f"{pct(ntf(b))} → {pct(ntf(a))}; net {signed(nn)} vs {CN}.", ntf(a) < ntf(b), "line"))
-    cand.append((abs(rty(a) - rty(b)) * 3, signed(rty(a) - rty(b)), f"{FN} {SHORT[g]} RTY", f"{pct(rty(b))} → {pct(rty(a))}; net {signed(ny)} vs {CN}.", rty(a) > rty(b), "line"))
+                 f"{pct(rt(b))} → {pct(rt(a))} ({chg(rt(b), rt(a)):+.0f}%).", rt(a) < rt(b), "line"))
+    cand.append((abs(ntf(a) - ntf(b)) * 3, signed(ntf(a) - ntf(b)), f"{FN} {SHORT[g]} NTF", f"{pct(ntf(b))} → {pct(ntf(a))}.", ntf(a) < ntf(b), "line"))
+    cand.append((abs(rty(a) - rty(b)) * 3, signed(rty(a) - rty(b)), f"{FN} {SHORT[g]} RTY", f"{pct(rty(b))} → {pct(rty(a))}.", rty(a) > rty(b), "line"))
 for n, g, b, a in srow:
     cand.append((abs(rt(a) - rt(b)), signed(rt(a) - rt(b)), f"{n} · {SHORT[g]} ({FN})", f"Re-test {pct(rt(b))} → {pct(rt(a))}; NTF {pct(ntf(b))} → {pct(ntf(a))}.", rt(a) < rt(b), "Station"))
 for (g, c_), (bb, aa) in code_gain.items():

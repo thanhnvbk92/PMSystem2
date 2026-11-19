@@ -109,6 +109,10 @@ def analyze(conn, path, today):
         if auto: notes.append("error code detected from the data")
         if tb and ta < 0.1 * tb * days_after / WINDOW:
             notes.append(f"after-period tests dropped to {ta:,} (logs missing?)")
+        if rtb is not None and rta is not None and rta - rtb >= 0.2:
+            ups = sorted(((ca.get(c, 0) / ta - cb.get(c, 0) / tb) * 100, c) for c in set(cb) | set(ca))[::-1][:2]
+            ups = [f"{c} +{v:.2f}%p" for v, c in ups if v > 0]
+            if ups: notes.insert(0, "station Re-test up mainly from " + ", ".join(ups))
         if days_after < WINDOW: notes.append(f"only {days_after} days after")
         if crel is not None and rel is not None and rel < 0 and crel <= rel * 0.6:
             notes.append(f"control lines also {crel:+.0f}%")

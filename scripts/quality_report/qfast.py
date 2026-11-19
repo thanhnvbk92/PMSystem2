@@ -71,6 +71,7 @@ def collect(month: str, cfg: dict):
     # ---- A. attempts per day / station / model group (rollup) ----
     att = defaultdict(lambda: [0, 0])        # (day, station, group) -> [attempts, ng]
     errs = defaultdict(int)                  # (day, line, group, code) -> ng
+    errs_st = defaultdict(int)               # (day, station, group, code) -> ng
     cur.execute("""SELECT bucket_date, station_id, job_file, model_id, result, error_code, sum(total_count)::bigint
                    FROM pcb_analytics_daily
                    WHERE bucket_date >= %s AND bucket_date < %s AND error_code <> 'DEFECT_UNSPECIFIED'
@@ -80,7 +81,9 @@ def collect(month: str, cfg: dict):
         if em == 0 or st_line.get(sid, 0) == 0: continue
         g = model_group.get(em, "No model"); ng = res in ("NG", "FAIL")
         a = att[(day, sid, g)]; a[0] += n
-        if ng: a[1] += n; errs[(day, st_line.get(sid, 0), g, code or "UNKNOWN_DEFECT")] += n
+        if ng:
+            a[1] += n; errs[(day, st_line.get(sid, 0), g, code or "UNKNOWN_DEFECT")] += n
+            errs_st[(day, sid, g, code or "UNKNOWN_DEFECT")] += n
     log(f"rollup rows aggregated ({len(att)} day-station-model keys)")
 
     # ---- B. NTF pairs per first-test day / station / model group ----
@@ -153,6 +156,11 @@ def collect(month: str, cfg: dict):
         s = sum(tot.values()) or 1
         return [{"code": c, "count": n, "pct": round(n * 100.0 / s, 2)} for c, n in sorted(tot.items(), key=lambda kv: -kv[1])[:top]]
 
+    def pareto_station(a, b, sid, model, top=40):
+        tot = defaultdict(int)
+        for (day, s_, g, code), n in errs_st.items():
+            if a <= day < b and s_ == sid and g == model: tot[code] += n
+        return [{"code": c, "count": n} for c, n in sorted(tot.items(), key=lambda kv: -kv[1])[:top]]
     def mrange(i): return month_start(RM, i), (RE if i == 0 else month_start(RM, i - 1))
     iso = lambda x: dt.datetime.combine(x, dt.time()).isoformat()
     out = {"lines": lines, "stations": stations, "models": GROUPS,
@@ -185,7 +193,9 @@ def collect(month: str, cfg: dict):
                 out[f"line{lid}_{tag}_g{k}"] = qm(a, b, line=lid, model=g)
                 out[f"pareto_line{lid}_{tag}_g{k}"] = pareto(a, b, line=lid, model=g)
             for s in stations:
-                if s["lineId"] in (FOCUS, CONTROL): out[f"st{s['id']}_{tag}_g{k}"] = qm(a, b, station=s["id"], model=g)
+                if s["lineId"] in (FOCUS, CONTROL):
+                    out[f"st{s['id']}_{tag}_g{k}"] = qm(a, b, station=s["id"], model=g)
+                    if s["lineId"] == FOCUS: out[f"pareto_st{s['id']}_{tag}_g{k}"] = pareto_station(a, b, s["id"], g)
     for i in (0, 1):
         a, b = mrange(i); out[f"pareto_m{i}"] = pareto(a, b, top=20)
     a, b = mrange(0)

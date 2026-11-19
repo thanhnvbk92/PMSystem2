@@ -3,9 +3,9 @@ Those records are left in pcb_results (raw data) but are no longer part of the q
 (QualitySummaryService and the backfill skip them since this version). A PID whose records are all
 infinite disappears from the summaries. Upserts, safe to run while the backend is refreshing summaries.
 
-python refresh_summaries_infinite_pids.py
+python refresh_summaries_infinite_pids.py [resume_index] [chunk_size]
 """
-import json, os, time
+import json, os, sys, time
 import psycopg2
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -17,7 +17,9 @@ conn.autocommit = True
 cur = conn.cursor()
 t0 = time.time()
 cur.execute("SELECT array_agg(DISTINCT pid) FROM pcb_results WHERE NOT isfinite(inspect_time) AND pid IS NOT NULL")
-pids = sorted(cur.fetchone()[0] or [])          # same order as QualitySummaryService (fewer deadlocks)
+pids = sorted(p for p in (cur.fetchone()[0] or []) if p != "None")   # same order as the backend; PID "None" is not a PCB
+START = int(sys.argv[1]) if len(sys.argv) > 1 else 0                  # resume index
+CHUNK = int(sys.argv[2]) if len(sys.argv) > 2 else 200
 print(f"PIDs with infinite start time records: {len(pids):,}", flush=True)
 VALID = """SELECT p.pid, p.station_id, p.inspect_time, p.result, p.job_file, p.model_id
     FROM pcb_results p LEFT JOIN job_file_model_mappings mapping ON mapping.job_file = p.job_file
@@ -45,8 +47,8 @@ def run_chunk(chunk):
             ever_ng = EXCLUDED.ever_ng, updated_at = EXCLUDED.updated_at""", (chunk,))
     cur.execute("COMMIT")
 
-for i in range(0, len(pids), 200):
-    chunk = pids[i:i + 200]
+for i in range(START, len(pids), CHUNK):
+    chunk = pids[i:i + CHUNK]
     for attempt in range(10):
         try:
             run_chunk(chunk); break
