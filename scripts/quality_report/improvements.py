@@ -1,6 +1,6 @@
 """Improvement verification for the monthly report (read from Reports/ImprovementList.xlsx).
 
-List columns (no header): Line | Station | Error code (may be empty) | Model | Action | Date.
+List columns (no header): Line | Station | Error code (may be empty, or several separated by ';') | Model | Action | Date.
 For each improvement, at that line + station + model (model = Job File mapping, else model id):
   code rate  = NG attempts with the error code (incl. 'CODE|...' sub-codes and '[instrument] CODE') / test attempts, in %
   before     = WINDOW days before the date, after = up to WINDOW days after (action day excluded)
@@ -13,8 +13,12 @@ from collections import defaultdict
 
 WINDOW = 28
 
-def _in_family(code, fam):
+def _one(code, fam):
     return code == fam or code.startswith(fam + "|") or code.endswith("] " + fam) or code.endswith(" " + fam)
+
+def _in_family(code, fams):
+    """fams: one error code or several separated by ';' (each also matches its sub-codes / instrument prefix)."""
+    return any(_one(code, f.strip()) for f in fams.split(";") if f.strip())
 
 def _p2(k1, n1, k2, n2):
     if not n1 or not n2: return None
@@ -56,12 +60,12 @@ def analyze(conn, path, today):
                    FROM pcb_analytics_daily
                    WHERE bucket_date >= %s AND bucket_date < %s AND station_id = ANY(%s) AND error_code <> 'DEFECT_UNSPECIFIED'
                    GROUP BY 1, 2, 3, 4, 5, 6""", (start, today, sids))
-    tests = defaultdict(int); ngc = defaultdict(int)
+    tests = defaultdict(int); ngc = defaultdict(int); tjob = defaultdict(int)
     for day, sid, job, mid, res, code, n in cur.fetchall():
         m = job_model.get(job) or mid or 0
         if m == 0: continue
         ln, sn = st[sid]; mn = model_name.get(m, f"model {m}")
-        tests[(day, ln, sn, mn)] += n
+        tests[(day, ln, sn, mn)] += n; tjob[(day, ln, sn, mn, job or "")] += n
         if res in ("NG", "FAIL"): ngc[(day, ln, sn, mn, code or "")] += n
 
     def agg(ln, sn, mn, fam, a, b):
@@ -109,10 +113,24 @@ def analyze(conn, path, today):
         if auto: notes.append("error code detected from the data")
         if tb and ta < 0.1 * tb * days_after / WINDOW:
             notes.append(f"after-period tests dropped to {ta:,} (logs missing?)")
-        if rtb is not None and rta is not None and rta - rtb >= 0.2:
+        if rtb is not None and rta is not None and rta - rtb >= 0.2 and ta >= 2000:
             ups = sorted(((ca.get(c, 0) / ta - cb.get(c, 0) / tb) * 100, c) for c in set(cb) | set(ca))[::-1][:2]
             ups = [f"{c} +{v:.2f}%p" for v, c in ups if v > 0]
             if ups: notes.insert(0, "station Re-test up mainly from " + ", ".join(ups))
+        # a new job file (program) taking over right after the action also changes the result
+        jb, ja = defaultdict(int), defaultdict(int)
+        for (dd_, l, s_, m, j), v in tjob.items():
+            if l == it["line"] and s_ == it["station"] and m == it["model"]:
+                if d - dt.timedelta(days=7) <= dd_ < d: jb[j] += v
+                elif d < dd_ <= d + dt.timedelta(days=7): ja[j] += v
+        new_jobs = [j for j in ja if j and jb.get(j, 0) == 0]
+        if ja and sum(ja[j] for j in new_jobs) > 0.5 * sum(ja.values()):
+            top_ = sorted(new_jobs, key=lambda j: -ja[j])
+            notes.append("new job file after the action: " + top_[0] + (f" (+{len(top_) - 1} more)" if len(top_) > 1 else ""))
+        earlier = sorted({x["date"] for x in items if x["line"] == it["line"] and x["station"] == it["station"]
+                          and x["model"] == it["model"] and b0 <= x["date"] < d})
+        if earlier:
+            notes.append("before period includes the action of " + ", ".join(f"{e:%d/%m} (W{e.isocalendar()[1]})" for e in earlier))
         if days_after < WINDOW: notes.append(f"only {days_after} days after")
         if crel is not None and rel is not None and rel < 0 and crel <= rel * 0.6:
             notes.append(f"control lines also {crel:+.0f}%")
@@ -120,7 +138,7 @@ def analyze(conn, path, today):
             moved = max(((ca.get(c, 0) / ta - cb.get(c, 0) / tb) * 100, c) for c in set(cb) | set(ca) if not _in_family(c, it["code"]))
             if moved[0] >= 0.3 * (rb - ra):
                 notes.append(f"watch: {moved[1]} rose +{moved[0]:.2f}%p at the same station")
-        if ta < 2000 or days_after < 7: verdict = "Insufficient data"
+        if ta < 2000 or days_after < 3: verdict = "Insufficient data"
         elif not it["code"]: verdict = "No error code"
         elif not tb or rb is None: verdict = "No baseline"
         elif kb == 0 and ka == 0: verdict = "Code not seen"
@@ -129,6 +147,8 @@ def analyze(conn, path, today):
         elif rel < -10: verdict = "Improving (not significant)" if (p is None or p >= 0.05) else "Small improvement"
         elif rel > 10 and p is not None and p < 0.05: verdict = "Worse"
         else: verdict = "No clear effect"
+        if days_after < 7 and verdict not in ("Insufficient data", "No error code", "No baseline", "Code not seen"):
+            verdict += " (early)"
 
         # trend: weekly, daily when the after period is short
         daily = days_after < 14

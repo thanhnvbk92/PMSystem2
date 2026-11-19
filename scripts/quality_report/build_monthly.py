@@ -293,7 +293,7 @@ VCOL = {"Effective": GREEN, "Worse": RED, "Small improvement": GREEN, "Improving
 VFILL = {"Effective": "C6EFCE", "Worse": "FFC7CE", "Small improvement": "E2EFDA", "Improving (not significant)": "FFEB9C"}
 sd2 = S[10]; strip_annotations(sd2)
 set_runs(by_name(sd2, "Title 1"), ["03"])
-n_eff = sum(1 for x in IMP if x["verdict"] == "Effective")
+n_eff = sum(1 for x in IMP if x["verdict"].startswith("Effective"))
 for sh in sd2.shapes:
     if sh.name == "Content Placeholder 2" and sh.has_text_frame:
         if sh.top / 914400 < 1: set_runs(sh, ["Improvement", "Verification"])
@@ -302,19 +302,32 @@ def pc(v, d=2): return "–" if v is None else f"{v:.{d}f}%"
 def dd(s): return dt.date.fromisoformat(s).strftime("%d/%m")
 def ddw(s):                                   # date with its ISO week, e.g. 30/10 (W44)
     d_ = dt.date.fromisoformat(s); return f"{d_:%d/%m} (W{d_.isocalendar()[1]})"
+import os as _os
+def codes_short(code):
+    """'LTE_B5_Connected_V2; LTE_B1_Connected_V2' -> 'LTE_B5/B1_Connected_V2' (common prefix / suffix kept once)."""
+    cs = [c.strip() for c in (code or "").split(";") if c.strip()]
+    if len(cs) < 2: return code or ""
+    pre = _os.path.commonprefix(cs); suf = _os.path.commonprefix([c[::-1] for c in cs])[::-1]
+    while pre and pre[-1].isalnum() and not all(len(c) > len(pre) and not c[len(pre)].isalnum() for c in cs): pre = pre[:-1]
+    mids = [c[len(pre):len(c) - len(suf)] for c in cs]
+    if pre and suf and all(mids) and len(pre) + len(suf) >= 6:
+        return pre + "/".join(mids) + suf
+    return "; ".join(cs)
 f = Frame(S[11], "Improvement Verification", f"{len(IMP)} improvements from ImprovementList.xlsx · error-code rate before vs after")
 yy = f.section("Summary", unit="(Unit: % of test attempts)")
 rows = [["#", "Line", "Station", "Model", "Error code", "Action", "Date", "Code B", "Code A", "Change", "Re-test B → A", "Verdict"]]
 for i, x in enumerate(IMP, 1):
-    rows.append([str(i), x["line"], x["station"], x["model"].replace("BMW ", ""), (x["code"] or "–") + (" *" if x.get("auto_code") else ""),
+    rows.append([str(i), x["line"], x["station"], x["model"].replace("BMW ", ""), (codes_short(x["code"]) or "–") + (" *" if x.get("auto_code") else ""),
                  x["action"] or "–", ddw(x["date"]),
                  pc(x["rate_before"]), pc(x["rate_after"]), "–" if x["change_pct"] is None else f"{x['change_pct']:+.0f}%",
                  f"{pc(x['retest_before'], 1)} → {pc(x['retest_after'], 1)}", x["verdict"]])
+def vbase(v): return v.replace(" (early)", "")
+
 def ifmt2(i, j, v):
     x = IMP[i - 1]
     if j in (4, 5): return {"align": PP_ALIGN.LEFT}
     if j == 9 and v != "–": return {"bold": True, "color": GREEN if v.startswith("-") else RED}
-    if j == 11: return {"bold": True, "color": VCOL.get(x["verdict"], DARK), "fill": VFILL.get(x["verdict"])}
+    if j == 11: return {"bold": True, "color": VCOL.get(vbase(x["verdict"]), DARK), "fill": VFILL.get(vbase(x["verdict"]))}
 rh_ = min(0.36, 4.75 / max(len(rows), 1))
 if IMP:
     table(f.s, 0.53, yy, 12.24, rows, [0.3, 0.7, 0.75, 1.15, 1.8, 3.35, 0.8, 0.6, 0.6, 0.6, 1.0, 1.2], row_h=rh_, size=7,
@@ -322,7 +335,7 @@ if IMP:
     textbox(f.s, 0.53, yy + rh_ * len(rows) + 0.06, 12.24, 0.4,
             ["* Code B/A = NG attempts with that error code / test attempts at the line + station + model, 28 days before vs up to 28 days after "
              "(action day excluded). Effective = −30% or more and p < 0.05. * = error code detected from the data. "
-             "Trends are shown for every improvement except 'Insufficient data'."], size=8, color=G3)
+             "(early) = fewer than 7 days after the action. Trends are shown for every improvement except 'Insufficient data'."], size=8, color=G3)
 else:
     textbox(f.s, 0.53, yy + 0.2, 12.24, 0.4, ["Reports/ImprovementList.xlsx not found or empty."], size=12, color=G3)
 
@@ -342,12 +355,12 @@ for pn, (sl, page) in enumerate(zip(TREND_SLIDES, pages)):
                 (f"   action {ddw(x['date'])}", {"size": 9, "bold": True, "color": GREEN})]])
         act = x["action"] or "(no action text)"
         textbox(f.s, cx + 0.15, cy + 0.3, cwx - 0.3, 0.3,
-                [[(f"{x['code'] or '–'}{' (detected)' if x.get('auto_code') else ''} · ", {"bold": True}), (act, {})]], size=7.5, color=DARK)
+                [[(f"{codes_short(x['code']) or '–'}{' (detected)' if x.get('auto_code') else ''} · ", {"bold": True}), (act, {})]], size=7.5, color=DARK)
         pts = [p for p in x["trend"] if p[1] is not None]
         if pts:
             cd = CategoryChartData(); cd.categories = [p[0] for p in pts]
             cd.add_series("Code rate %", [round(p[1], 3) for p in pts])
-            gf = f.s.shapes.add_chart(XL_CHART_TYPE.COLUMN_CLUSTERED, Inches(cx + 0.1), Inches(cy + 0.62), Inches(cwx - 0.2), Inches(1.43), cd)
+            gf = f.s.shapes.add_chart(XL_CHART_TYPE.COLUMN_CLUSTERED, Inches(cx + 0.1), Inches(cy + 0.6), Inches(cwx - 0.2), Inches(1.33), cd)
             gf.name = f"Trend {num_}"
             ch = gf.chart; chart_text(ch, 7); ch.has_legend = False
             plot = ch.plots[0]; plot.gap_width = 40
@@ -360,10 +373,10 @@ for pn, (sl, page) in enumerate(zip(TREND_SLIDES, pages)):
         line_ = [(f"Code {pc(x['rate_before'])} → {pc(x['rate_after'])}", {"bold": True})]
         if x["change_pct"] is not None: line_.append((f" ({x['change_pct']:+.0f}%)", {"bold": True, "color": GREEN if x["change_pct"] < 0 else RED}))
         line_ += [(f" · Re-test {pc(x['retest_before'], 1)} → {pc(x['retest_after'], 1)} · ", {"color": G3}),
-                  (x["verdict"], {"bold": True, "color": VCOL.get(x["verdict"], DARK)})]
-        textbox(f.s, cx + 0.15, cy + 2.07, cwx - 0.3, 0.2, [line_], size=8.5)
+                  (x["verdict"], {"bold": True, "color": VCOL.get(vbase(x["verdict"]), DARK)})]
+        textbox(f.s, cx + 0.15, cy + 1.95, cwx - 0.3, 0.2, [line_], size=8.5)
         if x["notes"]:
-            textbox(f.s, cx + 0.15, cy + 2.25, cwx - 0.3, 0.18, ["Note: " + "; ".join(x["notes"])[:120]], size=7, color=G3)
+            textbox(f.s, cx + 0.15, cy + 2.14, cwx - 0.3, 0.28, ["Note: " + "; ".join(x["notes"])], size=7, color=G3)
 # remove the trend pages that are not needed
 def drop_slide(slide):
     sldIdLst = prs.slides._sldIdLst
