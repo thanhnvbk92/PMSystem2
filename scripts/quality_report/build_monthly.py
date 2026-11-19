@@ -174,7 +174,7 @@ went = "fell" if R0 < R1 else "rose"
 f = Frame(MIX, "Production Volume by Line",
           "Plant Re-test = all NG attempts / all test attempts, so a line that tests more weighs more")
 yy = f.section(f"Test attempts by line – {mname(1)} vs {mname(0)}", w=5.9, unit="(Unit: tests)")
-rv_ = sorted(vol, key=lambda x: x[0], reverse=True)   # by line name, top to bottom (bar charts draw the first category at the bottom)
+rv_ = sorted(vol, key=lambda x: (x[0] == "Line OFF", x[0]))   # by line name ascending, Line OFF last (bar axis is reversed: first = top)
 column_chart(f.s, 0.53, yy, 5.9, 4.95, [x[0] for x in rv_], [(mname(1), [x[5] for x in rv_]), (mname(0), [x[6] for x in rv_])],
              ["BFBFBF", VIOLET], fmt='#,##0', bar=True, gap=50, overlap=-10, lo=0, name="Test share by line")
 yk = f.section("Key points", x=6.73, w=6.04)
