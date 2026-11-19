@@ -54,8 +54,10 @@ def read_list(path):
                           model=str(model).strip(), action=(str(action).strip() if action else ""), date=d))
     return items
 
-def analyze(conn, path, today):
-    """today = exclusive end of data. Returns a list of dicts (one per improvement)."""
+def analyze(conn, path, today, excluded_codes=("UNKNOWN", "UNKNOWN_DEFECT")):
+    """today = exclusive end of data. Returns a list of dicts (one per improvement).
+    excluded_codes are not real error codes: they stay in the Re-test totals but are never named as a cause."""
+    EXCL = set(excluded_codes)
     if not os.path.exists(path): return []
     items = read_list(path)
     if not items: return []
@@ -104,7 +106,7 @@ def analyze(conn, path, today):
         if not it["code"] and tb and ta:
             # code with the largest significant decrease of its rate at that station
             best = None
-            for c in set(cb) | set(ca):
+            for c in (set(cb) | set(ca)) - EXCL:
                 rb_, ra_ = cb.get(c, 0) / tb, ca.get(c, 0) / ta
                 p = _p2(cb.get(c, 0), tb, ca.get(c, 0), ta)
                 if ra_ < rb_ and p is not None and p < 0.01 and (best is None or rb_ - ra_ > best[0]): best = (rb_ - ra_, c)
@@ -128,7 +130,7 @@ def analyze(conn, path, today):
         if tb and ta < 0.1 * tb * days_after / WINDOW:
             notes.append(f"after-period tests dropped to {ta:,} (logs missing?)")
         if rtb is not None and rta is not None and rta - rtb >= 0.2 and ta >= 2000:
-            ups = sorted(((ca.get(c, 0) / ta - cb.get(c, 0) / tb) * 100, c) for c in set(cb) | set(ca))[::-1][:2]
+            ups = sorted(((ca.get(c, 0) / ta - cb.get(c, 0) / tb) * 100, c) for c in (set(cb) | set(ca)) - EXCL)[::-1][:2]
             ups = [f"{c} +{v:.2f}%" for v, c in ups if v > 0]
             if ups: notes.insert(0, "station Re-test up mainly from " + ", ".join(ups))
         # a new job file (program) taking over right after the action also changes the result
@@ -149,7 +151,7 @@ def analyze(conn, path, today):
         if crel is not None and rel is not None and rel < 0 and crel <= rel * 0.6:
             notes.append(f"control lines also {crel:+.0f}%")
         if rel is not None and rel <= -30 and ta:
-            moved = max(((ca.get(c, 0) / ta - cb.get(c, 0) / tb) * 100, c) for c in set(cb) | set(ca) if not _in_family(c, it["code"]))
+            moved = max(((ca.get(c, 0) / ta - cb.get(c, 0) / tb) * 100, c) for c in (set(cb) | set(ca)) - EXCL if not _in_family(c, it["code"]))
             if moved[0] >= 0.3 * (rb - ra):
                 notes.append(f"watch: {moved[1]} rose +{moved[0]:.2f}% at the same station")
         if ta < 2000 or days_after < 3: verdict = "Insufficient data"

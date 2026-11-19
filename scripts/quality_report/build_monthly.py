@@ -153,7 +153,8 @@ rh = min(0.3, 4.6 / len(lrows))
 table(f.s, 5.13, yy, 7.64, lrows, [1.0, 0.85, 0.7, 0.9, 0.6, 0.65, 0.9, 2.6], row_h=rh, size=8, cell_fmt=lfmt, name="KPI by line")
 improved = sum(1 for _, m, pm in lines if pm and rt(m) < rt(pm))
 textbox(f.s, 5.13, yy + rh * len(lrows) + 0.06, 7.64, 0.4,
-        [f"* {improved} of {len(lines)} lines reduced Re-test vs {mname(1)}. Main cause = error code with the largest increase in % of tests on that line. "
+        [f"* {improved} of {len(lines)} lines reduced Re-test vs {mname(1)}. Main cause = error code with the largest increase in % of tests on that line "
+         f"(UNKNOWN = NG without an error in the log, not used as a cause). "
          f"Line RTY = PCBs that passed every station of the line first time. Green row = {FN}."], size=8, color=G3)
 
 # ---------- 6. Section divider ----------

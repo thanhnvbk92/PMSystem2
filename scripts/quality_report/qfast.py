@@ -42,6 +42,7 @@ def collect(month: str, cfg: dict):
     if RE <= RM: raise SystemExit(f"No complete day in {month} yet.")
     FOCUS, CONTROL = cfg["focus_line_id"], cfg["control_line_id"]
     GROUPS = [g["name"] for g in cfg["model_groups"]]
+    EXCL = set(cfg.get("excluded_error_codes", []))   # not real error codes (e.g. UNKNOWN): kept in Re-test, left out of code lists
     # Each model group has its own improvement start: before = [baseline_start, improvement_start), after = [improvement_start, RE)
     PERIODS = [((dt.date.fromisoformat(g["baseline_start"]), dt.date.fromisoformat(g["improvement_start"])),
                 (dt.date.fromisoformat(g["improvement_start"]), RE)) for g in cfg["model_groups"]]
@@ -82,8 +83,11 @@ def collect(month: str, cfg: dict):
         g = model_group.get(em, "No model"); ng = res in ("NG", "FAIL")
         a = att[(day, sid, g)]; a[0] += n
         if ng:
-            a[1] += n; errs[(day, st_line.get(sid, 0), g, code or "UNKNOWN_DEFECT")] += n
-            errs_st[(day, sid, g, code or "UNKNOWN_DEFECT")] += n
+            a[1] += n
+            c_ = code or "UNKNOWN_DEFECT"
+            if c_ not in EXCL:
+                errs[(day, st_line.get(sid, 0), g, c_)] += n
+                errs_st[(day, sid, g, c_)] += n
     log(f"rollup rows aggregated ({len(att)} day-station-model keys)")
 
     # ---- B. NTF pairs per first-test day / station / model group ----
