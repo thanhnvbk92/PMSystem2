@@ -8,7 +8,8 @@ import argparse, json, os, re, subprocess, sys, tempfile, time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
-import qfast  # noqa: E402
+import qfast, improvements  # noqa: E402
+import datetime as dt  # noqa: E402
 
 ap = argparse.ArgumentParser()
 ap.add_argument("--month", required=True)
@@ -22,6 +23,11 @@ t0 = time.time()
 print("STEP 1/3 Reading statistics tables", flush=True)
 cfg = json.load(open(os.path.join(HERE, "report_config.json"), encoding="utf-8"))
 data = qfast.collect(args.month, cfg)
+lst = os.path.join(args.out_dir, cfg.get("improvement_list", "ImprovementList.xlsx"))
+print(f"STEP 1/3 Verifying improvements ({os.path.basename(lst)})", flush=True)
+conn = qfast.connect()
+data["improvements"] = improvements.analyze(conn, lst, dt.date.fromisoformat(data["meta"]["report_end"][:10]))
+conn.close()
 
 with tempfile.TemporaryDirectory() as tmp:
     data_path = os.path.join(tmp, "data.json")
