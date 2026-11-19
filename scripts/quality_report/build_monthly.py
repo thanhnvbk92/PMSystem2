@@ -40,7 +40,7 @@ def dcol(v, higher_better=False):
 cur, prev = q("m0"), q("m1")
 st_meta = {s["id"]: s for s in D["stations"]}
 DQ = ("* Model = current job-file mapping (pcb_results.model_id is outdated for ICON25 and August data). "
-      "Tests with an invalid start time (infinity / future clock) are not counted.")
+      "Not counted: Unassigned Line and tests with an invalid start time (infinity / future clock).")
 
 prs = Presentation(os.environ.get("SKELETON", os.path.join(HERE, "assets", "skeleton_monthly.pptx"))); S = list(prs.slides)
 
@@ -298,7 +298,7 @@ yy = f.section("Summary", unit="(Unit: % of test attempts)")
 rows = [["#", "Line", "Station", "Model", "Error code", "Action", "Date", "Code B", "Code A", "Change", "Re-test B → A", "Verdict"]]
 for i, x in enumerate(IMP, 1):
     rows.append([str(i), x["line"], x["station"], x["model"].replace("BMW ", ""), (x["code"] or "–") + (" *" if x.get("auto_code") else ""),
-                 (x["action"][:58] + "…") if len(x["action"]) > 59 else (x["action"] or "–"), dd(x["date"]),
+                 x["action"] or "–", dd(x["date"]),
                  pc(x["rate_before"]), pc(x["rate_after"]), "–" if x["change_pct"] is None else f"{x['change_pct']:+.0f}%",
                  f"{pc(x['retest_before'], 1)} → {pc(x['retest_after'], 1)}", x["verdict"]])
 def ifmt2(i, j, v):
@@ -306,9 +306,9 @@ def ifmt2(i, j, v):
     if j in (4, 5): return {"align": PP_ALIGN.LEFT}
     if j == 9 and v != "–": return {"bold": True, "color": GREEN if v.startswith("-") else RED}
     if j == 11: return {"bold": True, "color": VCOL.get(x["verdict"], DARK), "fill": VFILL.get(x["verdict"])}
-rh_ = min(0.34, 4.75 / max(len(rows), 1))
+rh_ = min(0.36, 4.75 / max(len(rows), 1))
 if IMP:
-    table(f.s, 0.53, yy, 12.24, rows, [0.3, 0.75, 0.8, 1.3, 2.0, 3.0, 0.55, 0.65, 0.65, 0.65, 1.1, 1.3], row_h=rh_, size=7.5,
+    table(f.s, 0.53, yy, 12.24, rows, [0.3, 0.7, 0.75, 1.15, 1.85, 3.6, 0.5, 0.6, 0.6, 0.6, 1.0, 1.2], row_h=rh_, size=7,
           cell_fmt=ifmt2, name="Improvement summary")
     textbox(f.s, 0.53, yy + rh_ * len(rows) + 0.06, 12.24, 0.4,
             ["* Code B/A = NG attempts with that error code / test attempts at the line + station + model, 28 days before vs up to 28 days after "
@@ -331,13 +331,13 @@ for pn, (sl, page) in enumerate(zip(TREND_SLIDES, pages)):
         textbox(f.s, cx + 0.15, cy + 0.08, cwx - 0.3, 0.22, [[(f"#{first + k}  {x['line']} · {x['station']} · {x['model']}", {"bold": True, "size": 10}),
                 (f"   {dd(x['date'])}", {"size": 9, "color": G3})]])
         act = x["action"] or "(no action text)"
-        textbox(f.s, cx + 0.15, cy + 0.32, cwx - 0.3, 0.2,
-                [f"{x['code'] or '–'}{' (detected)' if x.get('auto_code') else ''} · {act[:80] + '…' if len(act) > 81 else act}"], size=8, color=DARK)
+        textbox(f.s, cx + 0.15, cy + 0.3, cwx - 0.3, 0.3,
+                [[(f"{x['code'] or '–'}{' (detected)' if x.get('auto_code') else ''} · ", {"bold": True}), (act, {})]], size=7.5, color=DARK)
         pts = [p for p in x["trend"] if p[1] is not None]
         if pts:
             cd = CategoryChartData(); cd.categories = [p[0] for p in pts]
             cd.add_series("Code rate %", [round(p[1], 3) for p in pts])
-            gf = f.s.shapes.add_chart(XL_CHART_TYPE.COLUMN_CLUSTERED, Inches(cx + 0.1), Inches(cy + 0.55), Inches(cwx - 0.2), Inches(1.5), cd)
+            gf = f.s.shapes.add_chart(XL_CHART_TYPE.COLUMN_CLUSTERED, Inches(cx + 0.1), Inches(cy + 0.62), Inches(cwx - 0.2), Inches(1.43), cd)
             gf.name = f"Trend {first + k}"
             ch = gf.chart; chart_text(ch, 7); ch.has_legend = False
             plot = ch.plots[0]; plot.gap_width = 40
@@ -399,7 +399,7 @@ for i, (_, big, head, detail, _, _) in enumerate(good):
     rect(f.s, x, y, gw, gh, G2, name=f"Positive change {i + 1}")
     textbox(f.s, x + 0.25, y + 0.2, 0.4, 0.3, [f"{i + 1:02d}"], size=12, color=G3, bold=True)
     textbox(f.s, x + 0.25, y + 0.5, gw - 0.5, 0.6, [big], size=30, color=GREEN, bold=True)
-    textbox(f.s, x + 0.25, y + 1.15, gw - 0.5, 0.3, [head if len(head) <= 34 else head[:33] + "…"], size=12, bold=True)
+    textbox(f.s, x + 0.25, y + 1.15, gw - 0.5, 0.3, [head], size=12 if len(head) <= 34 else 10, bold=True)
     textbox(f.s, x + 0.25, y + 1.5, gw - 0.5, 0.55, [detail], size=9.5, color=DARK)
 print("positive changes:", [g[2] for g in good])
 

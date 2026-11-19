@@ -155,6 +155,7 @@ public sealed class QualitySummaryService : BackgroundService
                 LEFT JOIN job_file_model_mappings mapping ON mapping.job_file = p.job_file
                 WHERE p.pid = ANY (@affected_pids)
                   AND p.error_code IS DISTINCT FROM 'DEFECT_UNSPECIFIED'
+                  AND isfinite(p.inspect_time)          -- start time not readable from the log
                   -- Effective model = current job-file mapping, else the stored model id.
                   AND COALESCE(mapping.model_id, p.model_id) IS DISTINCT FROM 0
             )
@@ -174,6 +175,7 @@ public sealed class QualitySummaryService : BackgroundService
                 LEFT JOIN job_file_model_mappings mapping ON mapping.job_file = p.job_file
                 WHERE p.pid = ANY (@affected_pids)
                   AND p.error_code IS DISTINCT FROM 'DEFECT_UNSPECIFIED'
+                  AND isfinite(p.inspect_time)          -- start time not readable from the log
                   -- Effective model = current job-file mapping, else the stored model id.
                   AND COALESCE(mapping.model_id, p.model_id) IS DISTINCT FROM 0
             )

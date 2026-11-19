@@ -40,6 +40,7 @@ WITH valid_results AS (
     LEFT JOIN job_file_model_mappings mapping ON mapping.job_file = p.job_file
     WHERE p.pid IS NOT NULL AND btrim(p.pid) <> ''
       AND p.error_code IS DISTINCT FROM 'DEFECT_UNSPECIFIED'
+      AND isfinite(p.inspect_time)
       -- Effective model = Job File mapping, else pcb_results.model_id.
       AND COALESCE(mapping.model_id, p.model_id) IS DISTINCT FROM 0
 )
@@ -64,6 +65,7 @@ WITH valid_results AS (
     LEFT JOIN job_file_model_mappings mapping ON mapping.job_file = p.job_file
     WHERE p.pid IS NOT NULL AND btrim(p.pid) <> ''
       AND p.error_code IS DISTINCT FROM 'DEFECT_UNSPECIFIED'
+      AND isfinite(p.inspect_time)
       -- Effective model = Job File mapping, else pcb_results.model_id.
       AND COALESCE(mapping.model_id, p.model_id) IS DISTINCT FROM 0
 )

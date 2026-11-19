@@ -30,7 +30,7 @@ VALID = """
     FROM pcb_results p
     LEFT JOIN job_file_model_mappings mapping ON mapping.job_file = p.job_file
     WHERE p.pid IS NOT NULL AND btrim(p.pid) <> ''
-      AND p.error_code IS DISTINCT FROM 'DEFECT_UNSPECIFIED'
+      AND p.error_code IS DISTINCT FROM 'DEFECT_UNSPECIFIED' AND isfinite(p.inspect_time)
       AND COALESCE(mapping.model_id, p.model_id) IS DISTINCT FROM 0 {extra}"""
 NTF = """
     SELECT pid, station_id, MIN(inspect_time) AS first_test_time, MAX(inspect_time) AS last_test_time, COUNT(*) AS test_count,

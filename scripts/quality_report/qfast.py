@@ -66,6 +66,7 @@ def collect(month: str, cfg: dict):
                    LEFT JOIN lines l ON l.id = s.line_id LEFT JOIN model_groups mg ON mg.id = s.model_group_id ORDER BY s.id""")
     stations = [{"id": i, "lineId": li, "lineName": ln, "name": n, "modelGroupName": g} for i, li, ln, n, g in cur.fetchall()]
     st_line = {s["id"]: s["lineId"] or 0 for s in stations}
+    # Unassigned Line (line 0) is not part of the report; tests with an infinite start time never fall in a period.
 
     # ---- A. attempts per day / station / model group (rollup) ----
     att = defaultdict(lambda: [0, 0])        # (day, station, group) -> [attempts, ng]
@@ -76,7 +77,7 @@ def collect(month: str, cfg: dict):
                    GROUP BY 1, 2, 3, 4, 5, 6""", WIN)
     for day, sid, job, mid, res, code, n in cur.fetchall():
         em = eff_model(job, mid)
-        if em == 0: continue
+        if em == 0 or st_line.get(sid, 0) == 0: continue
         g = model_group.get(em, "No model"); ng = res in ("NG", "FAIL")
         a = att[(day, sid, g)]; a[0] += n
         if ng: a[1] += n; errs[(day, st_line.get(sid, 0), g, code or "UNKNOWN_DEFECT")] += n
@@ -91,12 +92,13 @@ def collect(month: str, cfg: dict):
                      AND pid <> 'None'
                    GROUP BY 1, 2, 3, 4""", WIN)
     for day, sid, job, mid, n, nng in cur.fetchall():
+        if st_line.get(sid, 0) == 0: continue
         g = model_group.get(eff_model(job, mid), "No model")
         p = pairs[(day, sid, g)]; p[0] += n; p[1] += nng
     log("NTF pairs aggregated")
 
-    # ---- C. line RTY: one row per PID and line, first test day on the line ----
-    lrty = defaultdict(lambda: [0, 0])
+    # ---- C/D. line RTY (PID x line) and plant RTY (PID over all assigned lines), first-test cohorts ----
+    lrty = defaultdict(lambda: [0, 0]); prty = defaultdict(lambda: [0, 0])
     cur.execute("""
         WITH x AS (
             SELECT n.pid, s.line_id, min(n.first_test_time) AS first_t, bool_or(n.ever_ng) AS ng,
@@ -105,24 +107,22 @@ def collect(month: str, cfg: dict):
             FROM pcb_ntf_summaries n JOIN stations s ON s.id = n.station_id
             WHERE n.pid IN (SELECT pid FROM pcb_ntf_summaries
                             WHERE first_test_time >= (%s::timestamp AT TIME ZONE 'UTC') AND first_test_time < (%s::timestamp AT TIME ZONE 'UTC'))
-              AND n.pid <> 'None'
-            GROUP BY n.pid, s.line_id)
-        SELECT (first_t AT TIME ZONE 'UTC')::date, line_id, job_file, model_id, count(*), count(*) FILTER (WHERE ng)
+              AND n.pid <> 'None' AND s.line_id <> 0 AND isfinite(n.first_test_time)
+            GROUP BY n.pid, s.line_id),
+        p AS (SELECT pid, min(first_t) AS first_t, bool_or(ng) AS ng FROM x GROUP BY pid)
+        SELECT 'L', (first_t AT TIME ZONE 'UTC')::date, line_id, job_file, model_id, count(*), count(*) FILTER (WHERE ng)
         FROM x WHERE first_t >= (%s::timestamp AT TIME ZONE 'UTC') AND first_t < (%s::timestamp AT TIME ZONE 'UTC')
-        GROUP BY 1, 2, 3, 4""", WIN + WIN)
-    for day, lid, job, mid, n, nng in cur.fetchall():
+        GROUP BY 2, 3, 4, 5
+        UNION ALL
+        SELECT 'P', (first_t AT TIME ZONE 'UTC')::date, NULL, NULL, NULL, count(*), count(*) FILTER (WHERE ng)
+        FROM p WHERE first_t >= (%s::timestamp AT TIME ZONE 'UTC') AND first_t < (%s::timestamp AT TIME ZONE 'UTC')
+        GROUP BY 2""", WIN + WIN + WIN)
+    for kind, day, lid, job, mid, n, nng in cur.fetchall():
+        if kind == "P":
+            r = prty[day]; r[0] += n; r[1] += nng; continue
         g = model_group.get(eff_model(job, mid), "No model")
         r = lrty[(day, lid, g)]; r[0] += n; r[1] += nng
-    log("line RTY aggregated")
-
-    # ---- D. plant RTY per first-test day ----
-    prty = {}
-    cur.execute("""SELECT (first_test_time AT TIME ZONE 'UTC')::date, count(*), count(*) FILTER (WHERE ever_ng)
-                   FROM pcb_rty_summaries
-                   WHERE first_test_time >= (%s::timestamp AT TIME ZONE 'UTC') AND first_test_time < (%s::timestamp AT TIME ZONE 'UTC')
-                     AND pid <> 'None' GROUP BY 1""", WIN)
-    for day, n, nng in cur.fetchall(): prty[day] = (n, nng)
-    log("plant RTY aggregated")
+    log("line and plant RTY aggregated")
     conn.close()
 
     def r_(n, d): return round(n * 100.0 / d, 2) if d else 0
@@ -161,7 +161,8 @@ def collect(month: str, cfg: dict):
                            "after": [iso(PERIODS[k][1][0]), iso(PERIODS[k][1][1])]} for k, g in enumerate(cfg["model_groups"])],
            "meta": {"report_month": dt.datetime.combine(RM, dt.time()).isoformat(), "report_end": dt.datetime.combine(RE, dt.time()).isoformat(),
                     "focus": FOCUS, "control": CONTROL, "generated_at": dt.datetime.now().isoformat(timespec="seconds"),
-                    "source": "rollup + summaries (first-test cohorts)"}}
+                    "source": "rollup + summaries (first-test cohorts)",
+                    "excluded": "Unassigned Line; tests with an infinite start time"}}
     for i in range(cfg["trend_months"]):
         a, b = mrange(i); out[f"m{i}"] = qm(a, b)
         for lid in (FOCUS, CONTROL):
