@@ -56,9 +56,9 @@ for r in range(len(gt.rows)):
 
 # ---------- 2. Contents ----------
 _imp = D.get("improvements") or []
-_ntp = min(24, sum(1 for x in _imp if x["verdict"] != "Insufficient data"))
-TOC = [("Monthly KPI Summary", "3"), (f"{FN} Improvement Review", "6"), ("Improvement Verification", "11"),
-       ("Key Positive Changes", str(13 + _ntp)), ("Remaining Issues", str(14 + _ntp)), ("Action Plan", str(15 + _ntp))]
+_ntp = min(23, sum(1 for x in _imp if x["verdict"] != "Insufficient data"))
+TOC = [("Monthly KPI Summary", "3"), (f"{FN} Improvement Review", "7"), ("Improvement Verification", "12"),
+       ("Key Positive Changes", str(14 + _ntp)), ("Remaining Issues", str(15 + _ntp)), ("Action Plan", str(16 + _ntp))]
 t = S[1]; strip_annotations(t); rows = {}
 for sh in list(t.shapes):
     if sh.has_text_frame and sh.name == "Content Placeholder 2": rows.setdefault(round(sh.top / 914400 / 0.555), []).append(sh)
@@ -156,6 +156,60 @@ textbox(f.s, 5.13, yy + rh * len(lrows) + 0.06, 7.64, 0.4,
         [f"* {improved} of {len(lines)} lines reduced Re-test vs {mname(1)}. Main cause = error code with the largest increase in % of tests on that line "
          f"(UNKNOWN = NG without an error in the log, not used as a cause). "
          f"Line RTY = PCBs that passed every station of the line first time. Green row = {FN}."], size=8, color=G3)
+
+# ---------- 5b. Plant Re-test change: line rates vs line mix ----------
+# shift-share: R = sum(s_i * r_i), s = share of test attempts, r = Re-test of the line.
+# dR = sum(avg(s) * dr)  [rate effect]  +  sum(avg(r) * ds)  [mix effect]; the two add up exactly.
+MIX = S[35]
+mx = [(n, m, pm) for n, m, pm in lines if pm]
+T0 = sum(m["retestAttempts"] for _, m, _ in mx); T1 = sum(pm["retestAttempts"] for _, _, pm in mx)
+mrows_ = []
+for n, m, pm in mx:
+    s0, s1 = m["retestAttempts"] * 100 / T0, pm["retestAttempts"] * 100 / T1
+    r0, r1 = rt(m), rt(pm)
+    re_ = (s0 + s1) / 2 * (r0 - r1) / 100; me_ = (r0 + r1) / 2 * (s0 - s1) / 100
+    mrows_.append((n, s1, s0, r1, r0, re_, me_))
+R1 = sum(s1 * r1 for _, s1, _, r1, *_ in mrows_) / 100; R0 = sum(s0 * r0 for _, _, s0, _, r0, *_ in mrows_) / 100
+RE = sum(x[5] for x in mrows_); ME = sum(x[6] for x in mrows_)
+R1, R0 = rt(prev), rt(cur)                      # plant figures as on the KPI summary page (line sum differs only by rounding)
+mrows_.sort(key=lambda x: x[5] + x[6])
+top_mix = min(mrows_, key=lambda x: x[6])
+f = Frame(MIX, f"Why Plant Re-test {'Fell' if R0 < R1 else 'Rose'} While Some Lines {'Rose' if R0 < R1 else 'Fell'}",
+          f"Plant Re-test {mname(1)} → {mname(0)} split into line Re-test change and line-mix change")
+yy = f.section(f"Plant Re-test change – {mname(1)} vs {mname(0)}", unit="(Unit: %)")
+cw = 3.92
+for i, (nm, sub_, v, det) in enumerate([
+        ("Plant Re-test", f"{mname(1)} → {mname(0)}", R0 - R1, f"{R1:.2f}% → {R0:.2f}% (all lines, weighted by test attempts)"),
+        ("Line mix", "share of tests moved", ME, f"Largest: {top_mix[0]} share {top_mix[1]:.1f}% → {top_mix[2]:.1f}% of all tests"),
+        ("Line Re-test", "real change on the lines", RE, f"{sum(1 for x in mrows_ if x[4] < x[3])} of {len(mrows_)} lines lower, "
+                                                         f"{sum(1 for x in mrows_ if x[4] > x[3])} higher")]):
+    x = 0.53 + i * (cw + 0.24)
+    rect(f.s, x, yy, cw, 1.12, G2, name=f"Mix card {i}")
+    textbox(f.s, x + 0.25, yy + 0.08, cw - 0.5, 0.3, [[(nm, {"size": 13, "bold": True}), (f"  {sub_}", {"size": 9.5, "color": G3})]])
+    textbox(f.s, x + 0.25, yy + 0.33, cw - 0.5, 0.5, [f"{v:+.2f}%"], size=26, bold=True, color=GREEN if v < 0 else RED)
+    textbox(f.s, x + 0.25, yy + 0.83, cw - 0.5, 0.25, [det], size=8.5, color=G3)
+y2 = f.section("Contribution of each line to the plant change", y=yy + 1.32, w=5.4, unit="(Unit: %)")
+rv_ = mrows_[::-1]                                   # bar charts draw the first category at the bottom
+mch = column_chart(f.s, 0.53, y2, 5.4, 3.3, [x[0] for x in rv_], [("Line Re-test", [round(x[5], 3) for x in rv_]),
+                   ("Line mix", [round(x[6], 3) for x in rv_])], [VIOLET, "BFBFBF"], fmt='+0.00;-0.00;0', bar=True, gap=40, overlap=-5,
+                   name="Mix contribution")
+f.section("Detail by line", x=6.17, y=yy + 1.32, w=6.6, unit="(Unit: %)")
+trows_ = [["Line", f"Share {mname(1)}", f"Share {mname(0)}", f"Re-test {mname(1)}", f"Re-test {mname(0)}", "Line Re-test effect", "Line mix effect"]]
+for n, s1, s0, r1, r0, re_, me_ in sorted(mrows_, key=lambda x: x[5] + x[6]):
+    sg = lambda v: f"{v:+.2f}" if abs(v) >= 0.005 else "0.00"
+    trows_.append([n, f"{s1:.1f}", f"{s0:.1f}", f"{r1:.2f}", f"{r0:.2f}", sg(re_), sg(me_)])
+trows_.append(["Total", "100", "100", f"{R1:.2f}", f"{R0:.2f}", f"{RE:+.2f}", f"{ME:+.2f}"])
+def mfmt(i, j, v):
+    o = {"bold": True} if j == 0 or i == len(trows_) - 1 else {}
+    if j >= 5 and v not in ("+0.00", "-0.00"): o["color"] = GREEN if v.startswith("-") else RED
+    if trows_[i][0] == FN: o["fill"] = LGREEN
+    if i == len(trows_) - 1: o["fill"] = LVIOLET
+    return o
+mrh = min(0.25, 3.0 / len(trows_))
+table(f.s, 6.17, y2, 6.6, trows_, [1.0, 0.85, 0.85, 0.95, 0.95, 1.0, 1.0], row_h=mrh, size=8, cell_fmt=mfmt, name="Mix detail")
+textbox(f.s, 6.17, y2 + mrh * len(trows_) + 0.04, 6.6, 0.4,
+        [f"* Share = line tests / all tests. Line Re-test effect = Re-test change × average share; line mix effect = share change × average Re-test. "
+         f"Both add up to the plant change. Red = pushes plant Re-test up, green = pulls it down."], size=7.5, color=G3)
 
 # ---------- 6. Section divider ----------
 def section_slide(sl, lines_):
@@ -350,7 +404,7 @@ else:
     textbox(f.s, 0.53, yy + 0.2, 12.24, 0.4, ["Reports/ImprovementList.xlsx not found or empty."], size=12, color=G3)
 
 TRENDED = [(i, x) for i, x in enumerate(IMP, 1) if x["verdict"] != "Insufficient data"]   # numbers as in the summary table
-TREND_SLIDES = S[12:36]
+TREND_SLIDES = S[12:35]                # S[35] is used for the line-mix page
 pages = TRENDED[:len(TREND_SLIDES)]
 BORDER = "ADADAD"
 STATUS = {"Effective": ("OK", GREEN, BLACK), "Small improvement": ("Monitor", "FFEB9C", BLACK),
@@ -433,6 +487,15 @@ def drop_slide(slide):
             prs.part.drop_rel(sldId.rId); sldIdLst.remove(sldId); return
 for sl in TREND_SLIDES[len(pages):]:
     drop_slide(sl)
+def move_after(slide, after):
+    lst = prs.slides._sldIdLst; ids = {prs.part.related_part(e.rId): e for e in lst}
+    el, ref = ids[slide.part], ids[after.part]
+    lst.remove(el); ref.addnext(el)
+    P14 = "{http://schemas.microsoft.com/office/powerpoint/2010/main}sldId"
+    sec_ = {e.get("id"): e for e in prs.part._element.iter(P14)}
+    a_, r_ = sec_.get(str(el.id)), sec_.get(str(ref.id))
+    if a_ is not None and r_ is not None: a_.getparent().remove(a_); r_.addnext(a_)
+move_after(MIX, S[4])
 N_TREND = len(pages)
 
 # ---------- 12. Key positive changes ----------
