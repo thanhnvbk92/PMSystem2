@@ -62,7 +62,8 @@ def analyze(conn, path, today):
     cur = conn.cursor()
     cur.execute("SELECT id, name FROM models"); model_name = dict(cur.fetchall())
     cur.execute("SELECT job_file, model_id FROM job_file_model_mappings WHERE model_id IS NOT NULL"); job_model = dict(cur.fetchall())
-    cur.execute("SELECT id, name FROM channels"); jig_name = dict(cur.fetchall())
+    cur.execute("SELECT id, name, ip_address FROM channels")
+    jig_name = {i: (f"{n} (IP {ip})" if ip else n) for i, n, ip in cur.fetchall()}
     cur.execute("SELECT s.id, l.name, s.name FROM stations s JOIN lines l ON l.id = s.line_id")
     st = {i: (ln, sn) for i, ln, sn in cur.fetchall()}
     sids = [i for i, (ln, sn) in st.items() if sn in {it["station"] for it in items}]
@@ -198,7 +199,8 @@ def analyze(conn, path, today):
                 if tot_ng < 10: continue
                 top_ch, top_n = max(ng_j.items(), key=lambda kv: kv[1])
                 if top_n * 100 >= 40 * tot_ng:
-                    why = [f"{jig_name.get(top_ch, top_ch)} = {top_n * 100 // tot_ng}% of the NG ({top_n * 100 / max(t_j[top_ch], 1):.1f}% on that jig)"]
+                    why = [f"{jig_name.get(top_ch, top_ch)} = {top_n * 100 // tot_ng}% of the NG "
+                           f"({top_n} NG / {t_j[top_ch]:,} tests = {top_n * 100 / max(t_j[top_ch], 1):.1f}% on that jig)"]
                 else:
                     why = ["spread over several jigs"]
                 jobs_b = {j for (dd_, l, s_, m, j), v in tjob.items() if l == it["line"] and s_ == it["station"] and m == it["model"] and dd_ < a_}

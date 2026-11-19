@@ -125,25 +125,36 @@ textbox(f.s, 0.53, y2 + 0.27 * len(trows) + 0.06, 12.24, 0.2, [f"* {mname(0)} = 
 f = Frame(S[4], "KPI by Line", f"{MONTH_TITLE} · vs {mname(1, False)}")
 lines = [(l["name"], q(f"m0_line{l['id']}"), q(f"m1_line{l['id']}")) for l in D["lines"] if q(f"m0_line{l['id']}")]
 lines.sort(key=lambda x: -rt(x[1]))
-yy = f.section(f"Re-test by line – {mname(1)} vs {mname(0)}", w=5.84, unit="(Unit: %)")
-column_chart(f.s, 0.53, yy, 5.84, 4.6, [n for n, *_ in lines], [(mname(1), [rt(pm) if pm else 0 for _, _, pm in lines]), (mname(0), [rt(m) for _, m, _ in lines])],
+line_id = {l["name"]: l["id"] for l in D["lines"]}
+def top_rise(lid, m, pm):
+    """Error code with the largest increase (% of tests) on a line, report month vs previous month."""
+    rb_ = {p["code"]: p["count"] * 100 / pm["retestAttempts"] for p in D.get(f"pareto_m1_line{lid}", [])}
+    ra_ = {p["code"]: p["count"] * 100 / m["retestAttempts"] for p in D.get(f"pareto_m0_line{lid}", [])}
+    best = max(((ra_.get(c, 0) - rb_.get(c, 0), c) for c in set(rb_) | set(ra_)), default=None)
+    return f"{best[1]} +{best[0]:.2f}%" if best and best[0] > 0 else "–"
+yy = f.section(f"Re-test by line – {mname(1)} vs {mname(0)}", w=4.3, unit="(Unit: %)")
+column_chart(f.s, 0.53, yy, 4.3, 4.6, [n for n, *_ in lines], [(mname(1), [rt(pm) if pm else 0 for _, _, pm in lines]), (mname(0), [rt(m) for _, m, _ in lines])],
              ["BFBFBF", VIOLET], bar=True, gap=60, overlap=-10, lo=0, name="Re-test by line")
-f.section("KPI table by line (sorted by Re-test)", x=6.93, w=5.84, unit="(Unit: %)")
-lrows = [["Line", "Tests", "Re-test", f"Δ {mname(1)}", "NTF", "RTY", f"Δ RTY"]]
+f.section("KPI table by line (sorted by Re-test)", x=5.13, w=7.64, unit="(Unit: %)")
+lrows = [["Line", "Tests", "Re-test", f"Δ {mname(1)}", "NTF", "RTY", "Δ RTY", f"Main cause of the Re-test rise vs {mname(1)}"]]
 for n, m, pm in lines:
+    rose = pm and rt(m) > rt(pm)
     lrows.append([n, num(m["retestAttempts"]), f"{rt(m):.2f}", delta(rt(m), rt(pm), False)[0] if pm else "–",
-                  f"{ntf(m):.2f}", f"{rty(m):.2f}", delta(rty(m), rty(pm), True)[0] if pm else "–"])
+                  f"{ntf(m):.2f}", f"{rty(m):.2f}", delta(rty(m), rty(pm), True)[0] if pm else "–",
+                  top_rise(line_id[n], m, pm) if rose else "–"])
 def lfmt(i, j, v):
     o = {"bold": True} if j == 0 else {}
     if j == 3 and v != "–": o["color"] = RED if v.startswith("▲") else (GREEN if v.startswith("▼") else G3)
     if j == 6 and v != "–": o["color"] = GREEN if v.startswith("▲") else (RED if v.startswith("▼") else G3)
+    if j == 7 and v != "–": o.update({"color": RED, "align": PP_ALIGN.LEFT})
     if lrows[i][0] == FN: o["fill"] = LGREEN
     return o
 rh = min(0.3, 4.6 / len(lrows))
-table(f.s, 6.93, yy, 5.84, lrows, [1.25, 1.1, 0.8, 1.0, 0.75, 0.8, 1.0], row_h=rh, size=8.5, cell_fmt=lfmt, name="KPI by line")
+table(f.s, 5.13, yy, 7.64, lrows, [1.0, 0.85, 0.7, 0.9, 0.6, 0.65, 0.9, 2.6], row_h=rh, size=8, cell_fmt=lfmt, name="KPI by line")
 improved = sum(1 for _, m, pm in lines if pm and rt(m) < rt(pm))
-textbox(f.s, 6.93, yy + rh * len(lrows) + 0.06, 5.84, 0.4,
-        [f"* {improved} of {len(lines)} lines reduced Re-test vs {mname(1)}. Line RTY = PCBs that passed every station of the line first time. Green row = {FN}."], size=8, color=G3)
+textbox(f.s, 5.13, yy + rh * len(lrows) + 0.06, 7.64, 0.4,
+        [f"* {improved} of {len(lines)} lines reduced Re-test vs {mname(1)}. Main cause = error code with the largest increase in % of tests on that line. "
+         f"Line RTY = PCBs that passed every station of the line first time. Green row = {FN}."], size=8, color=G3)
 
 # ---------- 6. Section divider ----------
 def section_slide(sl, lines_):

@@ -198,6 +198,8 @@ def collect(month: str, cfg: dict):
                     if s["lineId"] == FOCUS: out[f"pareto_st{s['id']}_{tag}_g{k}"] = pareto_station(a, b, s["id"], g)
     for i in (0, 1):
         a, b = mrange(i); out[f"pareto_m{i}"] = pareto(a, b, top=20)
+        for l in lines:
+            if l["id"] != 0: out[f"pareto_m{i}_line{l['id']}"] = pareto(a, b, line=l["id"], top=60)
     a, b = mrange(0)
     ng_by_station = defaultdict(int)
     for (day, sid, g), (n, k) in att.items():
