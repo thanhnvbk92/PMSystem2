@@ -27,6 +27,16 @@ def _p2(k1, n1, k2, n2):
     z = (k2 / n2 - k1 / n1) / math.sqrt(p * (1 - p) * (1 / n1 + 1 / n2))
     return math.erfc(abs(z) / math.sqrt(2))
 
+def bucket_range(label, d, daily):
+    """Date range [a, b) of a trend bucket label ('W46' or 'dd/mm')."""
+    if daily:
+        day = dt.datetime.strptime(label + f"/{d.year}", "%d/%m/%Y").date()
+        if day > d + dt.timedelta(days=200): day = day.replace(year=d.year - 1)
+        return day, day + dt.timedelta(days=1)
+    w = int(label[1:]); y = d.year if w >= d.isocalendar()[1] - 30 else d.year + 1
+    mon = dt.date.fromisocalendar(y, w, 1)
+    return mon, mon + dt.timedelta(days=7)
+
 def read_list(path):
     import openpyxl
     wb = openpyxl.load_workbook(path, data_only=True, read_only=True)
@@ -52,21 +62,24 @@ def analyze(conn, path, today):
     cur = conn.cursor()
     cur.execute("SELECT id, name FROM models"); model_name = dict(cur.fetchall())
     cur.execute("SELECT job_file, model_id FROM job_file_model_mappings WHERE model_id IS NOT NULL"); job_model = dict(cur.fetchall())
+    cur.execute("SELECT id, name FROM channels"); jig_name = dict(cur.fetchall())
     cur.execute("SELECT s.id, l.name, s.name FROM stations s JOIN lines l ON l.id = s.line_id")
     st = {i: (ln, sn) for i, ln, sn in cur.fetchall()}
     sids = [i for i, (ln, sn) in st.items() if sn in {it["station"] for it in items}]
     start = min(it["date"] for it in items) - dt.timedelta(days=WINDOW + 14)
-    cur.execute("""SELECT bucket_date, station_id, job_file, model_id, result, error_code, sum(total_count)::bigint
+    cur.execute("""SELECT bucket_date, station_id, job_file, model_id, result, error_code, sum(total_count)::bigint, channel_id
                    FROM pcb_analytics_daily
                    WHERE bucket_date >= %s AND bucket_date < %s AND station_id = ANY(%s) AND error_code <> 'DEFECT_UNSPECIFIED'
-                   GROUP BY 1, 2, 3, 4, 5, 6""", (start, today, sids))
+                   GROUP BY 1, 2, 3, 4, 5, 6, 8""", (start, today, sids))
     tests = defaultdict(int); ngc = defaultdict(int); tjob = defaultdict(int)
-    for day, sid, job, mid, res, code, n in cur.fetchall():
+    jt = defaultdict(int); jng = defaultdict(int)          # per jig: (day, line, station, model, channel) -> tests / NG per code
+    for day, sid, job, mid, res, code, n, chn in cur.fetchall():
         m = job_model.get(job) or mid or 0
         if m == 0: continue
         ln, sn = st[sid]; mn = model_name.get(m, f"model {m}")
-        tests[(day, ln, sn, mn)] += n; tjob[(day, ln, sn, mn, job or "")] += n
-        if res in ("NG", "FAIL"): ngc[(day, ln, sn, mn, code or "")] += n
+        tests[(day, ln, sn, mn)] += n; tjob[(day, ln, sn, mn, job or "")] += n; jt[(day, ln, sn, mn, chn)] += n
+        if res in ("NG", "FAIL"):
+            ngc[(day, ln, sn, mn, code or "")] += n; jng[(day, ln, sn, mn, chn, code or "")] += n
 
     def agg(ln, sn, mn, fam, a, b):
         t = sum(v for (d, l, s, m), v in tests.items() if l == ln and s == sn and m == mn and a <= d < b)
@@ -167,6 +180,35 @@ def analyze(conn, path, today):
                 t, k = agg(it["line"], it["station"], it["model"], it["code"], w, e)
                 pts.append((f"W{w.isocalendar()[1]}", k * 100 / t if t else None, w + dt.timedelta(days=3) > d, t))
                 w += dt.timedelta(days=7)
+        # explain weeks / days after the action where the code rose again (jig, new job file, low volume)
+        after_pts = [p for p in pts if p[2] and p[1] is not None and p[3]]
+        spikes = []
+        if after_pts and ra is not None:
+            base = max(ra, 0.05)
+            for lab, rate_, _, t_ in after_pts:
+                if rate_ < 3 * base or rate_ < 0.3: continue
+                a_, b_ = bucket_range(lab, d, daily)
+                if a_ <= d < b_: continue                     # bucket still contains days before the action
+                ng_j = defaultdict(int); t_j = defaultdict(int)
+                for (dd_, l, s_, m, ch_, c), v in jng.items():
+                    if l == it["line"] and s_ == it["station"] and m == it["model"] and a_ <= dd_ < b_ and _in_family(c, it["code"]): ng_j[ch_] += v
+                for (dd_, l, s_, m, ch_), v in jt.items():
+                    if l == it["line"] and s_ == it["station"] and m == it["model"] and a_ <= dd_ < b_: t_j[ch_] += v
+                tot_ng = sum(ng_j.values())
+                if tot_ng < 10: continue
+                top_ch, top_n = max(ng_j.items(), key=lambda kv: kv[1])
+                if top_n * 100 >= 40 * tot_ng:
+                    why = [f"{jig_name.get(top_ch, top_ch)} = {top_n * 100 // tot_ng}% of the NG ({top_n * 100 / max(t_j[top_ch], 1):.1f}% on that jig)"]
+                else:
+                    why = ["spread over several jigs"]
+                jobs_b = {j for (dd_, l, s_, m, j), v in tjob.items() if l == it["line"] and s_ == it["station"] and m == it["model"] and dd_ < a_}
+                new_ = sorted({j for (dd_, l, s_, m, j), v in tjob.items() if l == it["line"] and s_ == it["station"] and m == it["model"]
+                               and a_ <= dd_ < b_ and j and j not in jobs_b})
+                if new_: why.append("new job " + new_[0])
+                med = sorted(p[3] for p in after_pts)[len(after_pts) // 2]
+                if t_ < 0.3 * med: why.append(f"low volume ({t_:,} tests)")
+                spikes.append(f"{lab} rise to {rate_:.2f}%: " + ", ".join(why))
+        notes[:0] = spikes
         res.append(dict(it, before=[b0.isoformat(), b1.isoformat()], after=[a0.isoformat(), a1.isoformat()], days_after=days_after,
                         tests_before=tb, tests_after=ta, ng_before=kb, ng_after=ka, rate_before=rb, rate_after=ra, change_pct=rel,
                         p_value=p, retest_before=rtb, retest_after=rta, control_lines=ctl, control_change_pct=crel,

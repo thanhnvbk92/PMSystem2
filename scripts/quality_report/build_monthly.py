@@ -46,7 +46,7 @@ prs = Presentation(os.environ.get("SKELETON", os.path.join(HERE, "assets", "skel
 
 # ---------- 1. Cover ----------
 c = S[0]; strip_annotations(c)
-set_runs(by_name(c, "Title 1"), ["Monthly Quality Report", "NTF · Re-test · RTY"])
+set_runs(by_name(c, "Title 1"), ["Monthly Report", "NTF · Re-test · RTY"])
 sub = by_name(c, "내용 개체 틀 2"); set_runs(sub, [f"{MONTH_TITLE} · {FN} improvement review · PMSystem2 data"]); sub.width = Inches(9)
 gt = by_name(c, "Group 46").table
 for r in range(len(gt.rows)):
@@ -146,12 +146,16 @@ textbox(f.s, 6.93, yy + rh * len(lrows) + 0.06, 5.84, 0.4,
         [f"* {improved} of {len(lines)} lines reduced Re-test vs {mname(1)}. Line RTY = PCBs that passed every station of the line first time. Green row = {FN}."], size=8, color=G3)
 
 # ---------- 6. Section divider ----------
-sd = S[5]; strip_annotations(sd)
-set_runs(by_name(sd, "Title 1"), ["02"])
-for sh in sd.shapes:
-    if sh.name == "Content Placeholder 2" and sh.has_text_frame:
-        if sh.top / 914400 < 1: set_runs(sh, [FN, "Improvement Review"])
-        else: set_runs(sh, [f"{m_['name']}: improvement from {d2(m_['A'][0])}" for m_ in MI]); sh.width = Inches(4.0)
+def section_slide(sl, lines_):
+    """Section divider with the big title only (no number, no subtitle)."""
+    strip_annotations(sl)
+    for sh in list(sl.shapes):
+        if sh.name == "Title 1": remove(sh)
+        elif sh.name == "Content Placeholder 2" and sh.has_text_frame:
+            if sh.top / 914400 < 1: set_runs(sh, lines_)
+            else: remove(sh)
+sd = S[5]
+section_slide(sd, [FN, "Improvement Review"])
 
 # ---------- 7. Before vs after by model ----------
 f = Frame(S[6], f"{FN}: Improvement Results by Model", f"Improvement start: {STARTS} · control line {CN} (same models)")
@@ -290,13 +294,7 @@ IMP = D.get("improvements") or []
 VCOL = {"Effective": GREEN, "Worse": RED, "Small improvement": GREEN, "Improving (not significant)": "BF8F00",
         "No clear effect": G3, "Insufficient data": G3, "Code not seen": G3, "No baseline": G3, "No error code": G3}
 VFILL = {"Effective": "C6EFCE", "Worse": "FFC7CE", "Small improvement": "E2EFDA", "Improving (not significant)": "FFEB9C"}
-sd2 = S[10]; strip_annotations(sd2)
-set_runs(by_name(sd2, "Title 1"), ["03"])
-n_eff = sum(1 for x in IMP if x["verdict"].startswith("Effective"))
-for sh in sd2.shapes:
-    if sh.name == "Content Placeholder 2" and sh.has_text_frame:
-        if sh.top / 914400 < 1: set_runs(sh, ["Improvement", "Verification"])
-        else: set_runs(sh, [f"{len(IMP)} improvements · {n_eff} effective", "Before vs after with trends"]); sh.width = Inches(4.0)
+section_slide(S[10], ["Improvement", "Verification"])
 def pc(v, d=2): return "–" if v is None else f"{v:.{d}f}%"
 def dd(s): return dt.date.fromisoformat(s).strftime("%d/%m")
 def ddw(s):                                   # date with its ISO week, e.g. 30/10 (W44)
@@ -334,7 +332,7 @@ if IMP:
     textbox(f.s, 0.53, yy + rh_ * len(rows) + 0.06, 12.24, 0.4,
             ["* Code B/A = NG attempts with that error code / test attempts at the line + station + model, 28 days before vs up to 28 days after "
              "(action day excluded). Effective = −30% or more and p < 0.05. * = error code detected from the data. "
-             "(early) = fewer than 7 days after the action. One 'Verify Permanent Corrective Action' page with the trend follows for each improvement "
+             "(early) = fewer than 7 days after the action. One 'Verify Corrective Action' page with the trend follows for each improvement "
              "except 'Insufficient data'."], size=8, color=G3)
 else:
     textbox(f.s, 0.53, yy + 0.2, 12.24, 0.4, ["Reports/ImprovementList.xlsx not found or empty."], size=12, color=G3)
@@ -357,7 +355,7 @@ def pca_cell(cell, paras, size=9.5, align=PP_ALIGN.LEFT, anchor=MSO_ANCHOR.TOP, 
     cell.margin_left = Inches(0.08); cell.margin_top = Inches(0.08); cell.margin_right = Inches(0.05)
 for sl, (num_, x) in zip(TREND_SLIDES, pages):
     d_ = dt.date.fromisoformat(x["date"]); wk_ = f"W{d_.isocalendar()[1]}"
-    f = Frame(sl, "Verify Permanent Corrective Action", f"#{num_} · {x['line']} · {x['station']} · {x['model']}")
+    f = Frame(sl, "Verify Corrective Action", f"#{num_} · {x['line']} · {x['station']} · {x['model']}")
     f.section(f"Issue: {codes_short(x['code']) or '–'}" + (" (detected from data)" if x.get("auto_code") else ""), unit="(Unit: % of test attempts)")
     gf = f.s.shapes.add_table(2, 6, Inches(TX), Inches(TY), Inches(sum(COLS)), Inches(H0 + H1)); gf.name = f"PCA table {num_}"
     tbl = gf.table; tblPr = tbl._tbl.tblPr; tblPr.set("firstRow", "0"); tblPr.set("bandRow", "0")
@@ -376,19 +374,18 @@ for sl, (num_, x) in zip(TREND_SLIDES, pages):
              "",
              [("Corrective action", {"bold": True})],
              x["action"] or "–",
-             f"Done {d_:%d/%m/%Y} ({wk_})",
-             "",
-             [("Result", {"bold": True})],
-             [("Error code: ", {}), (f"{pc(x['rate_before'])} → {pc(x['rate_after'])}", {"bold": True, "color": res_col}),
-              (f" ({x['change_pct']:+.0f}%)" if x["change_pct"] is not None else "", {"color": res_col})],
-             f"Station Re-test: {pc(x['retest_before'], 1)} → {pc(x['retest_after'], 1)}",
-             [("Verdict: ", {}), (x["verdict"], {"bold": True, "color": VCOL.get(vbase(x["verdict"]), DARK)})],
-             f"Before {dd(x['before'][0])}–{dd((dt.date.fromisoformat(x['before'][1]) - dt.timedelta(days=1)).isoformat())}, "
-             f"after {dd(x['after'][0])}–{dd((dt.date.fromisoformat(x['after'][1]) - dt.timedelta(days=1)).isoformat())}"]
+             f"Done {d_:%d/%m/%Y} ({wk_})"]
     if x["notes"]:
-        paras += ["", [("Notes", {"bold": True})]] + [[("• " + n_, {"color": G3, "size": 8.5})] for n_ in x["notes"]]
+        paras += ["", [("Notes", {"bold": True})]] + [[("• " + n_, {"color": DARK if " rise to " in n_ else G3, "size": 8.5})] for n_ in x["notes"]]
     pca_cell(tbl.cell(1, 1), paras, size=9.5)
-    pca_cell(tbl.cell(1, 2), [""], size=8)
+    result = [[("Result", {"bold": True})],
+              [("Error code: ", {}), (f"{pc(x['rate_before'])} → {pc(x['rate_after'])}", {"bold": True, "color": res_col}),
+               (f" ({x['change_pct']:+.0f}%)" if x["change_pct"] is not None else "", {"color": res_col}),
+               (f"   ·   Station Re-test: {pc(x['retest_before'], 1)} → {pc(x['retest_after'], 1)}", {})],
+              [("Verdict: ", {}), (x["verdict"], {"bold": True, "color": VCOL.get(vbase(x["verdict"]), DARK)}),
+               (f"   ·   before {dd(x['before'][0])}–{dd((dt.date.fromisoformat(x['before'][1]) - dt.timedelta(days=1)).isoformat())}, "
+                f"after {dd(x['after'][0])}–{dd((dt.date.fromisoformat(x['after'][1]) - dt.timedelta(days=1)).isoformat())}", {"color": G3})]]
+    pca_cell(tbl.cell(1, 2), result, size=9)
     textbox(f.s, TX + COLS[0] + COLS[1] + 0.08, TY + H0 + H1 - 0.3, COLS[2] - 0.16, 0.22,
             ["grey = before · green = after · " + ("by day" if x["trend_daily"] else "by ISO week") + f" · action {dd(x['date'])} ({wk_})"],
             size=8, color=G3, align=PP_ALIGN.CENTER, name=f"Trend legend {num_}")
@@ -399,10 +396,10 @@ for sl, (num_, x) in zip(TREND_SLIDES, pages):
     # trend chart inside the "Actual Check" cell
     pts = [p for p in x["trend"] if p[1] is not None]
     if pts:
-        cx = TX + COLS[0] + COLS[1] + 0.08; cy = TY + H0 + 0.1
+        cx = TX + COLS[0] + COLS[1] + 0.08; cy = TY + H0 + 0.72
         cd = CategoryChartData(); cd.categories = [p[0] for p in pts]
         cd.add_series("Code rate %", [round(p[1], 3) for p in pts])
-        gch = f.s.shapes.add_chart(XL_CHART_TYPE.COLUMN_CLUSTERED, Inches(cx), Inches(cy), Inches(COLS[2] - 0.16), Inches(H1 - 0.45), cd)
+        gch = f.s.shapes.add_chart(XL_CHART_TYPE.COLUMN_CLUSTERED, Inches(cx), Inches(cy), Inches(COLS[2] - 0.16), Inches(H1 - 1.05), cd)
         gch.name = f"Trend {num_}"
         ch = gch.chart; chart_text(ch, 8); ch.has_legend = False
         ch.has_title = True; ch.chart_title.text_frame.text = f"{codes_short(x['code'])} – % of tests"
