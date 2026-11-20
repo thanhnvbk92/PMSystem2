@@ -650,6 +650,13 @@ using (var scope = app.Services.CreateScope())
                     last_telemetry_at TIMESTAMPTZ
                 );
                 CREATE INDEX IF NOT EXISTS IX_machine_status_channel ON machine_status(channel_id);
+                -- PC clock drift (telemetry local_time); added only when missing.
+                DO $clock$ BEGIN
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public'
+                            AND table_name = 'machine_status' AND column_name = 'clock_offset_seconds') THEN
+                        ALTER TABLE machine_status ADD COLUMN clock_offset_seconds DOUBLE PRECISION;
+                    END IF;
+                END $clock$;
                 CREATE TABLE IF NOT EXISTS app_settings (
                     key VARCHAR(100) PRIMARY KEY,
                     value TEXT,

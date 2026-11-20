@@ -1,8 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Monitor, Wifi, WifiOff, AlertTriangle, HardDrive, Cpu, Search, RefreshCw, Save, X, Trash2, CheckCircle2, HelpCircle, ArrowUpCircle
+  Monitor, Wifi, WifiOff, AlertTriangle, HardDrive, Cpu, Search, RefreshCw, Save, X, Trash2, CheckCircle2, HelpCircle, ArrowUpCircle, Clock
 } from 'lucide-react';
-import { MachinesApi } from '../services/api';
+import { MachinesApi, CommandApi } from '../services/api';
 import { onMachineStatusChanged } from '../services/signalr';
 
 // ---------------------------------------------------------------- helpers
@@ -33,6 +33,22 @@ export const versionState = (version, standard) => {
 const LOW_DISK_GB = 5;
 const LOW_DISK_RATIO = 0.1;
 export const isLowDisk = (m) => m.diskFreeGb != null && (m.diskFreeGb < LOW_DISK_GB || (m.diskTotalGb && m.diskFreeGb / m.diskTotalGb < LOW_DISK_RATIO));
+
+// PC clock: wall clock shown on the PC minus the server's (time zones are not used). Above this the
+// row is red and offers "Sync giờ" (Backup_Log2 then sets the PC clock to the server wall clock).
+const CLOCK_DRIFT_LIMIT_SECONDS = 60;
+const isClockOff = (m) => m.clockOffsetSeconds != null && Math.abs(m.clockOffsetSeconds) > CLOCK_DRIFT_LIMIT_SECONDS;
+const canUpdate = (m, standard) => m.isOnline && versionState(m.appVersion, standard) === 'old';
+const canSyncTime = (m) => m.isOnline && isClockOff(m);
+const formatOffset = (seconds) => {
+  const sign = seconds < 0 ? '-' : '+';
+  let rest = Math.round(Math.abs(seconds));
+  const d = Math.floor(rest / 86400); rest %= 86400;
+  const h = Math.floor(rest / 3600); rest %= 3600;
+  const m = Math.floor(rest / 60); const sec = rest % 60;
+  const parts = d ? [`${d} ngày`, `${h} h`] : h ? [`${h} h`, `${m} m`] : m ? [`${m} m`, `${sec} s`] : [`${sec} s`];
+  return sign + parts.join(' ');
+};
 
 const pad = (n) => String(n).padStart(2, '0');
 const formatTime = (value) => {
@@ -89,11 +105,67 @@ function StatusBadge({ online, neverConnected }) {
     : <span className="badge badge-ng font-sans whitespace-nowrap">Offline</span>;
 }
 
+/** Wall clock shown on the PC now (server time + measured drift) and the drift. */
+function PcClock({ pc, now, serverSkewMs = 0 }) {
+  if (pc.clockOffsetSeconds == null) {
+    return <span className="text-slate-400" title="Cần Backup_Log2 bản mới (gửi giờ của PC trong telemetry)">—</span>;
+  }
+  const off = isClockOff(pc);
+  const d = new Date(now + serverSkewMs + pc.clockOffsetSeconds * 1000);
+  return (
+    <span className={`font-mono whitespace-nowrap ${off ? 'text-rose-700 font-bold' : 'text-slate-700'}`}
+      title={`Giờ đang hiển thị trên PC (đo lúc nhận telemetry gần nhất). Lệch so với server: ${formatOffset(pc.clockOffsetSeconds)}`}>
+      {pad(d.getDate())}/{pad(d.getMonth() + 1)} {pad(d.getHours())}:{pad(d.getMinutes())}
+      <span className={`ml-1.5 text-[10px] ${off ? '' : 'text-slate-400'}`}>({formatOffset(pc.clockOffsetSeconds)})</span>
+    </span>
+  );
+}
+
+/** Sends update / time.sync to PCs by MAC and keeps a short status per PC. */
+function useMachineCommands() {
+  const [sent, setSent] = useState({});
+  const send = useCallback(async (pcs, kind) => {
+    const mark = (pc, value) => setSent(prev => ({ ...prev, [`${kind}:${pc.macKey}`]: value }));
+    await Promise.all(pcs.map(async (pc) => {
+      mark(pc, 'sending');
+      try {
+        if (kind === 'update') {
+          await CommandApi.updateApp({ macAddress: pc.macAddress, force: false, updateXmlPath: null });
+        } else {
+          await CommandApi.sendCommand({ macAddress: pc.macAddress, command: 'time.sync', data: null });
+        }
+        mark(pc, 'sent');
+      } catch {
+        mark(pc, 'error');
+      }
+    }));
+  }, []);
+  return { sent, send };
+}
+
+function CommandButton({ pc, kind, commands }) {
+  const state = commands.sent[`${kind}:${pc.macKey}`];
+  const isUpdate = kind === 'update';
+  const Icon = isUpdate ? ArrowUpCircle : Clock;
+  const label = state === 'sending' ? 'Đang gửi…' : state === 'sent' ? 'Đã gửi' : state === 'error' ? 'Lỗi, gửi lại' : isUpdate ? 'Update' : 'Sync giờ';
+  return (
+    <button type="button" disabled={state === 'sending'}
+      onClick={(e) => { e.stopPropagation(); commands.send([pc], kind); }}
+      title={isUpdate ? 'Gửi lệnh update Backup_Log2 tới PC này' : 'Gửi lệnh time.sync: PC đặt giờ theo giờ server (giữ múi giờ của PC)'}
+      className={`ml-2 inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10px] font-semibold whitespace-nowrap disabled:opacity-50 ${
+        state === 'error' ? 'border-rose-300 bg-rose-50 text-rose-700'
+          : state === 'sent' ? 'border-emerald-300 bg-emerald-50 text-emerald-700'
+          : isUpdate ? 'border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100' : 'border-blue-300 bg-blue-50 text-blue-700 hover:bg-blue-100'}`}>
+      <Icon className="h-3 w-3" /> {label}
+    </button>
+  );
+}
+
 // ---------------------------------------------------------------- data
 
 /** PCs from the server, plus channels with a MAC that never connected; names from master data. */
 function usePcData(channels, stations, lines) {
-  const [data, setData] = useState({ machines: [], standardVersion: null, offlineAfterSeconds: 180 });
+  const [data, setData] = useState({ machines: [], standardVersion: null, offlineAfterSeconds: 180, serverSkewMs: 0 });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [now, setNow] = useState(Date.now());
@@ -102,7 +174,10 @@ function usePcData(channels, stations, lines) {
   const load = useCallback(async () => {
     try {
       const result = await MachinesApi.getAll();
-      setData({ machines: result.machines || [], standardVersion: result.standardVersion || null, offlineAfterSeconds: result.offlineAfterSeconds || 180 });
+      // The PC clock column is server time + PC drift, so a wrong clock on this browser does not matter.
+      const serverMs = result.serverTime ? new Date(result.serverTime).getTime() : NaN;
+      setData({ machines: result.machines || [], standardVersion: result.standardVersion || null, offlineAfterSeconds: result.offlineAfterSeconds || 180,
+        serverSkewMs: Number.isFinite(serverMs) ? serverMs - Date.now() : 0 });
       setError(null);
     } catch (err) {
       setError(err?.response?.status === 404 ? 'Backend chưa có API giám sát PC (cần khởi động lại backend bản mới).' : 'Không tải được dữ liệu PC.');
@@ -158,12 +233,12 @@ function usePcData(channels, stations, lines) {
       (a.channelName || '~').localeCompare(b.channelName || '~', undefined, { numeric: true }));
   }, [data.machines, channels, stations, lines]);
 
-  return { rows, standardVersion: data.standardVersion, offlineAfterSeconds: data.offlineAfterSeconds, loading, error, now, reload: load, setStandardVersion: (v) => setData(d => ({ ...d, standardVersion: v })) };
+  return { rows, standardVersion: data.standardVersion, offlineAfterSeconds: data.offlineAfterSeconds, serverSkewMs: data.serverSkewMs, loading, error, now, reload: load, setStandardVersion: (v) => setData(d => ({ ...d, standardVersion: v })) };
 }
 
 // ---------------------------------------------------------------- detail
 
-function PcDetail({ pc, standardVersion, now, onClose, onDelete }) {
+function PcDetail({ pc, standardVersion, now, serverSkewMs, onClose, onDelete }) {
   const items = [
     ['Trạng thái', <StatusBadge key="s" online={pc.isOnline} neverConnected={pc.neverConnected} />],
     ['Dây chuyền / Trạm / Channel', `${pc.lineName || '-'} / ${pc.stationName || '-'} / ${pc.channelName || '-'} (#${pc.channelId ?? '-'})`],
@@ -172,6 +247,7 @@ function PcDetail({ pc, standardVersion, now, onClose, onDelete }) {
     ['MAC', pc.macAddress || pc.macKey],
     ['Hệ điều hành', pc.osVersion || '-'],
     ['Version Backup_Log2', <VersionBadge key="v" version={pc.appVersion} standard={standardVersion} />],
+    ['Giờ PC', <PcClock key="c" pc={pc} now={now} serverSkewMs={serverSkewMs} />],
     ['Log type', pc.logType || '-'],
     ['Thư mục log', pc.logFolders || '-'],
     ['Model hiện tại', pc.currentModel || '-'],
@@ -221,7 +297,7 @@ function PcDetail({ pc, standardVersion, now, onClose, onDelete }) {
 // ---------------------------------------------------------------- pages
 
 export default function PcMonitor({ view = 'overview', channels = [], stations = [], lines = [] }) {
-  const { rows, standardVersion, offlineAfterSeconds, loading, error, now, reload, setStandardVersion } = usePcData(channels, stations, lines);
+  const { rows, standardVersion, offlineAfterSeconds, serverSkewMs, loading, error, now, reload, setStandardVersion } = usePcData(channels, stations, lines);
   const [selected, setSelected] = useState(null);
 
   const handleDelete = async (pc) => {
@@ -239,8 +315,8 @@ export default function PcMonitor({ view = 'overview', channels = [], stations =
       )}
       {view === 'overview'
         ? <Overview rows={rows} standardVersion={standardVersion} offlineAfterSeconds={offlineAfterSeconds} loading={loading} now={now} onSelect={setSelected} onStandardSaved={setStandardVersion} />
-        : <PcList rows={rows} lines={lines} standardVersion={standardVersion} loading={loading} now={now} onSelect={setSelected} onReload={reload} />}
-      {selected && <PcDetail pc={selected} standardVersion={standardVersion} now={now} onClose={() => setSelected(null)} onDelete={handleDelete} />}
+        : <PcList rows={rows} lines={lines} standardVersion={standardVersion} loading={loading} now={now} serverSkewMs={serverSkewMs} onSelect={setSelected} onReload={reload} />}
+      {selected && <PcDetail pc={selected} standardVersion={standardVersion} now={now} serverSkewMs={serverSkewMs} onClose={() => setSelected(null)} onDelete={handleDelete} />}
     </div>
   );
 }
@@ -361,7 +437,8 @@ function Overview({ rows, standardVersion, offlineAfterSeconds, loading, now, on
   );
 }
 
-function PcList({ rows, lines, standardVersion, loading, now, onSelect, onReload }) {
+function PcList({ rows, lines, standardVersion, loading, now, serverSkewMs, onSelect, onReload }) {
+  const commands = useMachineCommands();
   const [search, setSearch] = useState('');
   const [lineId, setLineId] = useState('');
   const [status, setStatus] = useState('all');
@@ -370,6 +447,7 @@ function PcList({ rows, lines, standardVersion, loading, now, onSelect, onReload
   const filtered = rows.filter(r => {
     if (status === 'online' && !r.isOnline) return false;
     if (status === 'offline' && r.isOnline) return false;
+    if (status === 'clock' && !isClockOff(r)) return false;
     if (lineId && String(r.lineId) !== lineId) return false;
     const vs = versionState(r.appVersion, standardVersion);
     if (version === 'standard' && vs !== 'standard') return false;
@@ -399,6 +477,7 @@ function PcList({ rows, lines, standardVersion, loading, now, onSelect, onReload
           <option value="all">Online + Offline</option>
           <option value="online">Chỉ Online</option>
           <option value="offline">Chỉ Offline</option>
+          <option value="clock">Lệch giờ &gt; {CLOCK_DRIFT_LIMIT_SECONDS}s</option>
         </select>
         <select value={version} onChange={e => setVersion(e.target.value)} className={select}>
           <option value="all">Mọi version</option>
@@ -410,6 +489,10 @@ function PcList({ rows, lines, standardVersion, loading, now, onSelect, onReload
           <RefreshCw className="w-3.5 h-3.5 text-blue-700" /> Tải lại
         </button>
         <span className="text-xs text-slate-600 font-mono">Hiển thị {filtered.length} / {rows.length}</span>
+        <BulkButton rows={filtered.filter(r => canUpdate(r, standardVersion))} kind="update" commands={commands}
+          label="Update PC version cũ" confirmText={(n) => `Gửi lệnh update Backup_Log2 tới ${n} PC đang online có version thấp hơn ${standardVersion}?`} />
+        <BulkButton rows={filtered.filter(canSyncTime)} kind="sync" commands={commands}
+          label="Sync giờ PC lệch" confirmText={(n) => `Gửi lệnh sync giờ tới ${n} PC đang online lệch giờ quá ${CLOCK_DRIFT_LIMIT_SECONDS} giây?`} />
       </div>
 
       <div className="overflow-x-auto rounded-xl border border-slate-200">
@@ -421,6 +504,7 @@ function PcList({ rows, lines, standardVersion, loading, now, onSelect, onReload
               <th className="p-3">Hostname</th>
               <th className="p-3">IP</th>
               <th className="p-3">Version</th>
+              <th className="p-3">Giờ PC</th>
               <th className="p-3">Log type</th>
               <th className="p-3 text-right">CPU</th>
               <th className="p-3 text-right">RAM</th>
@@ -431,7 +515,7 @@ function PcList({ rows, lines, standardVersion, loading, now, onSelect, onReload
           </thead>
           <tbody className="divide-y divide-slate-200">
             {filtered.length === 0 && (
-              <tr><td colSpan={11} className="p-10 text-center text-slate-500">{loading ? 'Đang tải…' : 'Không có PC phù hợp bộ lọc.'}</td></tr>
+              <tr><td colSpan={12} className="p-10 text-center text-slate-500">{loading ? 'Đang tải…' : 'Không có PC phù hợp bộ lọc.'}</td></tr>
             )}
             {filtered.map(r => (
               <tr key={r.macKey} className="hover:bg-slate-100/70 cursor-pointer" onClick={() => onSelect(r)}>
@@ -439,7 +523,14 @@ function PcList({ rows, lines, standardVersion, loading, now, onSelect, onReload
                 <td className="p-3 whitespace-nowrap">{r.lineName || '-'} / {r.stationName || '-'} / <b>{r.channelName || '-'}</b></td>
                 <td className="p-3 font-mono">{r.hostname || '-'}</td>
                 <td className="p-3 font-mono text-blue-700 max-w-[160px] truncate" title={r.ipAddress || r.channelIp || ''}>{r.ipAddress || r.channelIp || '-'}</td>
-                <td className="p-3"><VersionBadge version={r.appVersion} standard={standardVersion} /></td>
+                <td className="p-3 whitespace-nowrap">
+                  <VersionBadge version={r.appVersion} standard={standardVersion} />
+                  {canUpdate(r, standardVersion) && <CommandButton pc={r} kind="update" commands={commands} />}
+                </td>
+                <td className="p-3 whitespace-nowrap">
+                  <PcClock pc={r} now={now} serverSkewMs={serverSkewMs} />
+                  {canSyncTime(r) && <CommandButton pc={r} kind="sync" commands={commands} />}
+                </td>
                 <td className="p-3 max-w-[160px] truncate" title={r.logType || ''}>{r.logType || '-'}</td>
                 <td className="p-3 text-right font-mono">{r.cpuPercent != null ? `${r.cpuPercent}%` : '-'}</td>
                 <td className="p-3 text-right font-mono">{r.ramTotalMb ? `${Math.round((r.ramUsedMb / r.ramTotalMb) * 100)}%` : '-'}</td>
@@ -453,5 +544,18 @@ function PcList({ rows, lines, standardVersion, loading, now, onSelect, onReload
       </div>
       <p className="text-[11px] text-slate-500 flex items-center gap-1.5"><Cpu className="w-3.5 h-3.5" /> Bấm vào một dòng để xem chi tiết PC. CPU/RAM/ổ đĩa cập nhật mỗi phút từ Backup_Log2 bản mới.</p>
     </div>
+  );
+}
+
+/** Sends one command to every PC of the list (online PCs that need it) after a confirmation. */
+function BulkButton({ rows, kind, commands, label, confirmText }) {
+  if (rows.length === 0) return null;
+  const Icon = kind === 'update' ? ArrowUpCircle : Clock;
+  return (
+    <button type="button" onClick={() => { if (window.confirm(confirmText(rows.length))) commands.send(rows, kind); }}
+      className={`px-3 py-2 rounded-xl border text-xs font-semibold flex items-center gap-1.5 ${
+        kind === 'update' ? 'bg-amber-50 hover:bg-amber-100 border-amber-300 text-amber-800' : 'bg-blue-50 hover:bg-blue-100 border-blue-300 text-blue-700'}`}>
+      <Icon className="w-3.5 h-3.5" /> {label} ({rows.length})
+    </button>
   );
 }

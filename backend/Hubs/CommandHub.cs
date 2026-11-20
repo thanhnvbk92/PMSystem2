@@ -105,6 +105,8 @@ namespace PMSystem2.Api.Hubs
         [JsonPropertyName("last_upload_at")] public DateTime? LastUploadAt { get; set; }
         [JsonPropertyName("log_type")] public string? LogType { get; set; }
         [JsonPropertyName("log_folders")] public string? LogFolders { get; set; }
+        /// <summary>Wall clock shown on the PC, no time zone ("2026-11-20T07:00:05.123").</summary>
+        [JsonPropertyName("local_time")] public string? LocalTime { get; set; }
     }
 
     public interface ICommandClient
@@ -319,7 +321,8 @@ namespace PMSystem2.Api.Hubs
                 AppStartedAt = telemetry.AppStartedAt,
                 LastUploadAt = telemetry.LastUploadAt,
                 LogType = telemetry.LogType,
-                LogFolders = telemetry.LogFolders
+                LogFolders = telemetry.LogFolders,
+                LocalTime = telemetry.LocalTime
             });
             await BroadcastMachineAsync(new
             {

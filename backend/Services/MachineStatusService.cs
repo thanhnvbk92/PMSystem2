@@ -26,6 +26,8 @@ public sealed class MachineTelemetryInput
     public DateTime? LastUploadAt { get; init; }
     public string? LogType { get; init; }
     public string? LogFolders { get; init; }
+    /// <summary>Wall clock shown on the PC (no time zone); null from builds that do not send it.</summary>
+    public string? LocalTime { get; init; }
 }
 
 /// <summary>One PC as shown on the PC monitoring page.</summary>
@@ -34,7 +36,8 @@ public sealed record MachineStatusDto(
     string? Hostname, string? IpAddress, string? OsVersion, string? AppVersion, string? CurrentModel,
     string? LogType, string? LogFolders, string? AppStatus, double? CpuPercent, int? RamTotalMb, int? RamUsedMb,
     string? DiskDrive, double? DiskTotalGb, double? DiskFreeGb, DateTime? AppStartedAt, DateTime? LastUploadAt,
-    DateTime? ConnectedAt, DateTime? DisconnectedAt, DateTime? LastSeenAt, DateTime? LastTelemetryAt);
+    DateTime? ConnectedAt, DateTime? DisconnectedAt, DateTime? LastSeenAt, DateTime? LastTelemetryAt,
+    double? ClockOffsetSeconds);
 
 /// <summary>
 /// Keeps the latest state of each Backup_Log2 PC in <c>machine_status</c>.
@@ -147,6 +150,12 @@ public sealed class MachineStatusService
             m.LastUploadAt = Local(t.LastUploadAt) ?? m.LastUploadAt;
             m.LogType = Cut(t.LogType, 200) ?? m.LogType;
             m.LogFolders = string.IsNullOrWhiteSpace(t.LogFolders) ? m.LogFolders : t.LogFolders.Trim();
+            // PC wall clock minus server wall clock, both as shown (time zones are not used: time.sync
+            // makes the PC show the server's wall clock). Null when the build does not send local_time.
+            m.ClockOffsetSeconds = DateTime.TryParse(t.LocalTime, System.Globalization.CultureInfo.InvariantCulture,
+                    System.Globalization.DateTimeStyles.None, out var pcClock)
+                ? Math.Round((pcClock - now).TotalSeconds, 1)
+                : null;
         });
 
     public async Task<List<MachineStatusDto>> GetAllAsync()
@@ -193,6 +202,6 @@ public sealed class MachineStatusService
             m.Hostname, m.IpAddress, m.OsVersion, m.AppVersion, m.CurrentModel, m.LogType, m.LogFolders, m.AppStatus,
             m.CpuPercent, m.RamTotalMb, m.RamUsedMb, m.DiskDrive, m.DiskTotalGb, m.DiskFreeGb,
             Local(m.AppStartedAt), Local(m.LastUploadAt), Local(m.ConnectedAt), Local(m.DisconnectedAt),
-            Local(m.LastSeenAt), Local(m.LastTelemetryAt));
+            Local(m.LastSeenAt), Local(m.LastTelemetryAt), m.ClockOffsetSeconds);
     }
 }
