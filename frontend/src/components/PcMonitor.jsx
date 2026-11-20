@@ -358,7 +358,7 @@ export default function PcMonitor({ view = 'overview', channels = [], stations =
       )}
       {view === 'overview'
         ? <Overview rows={rows} standardVersion={standardVersion} offlineAfterSeconds={offlineAfterSeconds} loading={loading} now={now} onSelect={setSelected} />
-        : <PcList rows={rows} lines={lines} standardVersion={standardVersion} loading={loading} now={now} serverSkewMs={serverSkewMs} onSelect={setSelected} onReload={reload} />}
+        : <PcList rows={rows} standardVersion={standardVersion} loading={loading} now={now} serverSkewMs={serverSkewMs} onSelect={setSelected} onReload={reload} />}
       {selected && <PcDetail pc={selected} standardVersion={standardVersion} now={now} serverSkewMs={serverSkewMs} onClose={() => setSelected(null)} onDelete={handleDelete} />}
     </div>
   );
@@ -508,116 +508,197 @@ function Overview({ rows, standardVersion, offlineAfterSeconds, loading, now, on
   );
 }
 
-function PcList({ rows, lines, standardVersion, loading, now, serverSkewMs, onSelect, onReload }) {
+// ---------------------------------------------------------------- PC list: sort and filter per column
+
+const ramPct = (r) => (r.ramTotalMb ? Math.round((r.ramUsedMb / r.ramTotalMb) * 100) : null);
+const minFreePct = (r) => {
+  const pcts = drivesOf(r).filter(d => d.total).map(d => (d.free / d.total) * 100);
+  return pcts.length ? Math.min(...pcts) : null;
+};
+const timeMs = (value) => (value ? new Date(value).getTime() : null);
+const versionKey = (v) => {
+  const parts = String(v || '').trim().split('.').map(Number);
+  return !v || parts.some(isNaN) ? null : parts.slice(0, 4).reduce((acc, x) => acc * 10000 + x, 0);
+};
+const AGE_OPTIONS = [['1h', 'Quá 1 giờ'], ['1d', 'Quá 1 ngày'], ['never', 'Chưa có']];
+const ageMatch = (value, now, option) => {
+  const t = timeMs(value);
+  if (option === 'never') return t == null;
+  return t != null && now - t > (option === '1h' ? 3600e3 : 86400e3);
+};
+
+/**
+ * Columns of the PC list. sort: value to sort on (null = last). filter:
+ *  text   - contains (get)
+ *  pick   - one of the distinct values of the column (get)
+ *  choice - fixed options [value, label] tested with match(row, value)
+ *  min    - number >= the value typed (get)
+ */
+function pcColumns({ standardVersion, now, serverSkewMs, commands }) {
+  return [
+    { key: 'line', label: 'Line', sort: r => r.lineName, filter: { type: 'pick', get: r => r.lineName },
+      cell: r => <td className="whitespace-nowrap">{r.lineName || '-'}</td> },
+    { key: 'station', label: 'Trạm', sort: r => r.stationName, filter: { type: 'pick', get: r => r.stationName },
+      cell: r => <td className="whitespace-nowrap">{r.stationName || '-'}</td> },
+    { key: 'channel', label: 'Channel', sort: r => r.channelName, filter: { type: 'text', get: r => r.channelName },
+      cell: r => <td className="max-w-[80px] truncate font-semibold" title={r.channelName || ''}>{r.channelName || '-'}</td> },
+    { key: 'hostname', label: 'Hostname', sort: r => r.hostname, filter: { type: 'text', get: r => r.hostname },
+      cell: r => <td className="font-mono max-w-[100px] truncate" title={r.hostname || ''}>{r.hostname || '-'}</td> },
+    { key: 'ip', label: 'IP', title: 'IP mà PC dùng để kết nối tới server', sort: r => r.connectedIp, filter: { type: 'text', get: r => r.connectedIp },
+      cell: r => <td className="font-mono text-blue-700 whitespace-nowrap" title="IP PC dùng để kết nối tới server">{r.connectedIp || '-'}</td> },
+    { key: 'version', label: 'Version', sort: r => versionKey(r.appVersion),
+      filter: { type: 'choice', options: [['standard', 'Mới nhất'], ['old', 'Cũ hơn'], ['unknown', 'Chưa rõ']],
+        match: (r, v) => (v === 'unknown' ? !r.appVersion : versionState(r.appVersion, standardVersion) === v) },
+      cell: r => (
+        <td className="whitespace-nowrap">
+          <VersionBadge version={r.appVersion} standard={standardVersion} />
+          {canUpdate(r, standardVersion) && <CommandButton pc={r} kind="update" commands={commands} />}
+        </td>) },
+    { key: 'clock', label: 'Giờ PC', sort: r => (r.clockOffsetSeconds == null ? null : Math.abs(r.clockOffsetSeconds)),
+      filter: { type: 'choice', options: [['off', `Lệch > ${CLOCK_DRIFT_LIMIT_SECONDS}s`], ['ok', 'Đúng giờ'], ['none', 'Chưa có']],
+        match: (r, v) => (v === 'none' ? r.clockOffsetSeconds == null : v === 'off' ? isClockOff(r) : r.clockOffsetSeconds != null && !isClockOff(r)) },
+      cell: r => (
+        <td className="whitespace-nowrap">
+          <PcClock pc={r} now={now} serverSkewMs={serverSkewMs} />
+          {canSyncTime(r) && <CommandButton pc={r} kind="sync" commands={commands} />}
+        </td>) },
+    { key: 'logType', label: 'Log type', sort: r => r.logType, filter: { type: 'pick', get: r => r.logType },
+      cell: r => <td className="max-w-[80px] truncate" title={r.logType || ''}>{r.logType || '-'}</td> },
+    { key: 'cpu', label: 'CPU', align: 'right', sort: r => r.cpuPercent, filter: { type: 'min', get: r => r.cpuPercent },
+      cell: r => <td className="text-right font-mono whitespace-nowrap">{r.cpuPercent != null ? `${r.cpuPercent}%` : '-'}</td> },
+    { key: 'ram', label: 'RAM', align: 'right', sort: ramPct, filter: { type: 'min', get: ramPct },
+      cell: r => <td className="text-right font-mono whitespace-nowrap">{ramPct(r) != null ? `${ramPct(r)}%` : '-'}</td> },
+    { key: 'disk', label: 'Ổ đĩa (% trống)', title: '% trống của từng ổ; di chuột vào ô để xem GB. Sắp xếp theo ổ ít trống nhất', sort: minFreePct,
+      filter: { type: 'choice', options: [['low', 'Sắp đầy'], ['ok', 'Bình thường']],
+        match: (r, v) => (v === 'low' ? isLowDisk(r) : drivesOf(r).length > 0 && !isLowDisk(r)) },
+      cell: r => <td><DriveList pc={r} /></td> },
+    { key: 'upload', label: 'Upload gần nhất', sort: r => timeMs(r.lastUploadAt),
+      filter: { type: 'choice', options: AGE_OPTIONS, match: (r, v) => ageMatch(r.lastUploadAt, now, v) },
+      cell: r => <td className="text-slate-600 whitespace-nowrap" title={formatTime(r.lastUploadAt)}>{formatAgo(r.lastUploadAt, now)}</td> },
+    { key: 'status', label: 'Trạng thái', sort: r => (r.neverConnected ? 0 : r.isOnline ? 2 : 1),
+      filter: { type: 'choice', options: [['online', 'Online'], ['offline', 'Offline'], ['never', 'Chưa kết nối']],
+        match: (r, v) => (v === 'never' ? r.neverConnected : v === 'online' ? r.isOnline : !r.isOnline && !r.neverConnected) },
+      cell: r => <td><StatusText online={r.isOnline} neverConnected={r.neverConnected} /></td> },
+    { key: 'seen', label: 'Lần cuối thấy', sort: r => timeMs(r.lastSeenAt),
+      filter: { type: 'choice', options: AGE_OPTIONS, match: (r, v) => ageMatch(r.lastSeenAt, now, v) },
+      cell: r => <td className="text-slate-600 whitespace-nowrap" title={formatTime(r.lastSeenAt)}>{formatAgo(r.lastSeenAt, now)}</td> },
+  ];
+}
+
+function PcList({ rows, standardVersion, loading, now, serverSkewMs, onSelect, onReload }) {
   const commands = useMachineCommands();
   const [search, setSearch] = useState('');
-  const [lineId, setLineId] = useState('');
-  const [status, setStatus] = useState('all');
-  const [version, setVersion] = useState('all');
+  const [filters, setFilters] = useState({});
+  const [sort, setSort] = useState({ key: 'line', dir: 'asc' });
+  const columns = pcColumns({ standardVersion, now, serverSkewMs, commands });
+
+  // Distinct values for the "pick" filters.
+  const picks = useMemo(() => Object.fromEntries(columns.filter(c => c.filter.type === 'pick').map(c => [c.key,
+    [...new Set(rows.map(c.filter.get).filter(Boolean))].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))])),
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  [rows]);
+
+  const setFilter = (key, value) => setFilters(prev => {
+    const next = { ...prev };
+    if (value === '' || value == null) delete next[key]; else next[key] = value;
+    return next;
+  });
+  const toggleSort = (key) => setSort(prev => (prev.key === key ? { key, dir: prev.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: 'asc' }));
 
   const filtered = rows.filter(r => {
-    if (status === 'online' && !r.isOnline) return false;
-    if (status === 'offline' && r.isOnline) return false;
-    if (status === 'clock' && !isClockOff(r)) return false;
-    if (lineId && String(r.lineId) !== lineId) return false;
-    const vs = versionState(r.appVersion, standardVersion);
-    if (version === 'standard' && vs !== 'standard') return false;
-    if (version === 'old' && vs !== 'old') return false;
-    if (version === 'unknown' && r.appVersion) return false;
     if (search) {
       const text = `${r.hostname} ${r.connectedIp} ${r.ipAddress} ${r.channelIp} ${r.macAddress} ${r.channelName} ${r.stationName} ${r.lineName} ${r.logType} ${r.appVersion}`.toLowerCase();
       if (!text.includes(search.toLowerCase())) return false;
     }
-    return true;
+    return columns.every(c => {
+      const value = filters[c.key];
+      if (value == null || value === '') return true;
+      const f = c.filter;
+      if (f.type === 'text') return String(f.get(r) || '').toLowerCase().includes(String(value).toLowerCase());
+      if (f.type === 'pick') return f.get(r) === value;
+      if (f.type === 'min') { const n = f.get(r); return n != null && n >= Number(value); }
+      return f.match(r, value);
+    });
   });
+  const sortColumn = columns.find(c => c.key === sort.key);
+  const sorted = sortColumn ? [...filtered].sort((a, b) => {
+    const x = sortColumn.sort(a), y = sortColumn.sort(b);
+    if (x == null && y == null) return 0;
+    if (x == null) return 1; // empty values always last
+    if (y == null) return -1;
+    const c = typeof x === 'number' && typeof y === 'number' ? x - y : String(x).localeCompare(String(y), undefined, { numeric: true });
+    return sort.dir === 'asc' ? c : -c;
+  }) : filtered;
 
-  const select = 'bg-slate-50/80 border border-slate-300 rounded-xl px-3 py-2 text-xs focus:outline-none focus:border-blue-500';
+  const activeFilters = Object.keys(filters).length + (search ? 1 : 0);
+  const input = 'w-full min-w-[56px] rounded-md border border-slate-300 bg-white px-1 py-0.5 text-[10px] font-normal normal-case tracking-normal text-slate-700 focus:outline-none focus:border-blue-500';
   return (
     <div className="glass-panel border border-slate-200 p-5 space-y-4">
       <div className="flex flex-wrap items-center gap-2">
         <div className="relative flex-1 min-w-[220px]">
           <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Tìm hostname, IP, MAC, channel, log type…"
+          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Tìm chung: hostname, IP, MAC, channel, log type…"
             className="w-full bg-slate-50/80 border border-slate-300 rounded-xl pl-9 pr-3 py-2 text-xs focus:outline-none focus:border-blue-500" />
         </div>
-        <select value={lineId} onChange={e => setLineId(e.target.value)} className={select}>
-          <option value="">Tất cả dây chuyền</option>
-          {lines.map(l => <option key={l.id} value={String(l.id)}>{l.name}</option>)}
-        </select>
-        <select value={status} onChange={e => setStatus(e.target.value)} className={select}>
-          <option value="all">Online + Offline</option>
-          <option value="online">Chỉ Online</option>
-          <option value="offline">Chỉ Offline</option>
-          <option value="clock">Lệch giờ &gt; {CLOCK_DRIFT_LIMIT_SECONDS}s</option>
-        </select>
-        <select value={version} onChange={e => setVersion(e.target.value)} className={select}>
-          <option value="all">Mọi version</option>
-          <option value="standard">Đúng version chuẩn</option>
-          <option value="old">Cũ hơn chuẩn</option>
-          <option value="unknown">Chưa rõ version</option>
-        </select>
+        {activeFilters > 0 && (
+          <button onClick={() => { setFilters({}); setSearch(''); }} className="px-3 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 border border-slate-200 text-xs font-semibold flex items-center gap-1.5">
+            <X className="w-3.5 h-3.5 text-rose-700" /> Xóa lọc ({activeFilters})
+          </button>
+        )}
         <button onClick={onReload} className="px-3 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 border border-slate-200 text-xs font-semibold flex items-center gap-1.5">
           <RefreshCw className="w-3.5 h-3.5 text-blue-700" /> Tải lại
         </button>
-        <span className="text-xs text-slate-600 font-mono">Hiển thị {filtered.length} / {rows.length}</span>
-        <BulkButton rows={filtered.filter(r => canUpdate(r, standardVersion))} kind="update" commands={commands}
+        <span className="text-xs text-slate-600 font-mono">Hiển thị {sorted.length} / {rows.length}</span>
+        <BulkButton rows={sorted.filter(r => canUpdate(r, standardVersion))} kind="update" commands={commands}
           label="Update PC version cũ" confirmText={(n) => `Gửi lệnh update Backup_Log2 tới ${n} PC đang online có version thấp hơn ${standardVersion}?`} />
-        <BulkButton rows={filtered.filter(canSyncTime)} kind="sync" commands={commands}
+        <BulkButton rows={sorted.filter(canSyncTime)} kind="sync" commands={commands}
           label="Sync giờ PC lệch" confirmText={(n) => `Gửi lệnh sync giờ tới ${n} PC đang online lệch giờ quá ${CLOCK_DRIFT_LIMIT_SECONDS} giây?`} />
       </div>
 
       <div className="overflow-x-auto rounded-xl border border-slate-200">
         <table className="w-full text-left text-[11px]">
           <thead className="bg-slate-50/90 text-slate-600 uppercase font-semibold tracking-wider border-b border-slate-200 text-[10px]">
-            <tr className="[&>th]:px-2 [&>th]:py-2 [&>th]:whitespace-nowrap">
-              <th>Line</th>
-              <th>Trạm</th>
-              <th>Channel</th>
-              <th>Hostname</th>
-              <th title="IP mà PC dùng để kết nối tới server">IP</th>
-              <th>Version</th>
-              <th>Giờ PC</th>
-              <th>Log type</th>
-              <th className="text-right">CPU</th>
-              <th className="text-right">RAM</th>
-              <th title="% trống của từng ổ; di chuột vào ô để xem GB">Ổ đĩa (% trống)</th>
-              <th>Upload gần nhất</th>
-              <th>Trạng thái</th>
-              <th>Lần cuối thấy</th>
+            <tr className="[&>th]:px-2 [&>th]:pt-2 [&>th]:pb-1 [&>th]:whitespace-nowrap">
+              {columns.map(c => (
+                <th key={c.key} className={`cursor-pointer select-none hover:text-slate-900 ${c.align === 'right' ? 'text-right' : ''}`}
+                  title={`${c.title ? `${c.title}. ` : ''}Bấm để sắp xếp`} onClick={() => toggleSort(c.key)}>
+                  {c.label}
+                  <span className={`ml-1 ${sort.key === c.key ? 'text-blue-700' : 'text-slate-300'}`}>{sort.key === c.key ? (sort.dir === 'asc' ? '▲' : '▼') : '↕'}</span>
+                </th>
+              ))}
+            </tr>
+            <tr className="[&>th]:px-2 [&>th]:pb-2">
+              {columns.map(c => {
+                const f = c.filter;
+                const value = filters[c.key] ?? '';
+                return (
+                  <th key={c.key}>
+                    {f.type === 'text' && <input value={value} onChange={e => setFilter(c.key, e.target.value)} placeholder="Lọc…" className={input} />}
+                    {f.type === 'min' && <input value={value} onChange={e => setFilter(c.key, e.target.value.replace(/[^0-9.]/g, ''))} placeholder="≥ %" inputMode="decimal" className={`${input} text-right`} />}
+                    {(f.type === 'pick' || f.type === 'choice') && (
+                      <select value={value} onChange={e => setFilter(c.key, e.target.value)} className={input}>
+                        <option value="">Tất cả</option>
+                        {(f.type === 'pick' ? (picks[c.key] || []).map(v => [v, v]) : f.options).map(([v, label]) => <option key={v} value={v}>{label}</option>)}
+                      </select>
+                    )}
+                  </th>
+                );
+              })}
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-200">
-            {filtered.length === 0 && (
-              <tr><td colSpan={14} className="p-10 text-center text-slate-500">{loading ? 'Đang tải…' : 'Không có PC phù hợp bộ lọc.'}</td></tr>
+            {sorted.length === 0 && (
+              <tr><td colSpan={columns.length} className="p-10 text-center text-slate-500">{loading ? 'Đang tải…' : 'Không có PC phù hợp bộ lọc.'}</td></tr>
             )}
-            {filtered.map(r => (
+            {sorted.map(r => (
               <tr key={r.macKey} className="hover:bg-slate-100/70 cursor-pointer [&>td]:px-2 [&>td]:py-2" onClick={() => onSelect(r)}>
-                <td className="whitespace-nowrap">{r.lineName || '-'}</td>
-                <td className="whitespace-nowrap">{r.stationName || '-'}</td>
-                <td className="max-w-[80px] truncate font-semibold" title={r.channelName || ''}>{r.channelName || '-'}</td>
-                <td className="font-mono max-w-[100px] truncate" title={r.hostname || ''}>{r.hostname || '-'}</td>
-                <td className="font-mono text-blue-700 whitespace-nowrap" title="IP PC dùng để kết nối tới server">{r.connectedIp || '-'}</td>
-                <td className="whitespace-nowrap">
-                  <VersionBadge version={r.appVersion} standard={standardVersion} />
-                  {canUpdate(r, standardVersion) && <CommandButton pc={r} kind="update" commands={commands} />}
-                </td>
-                <td className="whitespace-nowrap">
-                  <PcClock pc={r} now={now} serverSkewMs={serverSkewMs} />
-                  {canSyncTime(r) && <CommandButton pc={r} kind="sync" commands={commands} />}
-                </td>
-                <td className="max-w-[80px] truncate" title={r.logType || ''}>{r.logType || '-'}</td>
-                <td className="text-right font-mono whitespace-nowrap">{r.cpuPercent != null ? `${r.cpuPercent}%` : '-'}</td>
-                <td className="text-right font-mono whitespace-nowrap">{r.ramTotalMb ? `${Math.round((r.ramUsedMb / r.ramTotalMb) * 100)}%` : '-'}</td>
-                <td><DriveList pc={r} /></td>
-                <td className="text-slate-600 whitespace-nowrap" title={formatTime(r.lastUploadAt)}>{formatAgo(r.lastUploadAt, now)}</td>
-                <td><StatusText online={r.isOnline} neverConnected={r.neverConnected} /></td>
-                <td className="text-slate-600 whitespace-nowrap" title={formatTime(r.lastSeenAt)}>{formatAgo(r.lastSeenAt, now)}</td>
+                {columns.map(c => <React.Fragment key={c.key}>{c.cell(r)}</React.Fragment>)}
               </tr>
             ))}
           </tbody>
         </table>
       </div>
-      <p className="text-[11px] text-slate-500 flex items-center gap-1.5"><Cpu className="w-3.5 h-3.5" /> Bấm vào một dòng để xem chi tiết PC. CPU/RAM/ổ đĩa cập nhật mỗi phút từ Backup_Log2 bản mới.</p>
+      <p className="text-[11px] text-slate-500 flex items-center gap-1.5"><Cpu className="w-3.5 h-3.5" /> Bấm tiêu đề cột để sắp xếp, dùng hàng dưới tiêu đề để lọc từng cột. Bấm vào một dòng để xem chi tiết PC.</p>
     </div>
   );
 }
