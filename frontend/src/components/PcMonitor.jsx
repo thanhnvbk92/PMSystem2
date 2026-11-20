@@ -31,7 +31,8 @@ export const versionState = (version, standard) => {
 };
 
 const LOW_DISK_GB = 5;
-const LOW_DISK_RATIO = 0.1;
+// A drive is shown red when used above 80 % (free below 20 %) or free below 5 GB.
+const LOW_DISK_RATIO = 0.2;
 const isLowDrive = (free, total) => free != null && (free < LOW_DISK_GB || (total && free / total < LOW_DISK_RATIO));
 /** Drives of a PC: every fixed drive (new builds) or the log drive only (older builds). */
 const drivesOf = (m) => (m.disks && m.disks.length)
@@ -118,10 +119,13 @@ function PcClock({ pc, now, serverSkewMs = 0 }) {
   }
   const off = isClockOff(pc);
   const d = new Date(now + serverSkewMs + pc.clockOffsetSeconds * 1000);
+  const server = new Date(now + serverSkewMs);
+  // The date only when the PC is on another day than the server (keeps the column narrow).
+  const otherDay = d.toDateString() !== server.toDateString();
   return (
     <span className={`font-mono whitespace-nowrap ${off ? 'text-rose-700 font-bold' : 'text-slate-700'}`}
-      title={`Giờ đang hiển thị trên PC (đo lúc nhận telemetry gần nhất). Lệch so với server: ${formatOffset(pc.clockOffsetSeconds)}`}>
-      {pad(d.getDate())}/{pad(d.getMonth() + 1)} {pad(d.getHours())}:{pad(d.getMinutes())}
+      title={`Giờ đang hiển thị trên PC: ${formatTime(d)} (đo lúc nhận telemetry gần nhất). Lệch so với server: ${formatOffset(pc.clockOffsetSeconds)}`}>
+      {otherDay && `${pad(d.getDate())}/${pad(d.getMonth() + 1)} `}{pad(d.getHours())}:{pad(d.getMinutes())}
       <span className={`ml-1.5 text-[10px] ${off ? '' : 'text-slate-400'}`}>({formatOffset(pc.clockOffsetSeconds)})</span>
     </span>
   );
@@ -167,23 +171,25 @@ function CommandButton({ pc, kind, commands }) {
   );
 }
 
-/** One line per drive: "C: 45.2 / 120 GB · 38%" (free / total, % free), orange when low. */
-function DriveList({ pc }) {
+/** % free of each drive on one line ("C 82% · D 15%"), red when low; free / total GB on hover. */
+function DriveList({ pc, detailed = false }) {
   const drives = drivesOf(pc);
   if (drives.length === 0) return <span className="text-slate-400">-</span>;
+  const tip = drives.map(d => `${d.drive || '?'} trống ${d.free} GB / tổng ${d.total ?? '?'} GB` +
+    (d.total ? ` (${Math.round((d.free / d.total) * 100)}% trống)` : '')).join('\n');
   return (
-    <div className="space-y-0.5">
+    <span className="inline-flex flex-wrap gap-x-2 font-mono whitespace-nowrap" title={tip}>
       {drives.map(d => {
         const pct = d.total ? Math.round((d.free / d.total) * 100) : null;
         const low = isLowDrive(d.free, d.total);
         return (
-          <div key={d.drive || 'drive'} className={`font-mono whitespace-nowrap ${low ? 'text-orange-700 font-bold' : ''}`}
-            title={`${d.drive || ''} trống ${d.free} GB / tổng ${d.total ?? '?'} GB${pct != null ? ` (${pct}% trống)` : ''}`}>
-            {d.drive || '?'} {d.free}{d.total ? ` / ${d.total}` : ''} GB{pct != null && <span className={low ? '' : 'text-slate-500'}> · {pct}%</span>}
-          </div>
+          <span key={d.drive || 'drive'} className={low ? 'text-rose-700 font-bold' : 'text-slate-700'}>
+            {(d.drive || '?').replace(':', '')} {pct != null ? `${pct}%` : `${d.free} GB`}
+            {detailed && <span className="font-normal text-slate-500"> ({d.free} / {d.total ?? '?'} GB)</span>}
+          </span>
         );
       })}
-    </div>
+    </span>
   );
 }
 
@@ -287,7 +293,7 @@ function PcDetail({ pc, standardVersion, now, serverSkewMs, onClose, onDelete })
     ['Model hiện tại', pc.currentModel || '-'],
     ['CPU', pc.cpuPercent != null ? `${pc.cpuPercent}%` : '-'],
     ['RAM', pc.ramTotalMb ? `${(pc.ramUsedMb / 1024).toFixed(1)} / ${(pc.ramTotalMb / 1024).toFixed(1)} GB` : '-'],
-    ['Ổ đĩa (trống / tổng)', <DriveList key="d" pc={pc} />],
+    ['Ổ đĩa (% trống)', <DriveList key="d" pc={pc} detailed />],
     ['App chạy được', pc.appStartedAt ? `${formatUptime(pc.appStartedAt, now)} (từ ${formatTime(pc.appStartedAt)})` : '-'],
     ['Upload thành công gần nhất', pc.lastUploadAt ? `${formatTime(pc.lastUploadAt)} (${formatAgo(pc.lastUploadAt, now)})` : '-'],
     ['Lần cuối thấy', pc.lastSeenAt ? `${formatTime(pc.lastSeenAt)} (${formatAgo(pc.lastSeenAt, now)})` : '-'],
@@ -545,7 +551,7 @@ function PcList({ rows, lines, standardVersion, loading, now, serverSkewMs, onSe
               <th>Log type</th>
               <th className="text-right">CPU</th>
               <th className="text-right">RAM</th>
-              <th className="text-right" title="Mỗi ổ: dung lượng trống / tổng (GB) · % trống">Ổ đĩa (trống / tổng)</th>
+              <th title="% trống của từng ổ; di chuột vào ô để xem GB">Ổ đĩa (% trống)</th>
               <th>Upload gần nhất</th>
               <th>Trạng thái</th>
               <th>Lần cuối thấy</th>
@@ -560,7 +566,7 @@ function PcList({ rows, lines, standardVersion, loading, now, serverSkewMs, onSe
                 <td className="whitespace-nowrap">{r.lineName || '-'}</td>
                 <td className="whitespace-nowrap">{r.stationName || '-'}</td>
                 <td className="whitespace-nowrap font-semibold">{r.channelName || '-'}</td>
-                <td className="font-mono max-w-[120px] truncate" title={r.hostname || ''}>{r.hostname || '-'}</td>
+                <td className="font-mono max-w-[100px] truncate" title={r.hostname || ''}>{r.hostname || '-'}</td>
                 <td className="font-mono text-blue-700 max-w-[110px] truncate" title={r.ipAddress || r.channelIp || ''}>{r.ipAddress || r.channelIp || '-'}</td>
                 <td className="whitespace-nowrap">
                   <VersionBadge version={r.appVersion} standard={standardVersion} />
@@ -570,10 +576,10 @@ function PcList({ rows, lines, standardVersion, loading, now, serverSkewMs, onSe
                   <PcClock pc={r} now={now} serverSkewMs={serverSkewMs} />
                   {canSyncTime(r) && <CommandButton pc={r} kind="sync" commands={commands} />}
                 </td>
-                <td className="max-w-[100px] truncate" title={r.logType || ''}>{r.logType || '-'}</td>
+                <td className="max-w-[80px] truncate" title={r.logType || ''}>{r.logType || '-'}</td>
                 <td className="text-right font-mono whitespace-nowrap">{r.cpuPercent != null ? `${r.cpuPercent}%` : '-'}</td>
                 <td className="text-right font-mono whitespace-nowrap">{r.ramTotalMb ? `${Math.round((r.ramUsedMb / r.ramTotalMb) * 100)}%` : '-'}</td>
-                <td className="text-right"><DriveList pc={r} /></td>
+                <td><DriveList pc={r} /></td>
                 <td className="text-slate-600 whitespace-nowrap" title={formatTime(r.lastUploadAt)}>{formatAgo(r.lastUploadAt, now)}</td>
                 <td><StatusText online={r.isOnline} neverConnected={r.neverConnected} /></td>
                 <td className="text-slate-600 whitespace-nowrap" title={formatTime(r.lastSeenAt)}>{formatAgo(r.lastSeenAt, now)}</td>
