@@ -156,6 +156,7 @@ public sealed class QualitySummaryService : BackgroundService
                 WHERE p.pid = ANY (@affected_pids)
                   AND p.error_code IS DISTINCT FROM 'DEFECT_UNSPECIFIED'
                   AND isfinite(p.inspect_time)          -- start time not readable from the log
+                  AND COALESCE(p.error_code, '') !~* 'CHANGE[_.]JOB'   -- a job change is not a test
                   -- Effective model = current job-file mapping, else the stored model id.
                   AND COALESCE(mapping.model_id, p.model_id) IS DISTINCT FROM 0
             )
@@ -176,6 +177,7 @@ public sealed class QualitySummaryService : BackgroundService
                 WHERE p.pid = ANY (@affected_pids)
                   AND p.error_code IS DISTINCT FROM 'DEFECT_UNSPECIFIED'
                   AND isfinite(p.inspect_time)          -- start time not readable from the log
+                  AND COALESCE(p.error_code, '') !~* 'CHANGE[_.]JOB'   -- a job change is not a test
                   -- Effective model = current job-file mapping, else the stored model id.
                   AND COALESCE(mapping.model_id, p.model_id) IS DISTINCT FROM 0
             )

@@ -25,7 +25,7 @@ SELECT p.pid, p.station_id, p.inspect_time, p.result
 FROM pcb_results p
 JOIN affected a ON a.pid = p.pid
 LEFT JOIN job_file_model_mappings mapping ON mapping.job_file = p.job_file
-WHERE p.error_code IS DISTINCT FROM 'DEFECT_UNSPECIFIED'
+WHERE p.error_code IS DISTINCT FROM 'DEFECT_UNSPECIFIED' AND COALESCE(p.error_code, '') !~* 'CHANGE[_.]JOB'
   AND p.model_id IS DISTINCT FROM 0
   AND NOT (p.model_id IS NULL AND COALESCE(mapping.model_id, -1) = 0);
 

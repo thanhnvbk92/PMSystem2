@@ -532,7 +532,9 @@ using (var scope = app.Services.CreateScope())
                     -- inspect_time holds the factory clock with a UTC marker. A bare ::date would
                     -- convert it with the session TimeZone (Asia/Bangkok) and put 17:00-24:00 into
                     -- the next day, so the wall-clock day is taken in UTC.
-                    IF TG_OP IN ('UPDATE', 'DELETE') THEN
+                    -- A job change (error code CHANGE_JOB / CHANGE.JOB.) is not a test: it is never
+                    -- counted in Re-test, NTF or RTY, so it never enters the rollup.
+                    IF TG_OP IN ('UPDATE', 'DELETE') AND COALESCE(OLD.error_code, '') !~* 'CHANGE[_.]JOB' THEN
                         old_date := (OLD.inspect_time AT TIME ZONE 'UTC')::date;
                         UPDATE pcb_analytics_daily SET total_count = total_count - 1
                         WHERE bucket_date = old_date AND station_id = OLD.station_id AND channel_id = OLD.channel_id
@@ -546,7 +548,7 @@ using (var scope = app.Services.CreateScope())
                           AND job_file = COALESCE(OLD.job_file, '') AND model_id = COALESCE(OLD.model_id, 0)
                           AND total_count <= 0;
                     END IF;
-                    IF TG_OP IN ('UPDATE', 'INSERT') THEN
+                    IF TG_OP IN ('UPDATE', 'INSERT') AND COALESCE(NEW.error_code, '') !~* 'CHANGE[_.]JOB' THEN
                         new_date := (NEW.inspect_time AT TIME ZONE 'UTC')::date;
                         INSERT INTO pcb_analytics_daily
                             (bucket_date, station_id, channel_id, result, error_code, job_file, model_id, total_count)
@@ -571,9 +573,12 @@ using (var scope = app.Services.CreateScope())
                         SELECT (inspect_time AT TIME ZONE 'UTC')::date, station_id, channel_id, result,
                             COALESCE(error_code, ''), COALESCE(job_file, ''), COALESCE(model_id, 0), COUNT(*)
                         FROM pcb_results
+                        WHERE COALESCE(error_code, '') !~* 'CHANGE[_.]JOB'
                         GROUP BY (inspect_time AT TIME ZONE 'UTC')::date, station_id, channel_id, result,
                             COALESCE(error_code, ''), COALESCE(job_file, ''), COALESCE(model_id, 0);
                     END IF;
+                    -- Job changes are not tests (rows written before this rule existed).
+                    DELETE FROM pcb_analytics_daily WHERE error_code ~* 'CHANGE[_.]JOB';
                 END;
                 $backfill$;
             ");

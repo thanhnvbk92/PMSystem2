@@ -89,6 +89,7 @@ for i, ch in enumerate(chunks, 1):
                        COALESCE(error_code, ''), COALESCE(job_file, ''), COALESCE(model_id, 0), count(*)
                 FROM pcb_results
                 WHERE inspect_time >= (%s::timestamp AT TIME ZONE 'UTC') AND inspect_time < (%s::timestamp AT TIME ZONE 'UTC')
+                  AND COALESCE(error_code, '') !~* 'CHANGE[_.]JOB'      -- a job change is not a test
                 GROUP BY 1, 2, 3, 4, 5, 6, 7""", (a, b))
             n = cur.rowcount
             conn.commit()
@@ -104,7 +105,7 @@ for i, ch in enumerate(chunks, 1):
 cur.execute("""
     WITH actual AS (
         SELECT (inspect_time AT TIME ZONE 'UTC')::date AS d, count(*) AS n FROM pcb_results
-        WHERE isfinite(inspect_time) AND inspect_time >= (%s::timestamp AT TIME ZONE 'UTC')
+        WHERE isfinite(inspect_time) AND COALESCE(error_code, '') !~* 'CHANGE[_.]JOB' AND inspect_time >= (%s::timestamp AT TIME ZONE 'UTC')
         GROUP BY 1),
     roll AS (SELECT bucket_date AS d, sum(total_count) AS n FROM pcb_analytics_daily
              WHERE isfinite(bucket_date) AND bucket_date >= %s GROUP BY 1)

@@ -9,7 +9,8 @@
 \timing on
 SHOW TimeZone;
 SELECT pg_get_functiondef(p.oid) LIKE '%Only the row just decremented%' AS fast_trigger_installed,
-       pg_get_functiondef(p.oid) LIKE '%AT TIME ZONE ''UTC''%' AS wall_clock_day
+       pg_get_functiondef(p.oid) LIKE '%AT TIME ZONE ''UTC''%' AS wall_clock_day,
+       pg_get_functiondef(p.oid) LIKE '%CHANGE[_.]JOB%' AS skips_job_change
 FROM pg_proc p WHERE p.proname = 'update_pcb_analytics_daily';
 
 CREATE TEMP TABLE actual AS
@@ -17,6 +18,7 @@ SELECT (inspect_time AT TIME ZONE 'UTC')::date AS d, station_id, channel_id, res
        COALESCE(job_file, '') AS job_file, COALESCE(model_id, 0) AS model_id, count(*)::bigint AS n
 FROM pcb_results
 WHERE inspect_time >= (:'day_from'::timestamp AT TIME ZONE 'UTC') AND inspect_time < (:'day_to'::timestamp AT TIME ZONE 'UTC')
+  AND COALESCE(error_code, '') !~* 'CHANGE[_.]JOB'      -- job changes are not in the rollup
 GROUP BY 1, 2, 3, 4, 5, 6, 7;
 
 CREATE TEMP TABLE diff AS

@@ -741,6 +741,7 @@ namespace PMSystem2.Api.Services
                         .ToListAsync()).ToDictionary(x => x.JobFile, x => x.ModelId!.Value, StringComparer.Ordinal);
                 insertedResultDtos = insertedResultDtos
                     .Where(x => !string.Equals(x.ErrorCode, "DEFECT_UNSPECIFIED", StringComparison.OrdinalIgnoreCase)
+                        && !IsNotATest(x.ErrorCode)
                         && (x.JobFile != null && jobModel.TryGetValue(x.JobFile, out var mapped) ? mapped : x.ModelId) != 0)
                     .ToList();
                 var latestDto = insertedResultDtos.LastOrDefault();
@@ -2181,6 +2182,13 @@ namespace PMSystem2.Api.Services
             }
         }
 
+        /// <summary>Error codes that mark a job change, not a test (same rule as the rollup trigger and the summaries).</summary>
+        internal const string NotATestPattern = "CHANGE[_.]JOB";
+        /// <summary>The same rule for SQL LIKE ('_' matches any one character, so also 'CHANGE.JOB').</summary>
+        private const string NotATestLike = "%CHANGE_JOB%";
+        internal static bool IsNotATest(string? errorCode) =>
+            errorCode != null && Regex.IsMatch(errorCode, NotATestPattern, RegexOptions.IgnoreCase);
+
         private IQueryable<PcbResult> ExcludeUnassignedModelData(IQueryable<PcbResult> query)
         {
             var unassignedJobs = _db.JobFileModelMappings.AsNoTracking()
@@ -2194,7 +2202,9 @@ namespace PMSystem2.Api.Services
             // The Job File mapping is authoritative (the model id sent by the PC is only the model
             // selected on that PC and is 0 when none was set). Fall back to pcb_results.model_id
             // only for unmapped Job Files. Exclude records whose effective model is Unassigned (0).
+            // A job change (CHANGE_JOB / CHANGE.JOB.) is not a test and is left out of every KPI.
             return query.Where(x => (x.ErrorCode == null || x.ErrorCode != "DEFECT_UNSPECIFIED")
+                && (x.ErrorCode == null || !EF.Functions.ILike(x.ErrorCode, NotATestLike))
                 && !(x.JobFile != null && unassignedJobs.Contains(x.JobFile))
                 && !(x.ModelId == 0 && (x.JobFile == null || !mappedJobs.Contains(x.JobFile))));
         }

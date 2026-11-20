@@ -24,6 +24,7 @@ print(f"PIDs with infinite start time records: {len(pids):,}", flush=True)
 VALID = """SELECT p.pid, p.station_id, p.inspect_time, p.result, p.job_file, p.model_id
     FROM pcb_results p LEFT JOIN job_file_model_mappings mapping ON mapping.job_file = p.job_file
     WHERE p.pid = ANY(%s) AND p.error_code IS DISTINCT FROM 'DEFECT_UNSPECIFIED' AND isfinite(p.inspect_time)
+      AND COALESCE(p.error_code, '') !~* 'CHANGE[_.]JOB'      -- a job change is not a test
       AND COALESCE(mapping.model_id, p.model_id) IS DISTINCT FROM 0"""
 def run_chunk(chunk):
     cur.execute("BEGIN")
