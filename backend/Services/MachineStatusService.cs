@@ -47,7 +47,7 @@ public sealed record MachineStatusDto(
     string? LogType, string? LogFolders, string? AppStatus, double? CpuPercent, int? RamTotalMb, int? RamUsedMb,
     string? DiskDrive, double? DiskTotalGb, double? DiskFreeGb, DateTime? AppStartedAt, DateTime? LastUploadAt,
     DateTime? ConnectedAt, DateTime? DisconnectedAt, DateTime? LastSeenAt, DateTime? LastTelemetryAt,
-    double? ClockOffsetSeconds, List<MachineDisk>? Disks);
+    double? ClockOffsetSeconds, List<MachineDisk>? Disks, string? ConnectedIp);
 
 /// <summary>
 /// Keeps the latest state of each Backup_Log2 PC in <c>machine_status</c>.
@@ -116,10 +116,11 @@ public sealed class MachineStatusService
         finally { _gate.Release(); }
     }
 
-    public Task<MachineStatusDto?> MarkConnectedAsync(string? mac, int? channelId) =>
+    public Task<MachineStatusDto?> MarkConnectedAsync(string? mac, int? channelId, string? connectedIp = null) =>
         UpdateAsync(mac, (m, now) =>
         {
             m.IsConnected = true;
+            m.ConnectedIp = Cut(connectedIp, 64) ?? m.ConnectedIp;
             m.ConnectedAt = now;
             m.LastSeenAt = now;
             if (channelId is > 0) m.ChannelId = channelId;
@@ -217,7 +218,7 @@ public sealed class MachineStatusService
             m.Hostname, m.IpAddress, m.OsVersion, m.AppVersion, m.CurrentModel, m.LogType, m.LogFolders, m.AppStatus,
             m.CpuPercent, m.RamTotalMb, m.RamUsedMb, m.DiskDrive, m.DiskTotalGb, m.DiskFreeGb,
             Local(m.AppStartedAt), Local(m.LastUploadAt), Local(m.ConnectedAt), Local(m.DisconnectedAt),
-            Local(m.LastSeenAt), Local(m.LastTelemetryAt), m.ClockOffsetSeconds, ReadDisks(m.DisksJson));
+            Local(m.LastSeenAt), Local(m.LastTelemetryAt), m.ClockOffsetSeconds, ReadDisks(m.DisksJson), m.ConnectedIp);
     }
 
     private static List<MachineDisk>? ReadDisks(string? json)

@@ -166,6 +166,15 @@ namespace PMSystem2.Api.Hubs
             return key != null && Connections.Values.Any(c => c.ConnectionId != connectionId && MachineStatusService.MacKey(c.MacAddress) == key);
         }
 
+        /// <summary>Address the PC connects from, as the server sees it ("10.224.142.116").</summary>
+        private string? RemoteIp()
+        {
+            var ip = Context.GetHttpContext()?.Connection.RemoteIpAddress;
+            if (ip == null) return null;
+            if (ip.IsIPv4MappedToIPv6) ip = ip.MapToIPv4();
+            return ip.ToString();
+        }
+
         public override async Task OnConnectedAsync()
         {
             var httpContext = Context.GetHttpContext();
@@ -210,7 +219,7 @@ namespace PMSystem2.Api.Hubs
             await Groups.AddToGroupAsync(Context.ConnectionId, "AllCommandClients");
 
             // Broadcast Machine Connected status to Web Dashboard via ProductionHub
-            var connected = await _machineStatus.MarkConnectedAsync(macAddress, connectedChannelId);
+            var connected = await _machineStatus.MarkConnectedAsync(macAddress, connectedChannelId, RemoteIp());
             await BroadcastMachineAsync(new
             {
                 mac_address = macAddress,

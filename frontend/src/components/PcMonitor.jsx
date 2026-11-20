@@ -288,7 +288,8 @@ function PcDetail({ pc, standardVersion, now, serverSkewMs, onClose, onDelete })
     ['Trạng thái', <StatusBadge key="s" online={pc.isOnline} neverConnected={pc.neverConnected} />],
     ['Dây chuyền / Trạm / Channel', `${pc.lineName || '-'} / ${pc.stationName || '-'} / ${pc.channelName || '-'} (#${pc.channelId ?? '-'})`],
     ['Hostname', pc.hostname || '-'],
-    ['IP', pc.ipAddress || pc.channelIp || '-'],
+    ['IP kết nối tới server', pc.connectedIp || '-'],
+    ['IP các card mạng', pc.ipAddress || '-'],
     ['MAC', pc.macAddress || pc.macKey],
     ['Hệ điều hành', pc.osVersion || '-'],
     ['Version Backup_Log2', <VersionBadge key="v" version={pc.appVersion} standard={standardVersion} />],
@@ -514,7 +515,7 @@ function PcList({ rows, lines, standardVersion, loading, now, serverSkewMs, onSe
     if (version === 'old' && vs !== 'old') return false;
     if (version === 'unknown' && r.appVersion) return false;
     if (search) {
-      const text = `${r.hostname} ${r.ipAddress} ${r.channelIp} ${r.macAddress} ${r.channelName} ${r.stationName} ${r.lineName} ${r.logType} ${r.appVersion}`.toLowerCase();
+      const text = `${r.hostname} ${r.connectedIp} ${r.ipAddress} ${r.channelIp} ${r.macAddress} ${r.channelName} ${r.stationName} ${r.lineName} ${r.logType} ${r.appVersion}`.toLowerCase();
       if (!text.includes(search.toLowerCase())) return false;
     }
     return true;
@@ -563,7 +564,7 @@ function PcList({ rows, lines, standardVersion, loading, now, serverSkewMs, onSe
               <th>Trạm</th>
               <th>Channel</th>
               <th>Hostname</th>
-              <th>IP</th>
+              <th title="IP mà PC dùng để kết nối tới server">IP</th>
               <th>Version</th>
               <th>Giờ PC</th>
               <th>Log type</th>
@@ -585,7 +586,7 @@ function PcList({ rows, lines, standardVersion, loading, now, serverSkewMs, onSe
                 <td className="whitespace-nowrap">{r.stationName || '-'}</td>
                 <td className="max-w-[80px] truncate font-semibold" title={r.channelName || ''}>{r.channelName || '-'}</td>
                 <td className="font-mono max-w-[100px] truncate" title={r.hostname || ''}>{r.hostname || '-'}</td>
-                <td className="font-mono text-blue-700 max-w-[110px] truncate" title={r.ipAddress || r.channelIp || ''}>{r.ipAddress || r.channelIp || '-'}</td>
+                <td className="font-mono text-blue-700 whitespace-nowrap" title="IP PC dùng để kết nối tới server">{r.connectedIp || '-'}</td>
                 <td className="whitespace-nowrap">
                   <VersionBadge version={r.appVersion} standard={standardVersion} />
                   {canUpdate(r, standardVersion) && <CommandButton pc={r} kind="update" commands={commands} />}

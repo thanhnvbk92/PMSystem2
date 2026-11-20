@@ -42,6 +42,8 @@ namespace PMSystem2.Api.Models
         [Column("clock_offset_seconds")] public double? ClockOffsetSeconds { get; set; }
         /// <summary>Every fixed drive at the last telemetry: [{"drive":"C:","total_gb":..,"free_gb":..}].</summary>
         [Column("disks_json")] public string? DisksJson { get; set; }
+        /// <summary>Address of the PC's last connection to the server (as the server sees it).</summary>
+        [MaxLength(64), Column("connected_ip")] public string? ConnectedIp { get; set; }
     }
 
     /// <summary>Simple key/value settings (e.g. the standard Backup_Log2 version).</summary>
