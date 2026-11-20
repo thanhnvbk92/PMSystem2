@@ -369,12 +369,12 @@ const sharePct = (count, total) => (total > 0 && typeof count === 'number' ? `${
 function Kpi({ icon: Icon, label, value, total, tone, hint }) {
   const pct = total != null ? sharePct(value, total) : null;
   return (
-    <div className="glass-panel border border-slate-200 p-4 flex items-center gap-3" title={hint}>
-      <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${tone}`}><Icon className="w-5 h-5" /></div>
+    <div className="glass-panel border border-slate-200 px-3 py-2.5 flex items-center gap-3" title={hint}>
+      <div className={`w-9 h-9 shrink-0 rounded-xl flex items-center justify-center ${tone}`}><Icon className="w-4 h-4" /></div>
       <div>
-        <div className="text-[11px] uppercase tracking-wider text-slate-500 font-semibold">{label}</div>
+        <div className="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">{label}</div>
         <div className="flex items-baseline gap-2">
-          <span className="text-2xl font-bold text-slate-900 font-mono">{value}</span>
+          <span className="text-xl font-bold text-slate-900 font-mono">{value}</span>
           {pct && <span className="text-xs font-semibold text-slate-500 font-mono" title="Tỉ lệ trên tổng số PC">{pct}</span>}
         </div>
       </div>
@@ -406,8 +406,8 @@ function Overview({ rows, standardVersion, offlineAfterSeconds, loading, now, on
     .sort((a, b) => new Date(b.disconnectedAt || b.lastSeenAt || 0) - new Date(a.disconnectedAt || a.lastSeenAt || 0));
 
   return (
-    <div className="space-y-6">
-      <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-7 gap-4">
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-7 gap-3">
         <Kpi icon={Monitor} label="Tổng PC" value={loading ? '…' : rows.length} tone="bg-slate-100 text-slate-700" />
         <Kpi icon={Wifi} label="Online" value={online} total={rows.length} tone="bg-emerald-100 text-emerald-700" />
         <Kpi icon={WifiOff} label="Offline" value={offline} total={rows.length} tone="bg-rose-100 text-rose-700" hint={`Mất kết nối, hoặc không gửi tín hiệu quá ${Math.round(offlineAfterSeconds / 60)} phút`} />
@@ -417,11 +417,11 @@ function Overview({ rows, standardVersion, offlineAfterSeconds, loading, now, on
         <Kpi icon={HardDrive} label="Ổ đĩa sắp đầy" value={lowDisk.length} total={rows.length} tone="bg-rose-100 text-rose-700" hint={`Số PC có ổ đã dùng trên ${100 - LOW_DISK_RATIO * 100}% hoặc còn dưới ${LOW_DISK_GB} GB`} />
       </div>
 
-      <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
-        <div className="glass-panel border border-slate-200 p-5 space-y-4">
+      <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
+        <div className="glass-panel border border-slate-200 p-4 space-y-2">
           <h3 className="text-sm font-bold text-slate-900 font-display"
             title="Xanh = version mới nhất các PC đang chạy; vàng = cũ hơn (có nút Update trong Danh sách PC)">Phân bố version Backup_Log2</h3>
-          <div className="space-y-1.5">
+          <div className="space-y-1 max-h-56 overflow-y-auto pr-1">
             {versions.length === 0 && <p className="text-xs text-slate-500">Chưa có dữ liệu.</p>}
             {versions.map(([version, count]) => (
               <div key={version || 'unknown'} className="flex items-center justify-between gap-2">
@@ -436,25 +436,25 @@ function Overview({ rows, standardVersion, offlineAfterSeconds, loading, now, on
           </div>
         </div>
 
-        <div className="glass-panel border border-slate-200 p-5 space-y-3 xl:col-span-2">
+        <div className="glass-panel border border-slate-200 p-4 space-y-2 xl:col-span-2">
           <h3 className="text-sm font-bold text-slate-900 font-display flex items-center gap-2">
             <WifiOff className="w-4 h-4 text-rose-700" /> PC đang offline ({offlineRows.length})
           </h3>
-          <div className="max-h-80 overflow-y-auto border border-slate-200 rounded-xl">
+          <div className="max-h-56 overflow-y-auto border border-slate-200 rounded-xl">
             <table className="w-full text-xs">
               <thead className="bg-slate-50 text-slate-600 uppercase text-[10px] sticky top-0">
-                <tr><th className="p-2 text-left">Line</th><th className="p-2 text-left">Trạm</th><th className="p-2 text-left">Channel</th><th className="p-2 text-left">Hostname</th><th className="p-2 text-left">Version</th><th className="p-2 text-left">Mất kết nối</th></tr>
+                <tr><th className="px-2 py-1 text-left">Line</th><th className="px-2 py-1 text-left">Trạm</th><th className="px-2 py-1 text-left">Channel</th><th className="px-2 py-1 text-left">Hostname</th><th className="px-2 py-1 text-left">Version</th><th className="px-2 py-1 text-left">Mất kết nối</th></tr>
               </thead>
               <tbody className="divide-y divide-slate-200">
-                {offlineRows.length === 0 && <tr><td colSpan={6} className="p-6 text-center text-slate-500">Không có PC nào offline.</td></tr>}
+                {offlineRows.length === 0 && <tr><td colSpan={6} className="p-4 text-center text-slate-500">Không có PC nào offline.</td></tr>}
                 {offlineRows.map(r => (
                   <tr key={r.macKey} className="hover:bg-slate-100 cursor-pointer" onClick={() => onSelect(r)}>
-                    <td className="p-2 whitespace-nowrap">{r.lineName || '-'}</td>
-                    <td className="p-2 whitespace-nowrap">{r.stationName || '-'}</td>
-                    <td className="p-2 max-w-[80px] truncate font-semibold" title={r.channelName || ''}>{r.channelName || '-'}</td>
-                    <td className="p-2 font-mono">{r.hostname || '-'}</td>
-                    <td className="p-2"><VersionBadge version={r.appVersion} standard={standardVersion} /></td>
-                    <td className="p-2 text-slate-600">{formatAgo(r.disconnectedAt || r.lastSeenAt, now)}</td>
+                    <td className="px-2 py-1 whitespace-nowrap">{r.lineName || '-'}</td>
+                    <td className="px-2 py-1 whitespace-nowrap">{r.stationName || '-'}</td>
+                    <td className="px-2 py-1 max-w-[80px] truncate font-semibold" title={r.channelName || ''}>{r.channelName || '-'}</td>
+                    <td className="px-2 py-1 font-mono">{r.hostname || '-'}</td>
+                    <td className="px-2 py-1"><VersionBadge version={r.appVersion} standard={standardVersion} /></td>
+                    <td className="px-2 py-1 text-slate-600">{formatAgo(r.disconnectedAt || r.lastSeenAt, now)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -464,25 +464,25 @@ function Overview({ rows, standardVersion, offlineAfterSeconds, loading, now, on
       </div>
 
       {/* Low drives: one row per drive, least free first. */}
-      <div className="glass-panel border border-slate-200 p-5 space-y-3">
+      <div className="glass-panel border border-slate-200 p-4 space-y-2">
         <div className="flex flex-wrap items-baseline justify-between gap-2">
           <h3 className="text-sm font-bold text-slate-900 font-display flex items-center gap-2">
             <HardDrive className="w-4 h-4 text-rose-700" /> Ổ đĩa sắp đầy ({lowDriveRows.length} ổ / {lowDisk.length} PC)
           </h3>
           <span className="text-[11px] text-slate-500">Ổ đã dùng trên {100 - LOW_DISK_RATIO * 100}% hoặc còn dưới {LOW_DISK_GB} GB · bấm một dòng để xem chi tiết PC</span>
         </div>
-        <div className="max-h-96 overflow-y-auto border border-slate-200 rounded-xl">
+        <div className="max-h-56 overflow-y-auto border border-slate-200 rounded-xl">
           <table className="w-full text-xs">
             <thead className="bg-slate-50 text-slate-600 uppercase text-[10px] sticky top-0">
-              <tr className="text-left [&>th]:p-2 [&>th]:whitespace-nowrap">
+              <tr className="text-left [&>th]:px-2 [&>th]:py-1 [&>th]:whitespace-nowrap">
                 <th>Line</th><th>Trạm</th><th>Channel</th><th>IP</th><th>Ổ</th>
                 <th className="w-48">% trống</th><th className="text-right">Trống / Tổng</th><th>Trạng thái</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-200">
-              {lowDriveRows.length === 0 && <tr><td colSpan={8} className="p-6 text-center text-slate-500">Không có ổ đĩa nào sắp đầy.</td></tr>}
+              {lowDriveRows.length === 0 && <tr><td colSpan={8} className="p-4 text-center text-slate-500">Không có ổ đĩa nào sắp đầy.</td></tr>}
               {lowDriveRows.map(d => (
-                <tr key={`${d.pc.macKey}-${d.drive}`} className="hover:bg-slate-100 cursor-pointer [&>td]:p-2" onClick={() => onSelect(d.pc)}>
+                <tr key={`${d.pc.macKey}-${d.drive}`} className="hover:bg-slate-100 cursor-pointer [&>td]:px-2 [&>td]:py-1" onClick={() => onSelect(d.pc)}>
                   <td className="whitespace-nowrap">{d.pc.lineName || '-'}</td>
                   <td className="whitespace-nowrap">{d.pc.stationName || '-'}</td>
                   <td className="max-w-[80px] truncate font-semibold" title={d.pc.channelName || ''}>{d.pc.channelName || '-'}</td>
