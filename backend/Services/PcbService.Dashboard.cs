@@ -14,7 +14,9 @@ namespace PMSystem2.Api.Services
     /// from the PID summaries (cohort of PCBs first tested in the period, as in the NTF report).
     ///
     /// Time convention: the dashboard sends the factory clock with a UTC marker ("2026-11-01T00:00Z"
-    /// means 00:00 at the factory), which is also how inspect_time is stored.
+    /// means 00:00 at the factory, +07). inspect_time / first_test_time hold the real instant (live data is
+    /// written in UTC), so raw-table periods are cut at 00:00 +07. Note: pcb_analytics_daily buckets by the
+    /// UTC date of inspect_time (its trigger), so rollup days run 07:00 - 07:00 factory time.
     /// </summary>
     public partial class PcbService
     {
@@ -135,9 +137,12 @@ namespace PMSystem2.Api.Services
             // every row and made the scan 10x slower (45 s instead of 4.7 s for a month).
             bool tz = inspectType == "timestamp with time zone";
             string Bound(string name) => tz ? $"@{name}" : $"(@{name} AT TIME ZONE current_setting('TimeZone'))";
+            // The page sends the factory clock (server time zone) with a UTC marker; first_test_time is
+            // the real instant, so the bound is that wall clock at the server offset (00:00 = 00:00 +07).
             NpgsqlParameter Param(string name, DateTime wall) => tz
                 ? new NpgsqlParameter(name, NpgsqlTypes.NpgsqlDbType.TimestampTz)
-                    { Value = new DateTimeOffset(DateTime.SpecifyKind(wall, DateTimeKind.Unspecified), TimeSpan.Zero) }
+                    { Value = new DateTimeOffset(DateTime.SpecifyKind(wall, DateTimeKind.Unspecified),
+                        TimeZoneInfo.Local.GetUtcOffset(DateTime.SpecifyKind(wall, DateTimeKind.Unspecified))).ToUniversalTime() }
                 : new NpgsqlParameter(name, NpgsqlTypes.NpgsqlDbType.Timestamp)
                     { Value = DateTime.SpecifyKind(wall, DateTimeKind.Unspecified) };
 
@@ -230,26 +235,61 @@ namespace PMSystem2.Api.Services
             {
                 entry.AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(2);
 
-                // Period totals per station / jig / NG code / job file - the rollup without days.
-                var periodQuery = await DashboardRollupAsync(lineId, null, fromDay, toDay);
-                var period = await periodQuery
-                    .GroupBy(x => new { x.StationId, x.ChannelId, x.JobFile, x.ModelId,
-                        Ng = x.Result == "NG" || x.Result == "FAIL",
-                        Code = x.Result == "NG" || x.Result == "FAIL" ? x.ErrorCode : "" })
-                    .Select(g => new WorstRow(g.Key.StationId, g.Key.ChannelId, g.Key.JobFile, g.Key.ModelId,
-                        g.Key.Ng, g.Key.Code, g.Sum(x => x.TotalCount), false))
-                    .ToListAsync();
-
                 // Recent day against the 7 days before it - spots a jig / code / station that just got worse.
                 var baselineFrom = recentDay.AddDays(-7);
-                var windowQuery = await DashboardRollupAsync(lineId, null, baselineFrom, recentDay);
-                var window = await windowQuery
-                    .GroupBy(x => new { Recent = x.BucketDate == recentDay, x.StationId, x.ChannelId, x.JobFile, x.ModelId,
-                        Ng = x.Result == "NG" || x.Result == "FAIL",
-                        Code = x.Result == "NG" || x.Result == "FAIL" ? x.ErrorCode : "" })
-                    .Select(g => new WorstRow(g.Key.StationId, g.Key.ChannelId, g.Key.JobFile, g.Key.ModelId,
-                        g.Key.Ng, g.Key.Code, g.Sum(x => x.TotalCount), g.Key.Recent))
-                    .ToListAsync();
+                List<WorstRow> period;
+                List<WorstRow> window;
+                if (UseDashboardRollup(startDate, endDate))
+                {
+                    // Period totals per station / jig / NG code / job file - the rollup without days.
+                    var periodQuery = await DashboardRollupAsync(lineId, null, fromDay, toDay);
+                    period = await periodQuery
+                        .GroupBy(x => new { x.StationId, x.ChannelId, x.JobFile, x.ModelId,
+                            Ng = x.Result == "NG" || x.Result == "FAIL",
+                            Code = x.Result == "NG" || x.Result == "FAIL" ? x.ErrorCode : "" })
+                        .Select(g => new WorstRow(g.Key.StationId, g.Key.ChannelId, g.Key.JobFile, g.Key.ModelId,
+                            g.Key.Ng, g.Key.Code, g.Sum(x => x.TotalCount), false))
+                        .ToListAsync();
+                    var windowQuery = await DashboardRollupAsync(lineId, null, baselineFrom, recentDay);
+                    window = await windowQuery
+                        .GroupBy(x => new { Recent = x.BucketDate == recentDay, x.StationId, x.ChannelId, x.JobFile, x.ModelId,
+                            Ng = x.Result == "NG" || x.Result == "FAIL",
+                            Code = x.Result == "NG" || x.Result == "FAIL" ? x.ErrorCode : "" })
+                        .Select(g => new WorstRow(g.Key.StationId, g.Key.ChannelId, g.Key.JobFile, g.Key.ModelId,
+                            g.Key.Ng, g.Key.Code, g.Sum(x => x.TotalCount), g.Key.Recent))
+                        .ToListAsync();
+                }
+                else
+                {
+                    // Today (<= 48 h): the raw table, cut on the factory day like the cards and the trend
+                    // (the rollup days run 07:00 - 07:00 factory time). The period is the "recent" part;
+                    // the 7 days before it come from the rollup.
+                    var raw = ExcludeUnassignedModelData(_db.PcbResults.AsNoTracking());
+                    if (lineId.HasValue)
+                    {
+                        var ids = (await _masterDataService.GetStationsAsync())
+                            .Where(s => s.LineId == lineId.Value).Select(s => s.Id).ToList();
+                        raw = raw.Where(p => ids.Contains(p.StationId));
+                    }
+                    if (startDate.HasValue) { var start = EnsureUtc(startDate.Value); raw = raw.Where(p => p.InspectTime >= start); }
+                    if (endDate.HasValue) { var end = EnsureUtc(endDate.Value); raw = raw.Where(p => p.InspectTime <= end); }
+                    period = await raw
+                        .GroupBy(p => new { p.StationId, p.ChannelId, JobFile = p.JobFile ?? "", ModelId = p.ModelId ?? 0,
+                            Ng = p.Result == "NG" || p.Result == "FAIL",
+                            Code = p.Result == "NG" || p.Result == "FAIL" ? (p.ErrorCode ?? "") : "" })
+                        .Select(g => new WorstRow(g.Key.StationId, g.Key.ChannelId, g.Key.JobFile, g.Key.ModelId,
+                            g.Key.Ng, g.Key.Code, g.Count(), true))
+                        .ToListAsync();
+                    var baselineQuery = await DashboardRollupAsync(lineId, null, baselineFrom, recentDay.AddDays(-1));
+                    var baseline = await baselineQuery
+                        .GroupBy(x => new { x.StationId, x.ChannelId, x.JobFile, x.ModelId,
+                            Ng = x.Result == "NG" || x.Result == "FAIL",
+                            Code = x.Result == "NG" || x.Result == "FAIL" ? x.ErrorCode : "" })
+                        .Select(g => new WorstRow(g.Key.StationId, g.Key.ChannelId, g.Key.JobFile, g.Key.ModelId,
+                            g.Key.Ng, g.Key.Code, g.Sum(x => x.TotalCount), false))
+                        .ToListAsync();
+                    window = period.Concat(baseline).ToList();
+                }
 
                 var stations = (await _masterDataService.GetStationsAsync()).ToDictionary(s => s.Id);
                 var lines = (await _masterDataService.GetLinesAsync()).ToDictionary(l => l.Id);

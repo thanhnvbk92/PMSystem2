@@ -1249,7 +1249,7 @@ namespace PMSystem2.Api.Services
 
             if (startDate.HasValue)
             {
-                var utcStart = ToDbFilterTime(startDate.Value);
+                var utcStart = EnsureUtc(startDate.Value);
                 query = query.Where(p => p.InspectTime >= utcStart);
             }
             else if (hours > 0)
@@ -1261,7 +1261,7 @@ namespace PMSystem2.Api.Services
 
             if (endDate.HasValue)
             {
-                var utcEnd = ToDbFilterTime(endDate.Value);
+                var utcEnd = EnsureUtc(endDate.Value);
                 query = query.Where(p => p.InspectTime <= utcEnd);
             }
 
@@ -1285,10 +1285,10 @@ namespace PMSystem2.Api.Services
                 .ToListAsync();
 
             return grouped.Select(g => {
-                // The hour parts are read in the database session time zone (the server zone, see
-                // ToDbFilterTime); the bucket is given back as the factory clock with a UTC marker.
-                var sessionHour = new DateTime(g.Year, g.Month, g.Day, g.Hour, 0, 0, DateTimeKind.Unspecified);
-                var dt = DateTime.SpecifyKind(TimeZoneInfo.ConvertTimeToUtc(sessionHour, TimeZoneInfo.Local), DateTimeKind.Utc);
+                // inspect_time is the real instant (live data is written in UTC). The hour parts are read
+                // in the database session time zone (Asia/Bangkok), i.e. the factory clock, and handed to
+                // the page with a UTC marker - the page reads the factory clock with getUTC*().
+                var dt = new DateTime(g.Year, g.Month, g.Day, g.Hour, 0, 0, DateTimeKind.Utc);
                 return new HourlyStatDto(
                     dt,
                     lineId ?? 0,
@@ -1350,12 +1350,12 @@ namespace PMSystem2.Api.Services
                 if (stationId.HasValue) query = query.Where(p => p.StationId == stationId.Value);
                 if (startDate.HasValue)
                 {
-                    var start = ToDbFilterTime(startDate.Value);
+                    var start = EnsureUtc(startDate.Value);
                     query = query.Where(p => p.InspectTime >= start);
                 }
                 if (endDate.HasValue)
                 {
-                    var end = ToDbFilterTime(endDate.Value);
+                    var end = EnsureUtc(endDate.Value);
                     query = query.Where(p => p.InspectTime <= end);
                 }
                 var stats = await query.GroupBy(_ => 1).Select(g => new
@@ -1476,12 +1476,12 @@ namespace PMSystem2.Api.Services
             }
             if (startDate.HasValue)
             {
-                var utcStart = ToDbFilterTime(startDate.Value);
+                var utcStart = EnsureUtc(startDate.Value);
                 query = query.Where(p => p.InspectTime >= utcStart);
             }
             if (endDate.HasValue)
             {
-                var utcEnd = ToDbFilterTime(endDate.Value);
+                var utcEnd = EnsureUtc(endDate.Value);
                 query = query.Where(p => p.InspectTime <= utcEnd);
             }
 

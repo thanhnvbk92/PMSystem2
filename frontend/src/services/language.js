@@ -103,6 +103,16 @@ const exact = {
   'Đang tính lịch sử PCB...': 'Calculating PCB history...',
   'Mở rộng Sidebar': 'Expand sidebar', 'Thu gọn Sidebar': 'Collapse sidebar',
   'Bỏ qua': 'Ignored', 'Chưa có event': 'No event yet',
+  // Dashboard: quality cards, charts section, Top 5 channels
+  'Sản Lượng & Tỉ Lệ Pass': 'Production & Pass Rate',
+  'Lượt test': 'Tests', 'Cập nhật mỗi 60 giây': 'Updated every 60 s',
+  'PID-Station test lần đầu trong kỳ, từng NG tại Station đó': 'PID-Station first tested in the period, ever NG at that Station',
+  'PID test lần đầu trong kỳ, không NG lần nào trên toàn hệ thống': 'PID first tested in the period, never NG anywhere in the plant',
+  'PID test lần đầu trên line trong kỳ, không NG ở station nào của line': 'PID first tested on the line in the period, never NG at any of its stations',
+  'Top 5 Channel tệ nhất': 'Top 5 worst channels',
+  'Lỗi chính (NG · % NG của channel)': 'Main errors (NG · % of the channel NG)',
+  'NG / Tổng': 'NG / Total', 'Tỉ lệ NG': 'NG rate', '/ 7 ngày trước': '/ previous 7 days',
+  'Không có channel nào xấu hơn trung bình': 'No channel worse than average',
 };
 
 const phrases = [
@@ -126,6 +136,8 @@ const phrases = [
   [/gần nhất/gi, 'latest'], [/theo thời gian/gi, 'over time'],
   [/Theo Line/gi, 'by Line'], [/Theo Model/gi, 'by Model'], [/Theo Station/gi, 'by Station'],
   [/Dữ liệu/gi, 'Data'], [/Phân tích/gi, 'Analyze'], [/Cải tiến/gi, 'Improvement'],
+  [/NG trung bình kỳ/g, 'Period average NG'], [/Xếp theo số NG vượt mức trung bình/g, 'ranked by NG above the average'],
+  [/↑ TĂNG/g, '↑ UP'], [/chạy thẳng/g, 'straight through'], [/lượt test/g, 'tests'],
 ];
 
 export function translateText(value) {

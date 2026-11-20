@@ -33,13 +33,14 @@ Nguyên nhân:
 4. Cache của quality-modes dùng `_productionVersion` làm key. Giá trị này tăng mỗi khi có PCB mới, nên cache gần như không bao giờ trúng.
 5. Ở frontend, biểu đồ station phải chờ NTF/RTY trả về (cùng một `Promise.all`). Giờ mỗi phần hiển thị ngay khi request của nó xong.
 
-## 3. Lỗi tìm thấy thêm và đã sửa: khung thời gian lệch 7 tiếng
+## 3. Quy ước thời gian (đính chính, 2026-11-20 tối)
 
-Npgsql đang chạy ở chế độ legacy timestamp, nên tham số UTC bị đọc như giờ +07. Hậu quả:
-- "Hôm nay" thực chất đang đếm từ **17:00 hôm qua đến 17:00 hôm nay**. Lúc kiểm tra API trả 62.374 bản ghi, còn ngày thực tế chỉ có 41.893 bản ghi.
-- Cột "00:00" trên biểu đồ giờ thực ra là dữ liệu của 17:00 hôm qua. Sau 17:00, biểu đồ hôm nay ngừng tăng.
+Bản đầu của tài liệu này kết luận rằng "Hôm nay" bị lệch 7 tiếng và đã đổi bộ lọc sang `ToDbFilterTime`. **Kết luận đó sai** và đã được hoàn nguyên.
 
-Đã sửa bằng `ToDbFilterTime`, đúng cách trang Trace đang làm. Nhãn giờ cũng đã được đổi lại theo giờ nhà máy.
+- Dữ liệu ghi vào theo thời gian thực có `inspect_time` / `start_time` là **thời điểm thật (UTC)**. Kiểm chứng: `inspect_time` luôn trùng `created_at` (UTC) trong suốt tháng 11. Ví dụ: test lúc 21:30 giờ nhà máy được lưu là 14:30Z.
+- Code cũ (`EnsureUtc` + Npgsql legacy timestamp) cắt ngày tại 00:00 +07 và đặt nhãn giờ theo giờ nhà máy, tức là đúng. Bản "sửa" khiến biểu đồ "Hôm nay" dừng ở khoảng 16h, vì test lúc 21h bị đếm vào cột 14h.
+- Mốc thời gian của NTF/RTY cũng được hiểu là giờ nhà máy (+07).
+- **Còn tồn tại (chưa sửa, cần quyết định):** trigger `pcb_analytics_daily` và `QualityReportDataService` coi `inspect_time` là "giờ nhà máy gắn nhãn UTC". Hậu quả là một "ngày" trong rollup thực ra chạy từ 07:00 đến 07:00 giờ nhà máy. Điều này ảnh hưởng tới khung tuần/tháng/năm của Dashboard (lệch 7 h ở hai đầu kỳ), trang BI và báo cáo tháng. Muốn sửa thì phải đổi trigger để chia ngày theo `Asia/Bangkok`, rồi dựng lại bảng rollup.
 
 ## 4. Thay đổi định nghĩa NTF / RTY (cần anh/chị xác nhận)
 

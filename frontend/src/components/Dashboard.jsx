@@ -394,7 +394,7 @@ function Dashboard({
       {/* SECTION 2: INCIDENTS AND INJURIES OVERVIEW (3 CHARTS ROW) */}
       <div className="space-y-3">
         <h3 className="text-xs font-bold uppercase tracking-wider text-slate-600 font-display">
-          Incidents and Quality Overview
+          Sản Lượng &amp; Tỉ Lệ Pass
         </h3>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">

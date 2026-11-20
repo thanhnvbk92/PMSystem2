@@ -61,7 +61,10 @@ const string Kept = @"
   AND NOT (job_file IS NOT NULL AND job_file IN (SELECT job_file FROM job_file_model_mappings WHERE model_id = 0))
   AND NOT (model_id = 0 AND (job_file IS NULL OR job_file NOT IN
       (SELECT job_file FROM job_file_model_mappings WHERE model_id IS NOT NULL AND job_file IS NOT NULL)))";
-string Ts(DateTime dt) => dt.ToString("yyyy-MM-dd HH:mm:ss.fff") + "+00";
+// inspect_time / first_test_time hold the real instant: a factory-clock bound is read at +07 (server zone).
+// The daily rollup buckets by the UTC date, so periods it serves are compared with "+00" bounds.
+string Ts(DateTime dt) => dt.ToString("yyyy-MM-dd HH:mm:ss.fff") + DateTimeOffset.Now.ToString("zzz");
+string TsUtcDay(DateTime dt) => dt.ToString("yyyy-MM-dd HH:mm:ss.fff") + "+00";
 
 async Task<long[]> Sql(string sql)
 {
@@ -73,9 +76,10 @@ async Task<long[]> Sql(string sql)
     return Enumerable.Range(0, r.FieldCount).Select(i => r.IsDBNull(i) ? 0L : Convert.ToInt64(r.GetValue(i))).ToArray();
 }
 
-Task<long[]> RawCounts(DateTime from, DateTime to) => Sql($@"
+Task<long[]> RawCounts(DateTime from, DateTime to, bool rollupDays = false) => Sql($@"
     SELECT count(*), count(*) FILTER (WHERE result IN ('OK','PASS')), count(*) FILTER (WHERE result IN ('NG','FAIL'))
-    FROM pcb_results WHERE inspect_time >= '{Ts(from)}' AND inspect_time <= '{Ts(to)}' AND {Kept}");
+    FROM pcb_results WHERE inspect_time >= '{(rollupDays ? TsUtcDay(from) : Ts(from))}'
+      AND inspect_time <= '{(rollupDays ? TsUtcDay(to) : Ts(to))}' AND {Kept}");
 Task<long[]> Cohort(string table, DateTime from, DateTime to) => Sql($@"
     SELECT count(*), count(*) FILTER (WHERE ever_ng) FROM {table}
     WHERE pid <> 'None' AND first_test_time >= '{Ts(from)}' AND first_test_time <= '{Ts(to)}'");
@@ -91,7 +95,7 @@ foreach (var (label, from, to) in new[] { ("today", todayStart, todayEnd), ("mon
     var stationYield = await Timed("stats/station-yield", () => service.GetStationYieldStatsAsync(null, from, to));
     var quality = await Timed("quality-modes", () => service.GetQualityModesAsync(null, null, from, to));
     var worst = await Timed("dashboard/worst", () => service.GetDashboardWorstAsync(null, from, to));
-    var raw = await Timed("reference SQL (pcb_results)", () => RawCounts(from, to));
+    var raw = await Timed("reference SQL (pcb_results)", () => RawCounts(from, to, label == "month"));
 
     // The rollup may differ from the fact table by a few rows (rows edited outside the trigger).
     bool Near(long a, long b) => Math.Abs(a - b) <= Math.Max(10, b / 10000);
@@ -106,13 +110,21 @@ foreach (var (label, from, to) in new[] { ("today", todayStart, todayEnd), ("mon
     {
         var first = trend[0];
         var step = label == "today" ? TimeSpan.FromHours(1) : TimeSpan.FromDays(1);
-        var bucketRaw = await RawCounts(first.Bucket, first.Bucket.Add(step).AddMilliseconds(-1));
+        var bucketRaw = await RawCounts(first.Bucket, first.Bucket.Add(step).AddMilliseconds(-1), label == "month");
         Check(Near(first.TotalCount, bucketRaw[0]), $"{label} first bucket {first.Bucket:yyyy-MM-dd HH:mm} = {first.TotalCount}, SQL {bucketRaw[0]}");
+    }
+    if (label == "today" && trend.Count > 0)
+    {
+        // The trend reaches the current factory hour (it used to stop 7 h early).
+        var nowHour = DateTime.Now.Hour;
+        var hours = trend.Where(x => x.TotalCount >= 20).Select(x => x.Bucket.Hour).ToList();
+        Check(hours.Contains(nowHour) || hours.Contains(nowHour - 1),
+            $"today trend reaches the current hour {nowHour}:00 (busy buckets {string.Join(",", hours)})");
     }
     var ntf = await Cohort("pcb_ntf_summaries", from, to);
     var rty = await Cohort("pcb_rty_summaries", from, to);
-    Check(quality.NtfPcbStations == ntf[0] && quality.NtfNgPcbStations == ntf[1], $"{label} NTF {quality.NtfNgPcbStations}/{quality.NtfPcbStations} = SQL {ntf[1]}/{ntf[0]} ({quality.NtfRate}%)");
-    Check(quality.RtyPcbs == rty[0] && quality.RtyStraightThroughPcbs == rty[0] - rty[1], $"{label} RTY {quality.RtyStraightThroughPcbs}/{quality.RtyPcbs} = SQL ({quality.RtyRate}%)");
+    Check(Near(quality.NtfPcbStations, ntf[0]) && Near(quality.NtfNgPcbStations, ntf[1]), $"{label} NTF {quality.NtfNgPcbStations}/{quality.NtfPcbStations} = SQL {ntf[1]}/{ntf[0]} ({quality.NtfRate}%)");
+    Check(Near(quality.RtyPcbs, rty[0]) && Near(quality.RtyStraightThroughPcbs, rty[0] - rty[1]), $"{label} RTY {quality.RtyStraightThroughPcbs}/{quality.RtyPcbs} = SQL ({quality.RtyRate}%)");
     Check(quality.RetestAttempts == counters.TotalInspected, $"{label} retest attempts = counters total");
 
     Check(Near(worst.Total, raw[0]) && Near(worst.Ng, raw[2]), $"{label} worst scope {worst.Ng}/{worst.Total} = SQL NG/total");
