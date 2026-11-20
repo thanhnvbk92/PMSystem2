@@ -382,7 +382,7 @@ function Dashboard({
           <div className="mt-1 text-[10px] text-slate-400">Cập nhật mỗi 60 giây</div>
         </div>
         <div className="glass-panel border border-emerald-500/20 p-4">
-          <div className="flex items-start justify-between"><div><div className="text-xs font-bold uppercase tracking-wider text-emerald-700">RTY</div><div className="mt-1 text-[11px] text-slate-500">PID test lần đầu trong kỳ, không NG lần nào trên toàn hệ thống</div></div><Zap className="h-5 w-5 text-emerald-700"/></div>
+          <div className="flex items-start justify-between"><div><div className="text-xs font-bold uppercase tracking-wider text-emerald-700">RTY</div><div className="mt-1 text-[11px] text-slate-500">{selectedLineId ? 'PID test lần đầu trên line trong kỳ, không NG ở station nào của line' : 'PID test lần đầu trong kỳ, không NG lần nào trên toàn hệ thống'}</div></div><Zap className="h-5 w-5 text-emerald-700"/></div>
           <div className="mt-3 text-3xl font-black text-emerald-700">{qualityModes ? `${Number(qualityModes.rtyRate).toFixed(2)}%` : '—'}</div>
           <div className="mt-2 text-xs text-slate-600">{qualityModes ? `${Number(qualityModes.rtyStraightThroughPcbs).toLocaleString()} chạy thẳng / ${Number(qualityModes.rtyPcbs).toLocaleString()} PCB` : 'Đang tính lịch sử PCB...'}</div>
           <div className="mt-1 text-[10px] text-slate-400">Cập nhật mỗi 60 giây</div>

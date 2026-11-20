@@ -134,5 +134,25 @@ foreach (var (label, from, to) in new[] { ("today", todayStart, todayEnd), ("mon
         Console.WriteLine($"    alert    [{x.Kind}] {x.Name} {x.Context}: {x.RecentNgRate:F2}% on {worst.RecentDay} vs {x.BaselineNgRate:F2}% (7 days)");
 }
 
+// RTY of one line (the line with most stations) follows the line filter.
+{
+    using var scope = services.CreateScope();
+    var service = NewService(scope);
+    var master = scope.ServiceProvider.GetRequiredService<IMasterDataService>();
+    var line = (await master.GetStationsAsync()).GroupBy(s => s.LineId).OrderByDescending(g => g.Count()).First();
+    var ids = string.Join(",", line.Select(s => s.Id));
+    Console.WriteLine($"\n== RTY of line {line.First().LineName}, month");
+    var plant = await service.GetQualityModesAsync(null, null, monthStart, monthEnd);
+    var q = await Timed("quality-modes (line)", () => service.GetQualityModesAsync(line.Key, null, monthStart, monthEnd));
+    var reference = await Sql($@"
+        SELECT count(*), count(*) FILTER (WHERE ng) FROM (
+            SELECT pid, bool_or(ever_ng) AS ng, min(first_test_time) AS f FROM pcb_ntf_summaries
+            WHERE station_id IN ({ids}) AND pid <> 'None' GROUP BY pid) t
+        WHERE f >= '{Ts(monthStart)}' AND f <= '{Ts(monthEnd)}'");
+    Check(q.RtyPcbs == reference[0] && q.RtyStraightThroughPcbs == reference[0] - reference[1],
+        $"line RTY {q.RtyStraightThroughPcbs}/{q.RtyPcbs} ({q.RtyRate}%) = SQL {reference[0] - reference[1]}/{reference[0]}");
+    Check(q.RtyPcbs != plant.RtyPcbs, $"line RTY differs from the plant RTY {plant.RtyStraightThroughPcbs}/{plant.RtyPcbs} ({plant.RtyRate}%)");
+}
+
 Console.WriteLine(failures == 0 ? "\nAll dashboard checks passed." : $"\n{failures} dashboard check(s) failed.");
 return failures == 0 ? 0 : 1;

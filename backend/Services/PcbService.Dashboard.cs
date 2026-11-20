@@ -148,26 +148,48 @@ namespace PMSystem2.Api.Services
             List<NpgsqlParameter> BoundParameters() => bounds.Select(b => Param(b.Name, b.Wall)).ToList();
             var parameters = BoundParameters();
 
+            int[]? scopeStations = stationId.HasValue
+                ? new[] { stationId.Value }
+                : lineId.HasValue
+                    ? (await _masterDataService.GetStationsAsync())
+                        .Where(s => s.LineId == lineId.Value).Select(s => s.Id).ToArray()
+                    : null;
+
             var ntfWhere = where;
             var ntfParameters = BoundParameters();
-            if (stationId.HasValue)
+            if (scopeStations != null)
             {
-                ntfWhere += " AND station_id = @station";
-                ntfParameters.Add(new("station", stationId.Value));
-            }
-            else if (lineId.HasValue)
-            {
-                var ids = (await _masterDataService.GetStationsAsync())
-                    .Where(s => s.LineId == lineId.Value).Select(s => s.Id).ToArray();
                 ntfWhere += " AND station_id = ANY(@stations)";
-                ntfParameters.Add(new("stations", ids));
+                ntfParameters.Add(new("stations", scopeStations));
             }
 
             var ntfTask = CountPairAsync(connectionString,
                 $"SELECT count(*), count(*) FILTER (WHERE ever_ng) FROM pcb_ntf_summaries WHERE {ntfWhere}", ntfParameters);
-            // RTY is plant-wide by definition: the line filter does not apply.
-            var rtyTask = CountPairAsync(connectionString,
-                $"SELECT count(*), count(*) FILTER (WHERE ever_ng) FROM pcb_rty_summaries WHERE {where}", parameters);
+            Task<(long Total, long Flagged)> rtyTask;
+            if (scopeStations == null)
+            {
+                // Whole plant: one row per PID, NG at any station of its history.
+                rtyTask = CountPairAsync(connectionString,
+                    $"SELECT count(*), count(*) FILTER (WHERE ever_ng) FROM pcb_rty_summaries WHERE {where}", parameters);
+            }
+            else
+            {
+                // A line (or station): PIDs whose FIRST test on its stations falls in the period; a PID
+                // runs straight when it never failed at any of them. Built from the PID-Station summaries;
+                // LATERAL makes PostgreSQL look each PID up by the primary key (pid, station_id) instead
+                // of scanning every row of the line (15 s -> 5 s for a month).
+                var rtyParameters = BoundParameters();
+                rtyParameters.Add(new("stations", scopeStations));
+                var firstOnLine = startDate.HasValue ? $"WHERE x.first_test >= {Bound("from")}" : "";
+                rtyTask = CountPairAsync(connectionString, $@"
+                    WITH cand AS (SELECT DISTINCT pid FROM pcb_ntf_summaries WHERE {ntfWhere})
+                    SELECT count(*), count(*) FILTER (WHERE x.ng)
+                    FROM cand c CROSS JOIN LATERAL (
+                        SELECT bool_or(n.ever_ng) AS ng, min(n.first_test_time) AS first_test
+                        FROM pcb_ntf_summaries n
+                        WHERE n.pid = c.pid AND n.station_id = ANY(@stations)) x
+                    {firstOnLine}", rtyParameters);
+            }
             var ntf = await ntfTask;
             var rty = await rtyTask;
             return (ntf.Total, ntf.Flagged, rty.Total, rty.Flagged);
