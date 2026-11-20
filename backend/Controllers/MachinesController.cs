@@ -24,6 +24,13 @@ public sealed class MachinesController : ControllerBase
         serverTime = DateTime.Now
     });
 
+    /// <summary>
+    /// Server clock with its offset ("2026-11-20T07:00:00+07:00"). Backup_Log2 sets the PC clock to this
+    /// wall clock (07:00) at start-up and on the time.sync command, keeping the PC time zone.
+    /// </summary>
+    [HttpGet("time")]
+    public IActionResult GetTime() => Ok(new { serverTime = DateTimeOffset.Now });
+
     [HttpGet("standard-version")]
     public async Task<IActionResult> GetStandardVersion() =>
         Ok(new { version = await _machines.GetSettingAsync(MachineStatusService.StandardVersionKey) });

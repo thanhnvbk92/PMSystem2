@@ -96,7 +96,7 @@ export default function CommandControl({ lines = [], stations = [], channels = [
     setIsTreeOpen(false);
   };
 
-  // Active Command Tab: 'change-model' | 'update' | 'restart' | 'custom' | 'cmd-exec'
+  // Active Command Tab: 'change-model' | 'update' | 'restart' | 'time-sync' | 'custom' | 'cmd-exec'
   const [activeCommandTab, setActiveCommandTab] = useState('change-model');
 
   // Command Form State
@@ -522,6 +522,15 @@ export default function CommandControl({ lines = [], stations = [], channels = [
         res = await CommandApi.restartApp({
           ...targetPayload,
           delayMs: parseInt(delayMs, 10) || 1500,
+        });
+      } else if (activeCommandTab === 'time-sync') {
+        cmdName = 'time.sync';
+        payloadDetail = 'PC clock = server time (time zone unchanged)';
+        res = await CommandApi.sendCommand({
+          ...targetPayload,
+          channelIds: targeted.map((channel) => channel.id),
+          command: cmdName,
+          data: null,
         });
       } else if (activeCommandTab === 'custom') {
         if (!customCommand.trim()) {
@@ -1215,6 +1224,18 @@ export default function CommandControl({ lines = [], stations = [], channels = [
               </button>
 
               <button
+                onClick={() => setActiveCommandTab('time-sync')}
+                className={`pb-3 text-xs font-medium transition-all relative flex items-center gap-2 ${
+                  activeCommandTab === 'time-sync'
+                    ? 'text-amber-700 border-b-2 border-amber-400'
+                    : 'text-slate-600 hover:text-slate-800'
+                }`}
+              >
+                <Clock className="w-3.5 h-3.5" />
+                <span>Đồng Bộ Giờ</span>
+              </button>
+
+              <button
                 onClick={() => setActiveCommandTab('custom')}
                 className={`pb-3 text-xs font-medium transition-all relative flex items-center gap-2 ${
                   activeCommandTab === 'custom'
@@ -1364,6 +1385,19 @@ export default function CommandControl({ lines = [], stations = [], channels = [
                       Lệnh này sẽ ra lệnh cho tiến trình Backup Log trên các máy collector tự đóng và khởi động lại. SignalR connection sẽ tạm ngắt trong giây lát.
                     </p>
                   </div>
+                </div>
+              )}
+
+              {/* TAB: TIME SYNC */}
+              {activeCommandTab === 'time-sync' && (
+                <div className="space-y-3 text-xs text-slate-700">
+                  <p>
+                    Đặt giờ của PC theo giờ server, <strong>giữ nguyên múi giờ của PC</strong>: server 07:00 (+07) thì PC thành 07:00,
+                    dù PC đang đặt múi giờ nào. Backup Log cũng tự đồng bộ một lần mỗi khi chương trình khởi động.
+                  </p>
+                  <p className="text-slate-500">
+                    Kết quả trả về: giờ PC sau khi đồng bộ, số giây đã chỉnh, múi giờ của PC. Backup Log cần chạy với quyền Administrator để đổi được giờ.
+                  </p>
                 </div>
               )}
 
