@@ -20,7 +20,7 @@ pids = sorted(p for p in (cur.fetchone()[0] or []) if p != "None")   # same orde
 START = int(sys.argv[1]) if len(sys.argv) > 1 else 0                  # resume index
 CHUNK = int(sys.argv[2]) if len(sys.argv) > 2 else 200
 print(f"PIDs with job-change records: {len(pids):,}", flush=True)
-VALID = """SELECT p.pid, p.station_id, p.inspect_time, p.result, p.job_file, p.model_id
+VALID = """SELECT p.pid, p.station_id, p.inspect_time, p.result, p.job_file, p.model_id, p.error_code, p.channel_id
     FROM pcb_results p LEFT JOIN job_file_model_mappings mapping ON mapping.job_file = p.job_file
     WHERE p.pid = ANY(%s) AND p.error_code IS DISTINCT FROM 'DEFECT_UNSPECIFIED' AND isfinite(p.inspect_time)
       AND COALESCE(p.error_code, '') !~* 'CHANGE[_.]JOB'      -- a job change is not a test
@@ -30,13 +30,16 @@ def run_chunk(chunk):
     cur.execute("DELETE FROM pcb_ntf_summaries WHERE pid = ANY(%s)", (chunk,))
     cur.execute("DELETE FROM pcb_rty_summaries WHERE pid = ANY(%s)", (chunk,))
     cur.execute(f"""WITH v AS ({VALID})
-        INSERT INTO pcb_ntf_summaries (pid, station_id, first_test_time, last_test_time, test_count, ng_count, ever_ng, updated_at, job_file, model_id)
+        INSERT INTO pcb_ntf_summaries (pid, station_id, first_test_time, last_test_time, test_count, ng_count, ever_ng, updated_at, job_file, model_id,
+                                       first_ng_error_code, first_ng_channel_id)
         SELECT pid, station_id, MIN(inspect_time), MAX(inspect_time), COUNT(*), COUNT(*) FILTER (WHERE result IN ('NG','FAIL')),
-               BOOL_OR(result IN ('NG','FAIL')), NOW(), (array_agg(job_file ORDER BY inspect_time DESC))[1], (array_agg(model_id ORDER BY inspect_time DESC))[1]
+               BOOL_OR(result IN ('NG','FAIL')), NOW(), (array_agg(job_file ORDER BY inspect_time DESC))[1], (array_agg(model_id ORDER BY inspect_time DESC))[1],
+               (array_agg(error_code ORDER BY inspect_time) FILTER (WHERE result IN ('NG', 'FAIL')))[1], (array_agg(channel_id ORDER BY inspect_time) FILTER (WHERE result IN ('NG', 'FAIL')))[1]
         FROM v GROUP BY pid, station_id
         ON CONFLICT (pid, station_id) DO UPDATE SET first_test_time = EXCLUDED.first_test_time, last_test_time = EXCLUDED.last_test_time,
             test_count = EXCLUDED.test_count, ng_count = EXCLUDED.ng_count, ever_ng = EXCLUDED.ever_ng, updated_at = EXCLUDED.updated_at,
-            job_file = EXCLUDED.job_file, model_id = EXCLUDED.model_id""", (chunk,))
+            job_file = EXCLUDED.job_file, model_id = EXCLUDED.model_id,
+            first_ng_error_code = EXCLUDED.first_ng_error_code, first_ng_channel_id = EXCLUDED.first_ng_channel_id""", (chunk,))
     cur.execute(f"""WITH v AS ({VALID})
         INSERT INTO pcb_rty_summaries (pid, first_test_time, last_test_time, station_count, test_count, ng_count, ever_ng, updated_at)
         SELECT pid, MIN(inspect_time), MAX(inspect_time), COUNT(DISTINCT station_id), COUNT(*), COUNT(*) FILTER (WHERE result IN ('NG','FAIL')),

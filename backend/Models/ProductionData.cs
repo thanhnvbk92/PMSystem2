@@ -82,6 +82,9 @@ namespace PMSystem2.Api.Models
         [Column("ng_count")] public long NgCount { get; set; }
         [Column("ever_ng")] public bool EverNg { get; set; }
         [Column("updated_at")] public DateTime UpdatedAt { get; set; }
+        /// <summary>NG step (error code) and jig of the first NG of this PID at this Station; null when never NG.</summary>
+        [Column("first_ng_error_code")] public string? FirstNgErrorCode { get; set; }
+        [Column("first_ng_channel_id")] public int? FirstNgChannelId { get; set; }
     }
 
     [Table("pcb_rty_summaries")]

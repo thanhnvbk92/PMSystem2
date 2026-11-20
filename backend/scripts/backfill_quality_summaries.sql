@@ -28,6 +28,8 @@ CREATE INDEX IF NOT EXISTS ix_pcb_rty_summaries_ever_ng
 ALTER TABLE pcb_ntf_summaries ALTER COLUMN pid TYPE TEXT;
 ALTER TABLE pcb_ntf_summaries ADD COLUMN IF NOT EXISTS job_file TEXT;
 ALTER TABLE pcb_ntf_summaries ADD COLUMN IF NOT EXISTS model_id INT;
+ALTER TABLE pcb_ntf_summaries ADD COLUMN IF NOT EXISTS first_ng_error_code TEXT;
+ALTER TABLE pcb_ntf_summaries ADD COLUMN IF NOT EXISTS first_ng_channel_id INT;
 ALTER TABLE pcb_rty_summaries ALTER COLUMN pid TYPE TEXT;
 
 BEGIN;
@@ -45,7 +47,8 @@ WITH valid_results AS (
       AND COALESCE(mapping.model_id, p.model_id) IS DISTINCT FROM 0
 )
 INSERT INTO pcb_ntf_summaries
-    (pid, station_id, first_test_time, last_test_time, test_count, ng_count, ever_ng, updated_at, job_file, model_id)
+    (pid, station_id, first_test_time, last_test_time, test_count, ng_count, ever_ng, updated_at, job_file, model_id,
+     first_ng_error_code, first_ng_channel_id)
 SELECT pid,
        station_id,
        MIN(inspect_time),
@@ -55,7 +58,9 @@ SELECT pid,
        BOOL_OR(result IN ('NG', 'FAIL')),
        NOW(),
        (array_agg(job_file ORDER BY inspect_time DESC))[1],
-       (array_agg(model_id ORDER BY inspect_time DESC))[1]
+       (array_agg(model_id ORDER BY inspect_time DESC))[1],
+       (array_agg(error_code ORDER BY inspect_time) FILTER (WHERE result IN ('NG', 'FAIL')))[1],
+       (array_agg(channel_id ORDER BY inspect_time) FILTER (WHERE result IN ('NG', 'FAIL')))[1]
 FROM valid_results
 GROUP BY pid, station_id;
 

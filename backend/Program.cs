@@ -178,6 +178,9 @@ using (var scope = app.Services.CreateScope())
             -- and first-test indexes for period cohorts (reports, quality-data).
             ALTER TABLE pcb_ntf_summaries ADD COLUMN IF NOT EXISTS job_file TEXT;
             ALTER TABLE pcb_ntf_summaries ADD COLUMN IF NOT EXISTS model_id INT;
+            -- NG step and jig of the first NG of the PID-Station (NTF by NG step / by jig).
+            ALTER TABLE pcb_ntf_summaries ADD COLUMN IF NOT EXISTS first_ng_error_code TEXT;
+            ALTER TABLE pcb_ntf_summaries ADD COLUMN IF NOT EXISTS first_ng_channel_id INT;
             CREATE INDEX IF NOT EXISTS ix_pcb_ntf_summaries_first_test ON pcb_ntf_summaries (first_test_time);
             CREATE INDEX IF NOT EXISTS ix_pcb_rty_summaries_first_test ON pcb_rty_summaries (first_test_time);
         ");

@@ -26,7 +26,7 @@ t0 = time.time()
 def log(m): print(f"[{time.time() - t0:7.1f}s] {m}", flush=True)
 
 VALID = """
-    SELECT p.pid, p.station_id, p.inspect_time, p.result, p.job_file, p.model_id
+    SELECT p.pid, p.station_id, p.inspect_time, p.result, p.job_file, p.model_id, p.error_code, p.channel_id
     FROM pcb_results p
     LEFT JOIN job_file_model_mappings mapping ON mapping.job_file = p.job_file
     WHERE p.pid IS NOT NULL AND btrim(p.pid) <> ''
@@ -35,18 +35,22 @@ VALID = """
 NTF = """
     SELECT pid, station_id, MIN(inspect_time) AS first_test_time, MAX(inspect_time) AS last_test_time, COUNT(*) AS test_count,
            COUNT(*) FILTER (WHERE result IN ('NG', 'FAIL')) AS ng_count, BOOL_OR(result IN ('NG', 'FAIL')) AS ever_ng, NOW() AS updated_at,
-           (array_agg(job_file ORDER BY inspect_time DESC))[1] AS job_file, (array_agg(model_id ORDER BY inspect_time DESC))[1] AS model_id
+           (array_agg(job_file ORDER BY inspect_time DESC))[1] AS job_file, (array_agg(model_id ORDER BY inspect_time DESC))[1] AS model_id,
+           (array_agg(error_code ORDER BY inspect_time) FILTER (WHERE result IN ('NG', 'FAIL')))[1] AS first_ng_error_code,
+           (array_agg(channel_id ORDER BY inspect_time) FILTER (WHERE result IN ('NG', 'FAIL')))[1] AS first_ng_channel_id
     FROM v GROUP BY pid, station_id"""
 RTY = """
     SELECT pid, MIN(inspect_time) AS first_test_time, MAX(inspect_time) AS last_test_time, COUNT(DISTINCT station_id) AS station_count,
            COUNT(*) AS test_count, COUNT(*) FILTER (WHERE result IN ('NG', 'FAIL')) AS ng_count,
            BOOL_OR(result IN ('NG', 'FAIL')) AS ever_ng, NOW() AS updated_at
     FROM v GROUP BY pid"""
-NTF_COLS = "(pid, station_id, first_test_time, last_test_time, test_count, ng_count, ever_ng, updated_at, job_file, model_id)"
+NTF_COLS = "(pid, station_id, first_test_time, last_test_time, test_count, ng_count, ever_ng, updated_at, job_file, model_id, first_ng_error_code, first_ng_channel_id)"
 RTY_COLS = "(pid, first_test_time, last_test_time, station_count, test_count, ng_count, ever_ng, updated_at)"
 
 cur.execute("ALTER TABLE pcb_ntf_summaries ADD COLUMN IF NOT EXISTS job_file TEXT")
 cur.execute("ALTER TABLE pcb_ntf_summaries ADD COLUMN IF NOT EXISTS model_id INT")
+cur.execute("ALTER TABLE pcb_ntf_summaries ADD COLUMN IF NOT EXISTS first_ng_error_code TEXT")
+cur.execute("ALTER TABLE pcb_ntf_summaries ADD COLUMN IF NOT EXISTS first_ng_channel_id INT")
 cur.execute("CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_pcb_ntf_summaries_first_test ON pcb_ntf_summaries (first_test_time)")
 cur.execute("CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_pcb_rty_summaries_first_test ON pcb_rty_summaries (first_test_time)")
 log("columns and indexes ready")
