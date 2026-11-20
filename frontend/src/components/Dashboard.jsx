@@ -625,13 +625,6 @@ function Dashboard({
   );
 }
 
-const WORST_KINDS = {
-  station: { label: 'Station', Icon: Factory },
-  jig: { label: 'Jig', Icon: Cpu },
-  code: { label: 'Mã lỗi', Icon: AlertTriangle },
-  model: { label: 'Model', Icon: Layers },
-};
-
 const formatPct = (value, digits = 2) => `${Number(value || 0).toFixed(digits)}%`;
 const formatDay = (isoDay) => {
   if (!isoDay) return '';
@@ -639,113 +632,72 @@ const formatDay = (isoDay) => {
   return `${d}/${m}/${y}`;
 };
 
-// Worst panel: what to fix first in the selected period, and what just got worse on its last day.
+// Worst panel: the 5 channels (jigs) with the most NG above the average NG rate of the period.
 function WorstPanel({ worst, loading }) {
   const todayIso = (() => {
     const now = new Date();
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
   })();
-  const recentLabel = worst?.recentDay === todayIso ? 'hôm nay' : `ngày ${formatDay(worst?.recentDay)}`;
-  const alerts = worst?.alerts || [];
-  const columns = [
-    { kind: 'station', title: 'Worst Station', items: worst?.stations },
-    { kind: 'jig', title: 'Worst Jig', items: worst?.jigs },
-    { kind: 'code', title: 'Top Mã Lỗi', items: worst?.errorCodes },
-    { kind: 'model', title: 'Worst Model', items: worst?.models },
-  ];
+  const recentLabel = worst?.recentDay === todayIso ? 'Hôm nay' : formatDay(worst?.recentDay);
+  const items = worst?.jigs || [];
+  const maxRate = Math.max(1, ...items.map(x => x.ngRate));
 
   return (
-    <div className="space-y-3">
+    <div className="glass-panel p-5 space-y-3">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <h3 className="text-xs font-bold uppercase tracking-wider text-slate-600 font-display">
-          Worst &amp; Cảnh Báo Sớm
-        </h3>
+        <div className="flex items-center gap-2">
+          <Cpu className="h-4 w-4 text-rose-700" />
+          <h4 className="text-xs font-bold uppercase tracking-wider text-slate-900 font-display">Top 5 Channel tệ nhất</h4>
+        </div>
         <span className="text-[10px] text-slate-500">
-          {worst ? `NG trung bình kỳ: ${formatPct(worst.ngRate)} · Xếp theo số NG vượt mức trung bình · ↑ = ${recentLabel} cao hơn hẳn 7 ngày trước` : ''}
+          {worst ? `NG trung bình kỳ: ${formatPct(worst.ngRate)} · Xếp theo số NG vượt mức trung bình` : ''}
         </span>
       </div>
 
-      {/* Spikes on the last day of the period: a jig / station / code / model that just got worse. */}
-      <div className={`glass-panel border p-4 ${alerts.length ? 'border-rose-500/40' : 'border-emerald-500/30'}`}>
-        <div className="flex items-center gap-2 text-xs font-bold">
-          <TrendingUp className={`h-4 w-4 ${alerts.length ? 'text-rose-700' : 'text-emerald-700'}`} />
-          <span className={alerts.length ? 'text-rose-700' : 'text-emerald-700'}>
-            {!worst ? (loading ? 'Đang phân tích...' : 'Chưa có dữ liệu')
-              : alerts.length ? `${alerts.length} mục tăng NG đột biến ${recentLabel}`
-              : `Không có mục nào tăng NG đột biến ${recentLabel}`}
-          </span>
-        </div>
-        {alerts.length > 0 && (
-          <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-3">
-            {alerts.map(item => {
-              const { label, Icon } = WORST_KINDS[item.kind] || WORST_KINDS.station;
-              return (
-                <div key={`${item.kind}-${item.key}`} className="flex items-start gap-2 rounded-lg border border-rose-500/20 bg-rose-500/5 px-3 py-2"
-                  title={`NG ${recentLabel}: ${item.recentNg.toLocaleString()} / ${item.recentTotal.toLocaleString()}`}>
-                  <Icon className="mt-0.5 h-3.5 w-3.5 shrink-0 text-rose-700" />
-                  <div className="min-w-0 flex-1">
-                    <div className="truncate text-xs font-semibold text-slate-900">
-                      <span className="text-rose-700">{label}</span> {item.name}
-                    </div>
-                    {item.context && <div className="truncate text-[10px] text-slate-500">{item.context}</div>}
-                  </div>
-                  <div className="shrink-0 text-right font-mono text-[11px]">
-                    <div className="font-bold text-rose-700">{formatPct(item.recentNgRate)}</div>
-                    <div className="text-[10px] text-slate-500">7 ngày: {formatPct(item.baselineNgRate)}</div>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </div>
-
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
-        {columns.map(({ kind, title, items }) => (
-          <WorstList key={kind} kind={kind} title={title} items={items || []} loading={loading && !worst} recentLabel={recentLabel} />
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function WorstList({ kind, title, items, loading, recentLabel }) {
-  const { Icon } = WORST_KINDS[kind];
-  const isCode = kind === 'code';
-  // Codes have no OK tests: their bar is the share of every NG; the others use their own NG rate.
-  const barOf = item => (isCode ? item.shareOfNg : item.ngRate);
-  const maxBar = Math.max(1, ...items.map(barOf));
-  return (
-    <div className="glass-panel p-4">
-      <div className="mb-2 flex items-center gap-2">
-        <Icon className="h-4 w-4 text-rose-700" />
-        <h4 className="text-xs font-bold uppercase tracking-wider text-slate-900 font-display">{title}</h4>
-      </div>
       {items.length === 0 ? (
-        <div className="py-4 text-center text-[11px] text-slate-500">{loading ? 'Đang tải...' : 'Không có mục nào xấu hơn trung bình'}</div>
+        <div className="py-4 text-center text-[11px] text-slate-500">
+          {loading && !worst ? 'Đang tải...' : 'Không có channel nào xấu hơn trung bình'}
+        </div>
       ) : (
-        <ol className="divide-y divide-slate-200">
-          {items.map((item, index) => (
-            <li key={item.key} className="flex items-start gap-2 py-2"
-              title={`NG ${item.ng.toLocaleString()} / ${item.total.toLocaleString()} test · ${formatPct(item.shareOfNg, 1)} tổng NG · ${recentLabel}: ${formatPct(item.recentNgRate)} (7 ngày trước: ${formatPct(item.baselineNgRate)})`}>
-              <span className="w-4 shrink-0 pt-0.5 text-center font-mono text-[11px] font-bold text-slate-400">{index + 1}</span>
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-1.5">
-                  <span className="truncate text-xs font-semibold text-slate-900">{item.name}</span>
-                  {item.spike && <span className="shrink-0 rounded bg-rose-600 px-1 text-[9px] font-bold text-white">↑ {formatPct(item.recentNgRate, 1)}</span>}
-                </div>
-                {item.context && <div className="truncate text-[10px] text-slate-500">{item.context}</div>}
-                <div className="mt-1 h-1 rounded bg-slate-200">
-                  <div className="h-1 rounded bg-rose-500" style={{ width: `${Math.min(100, barOf(item) / maxBar * 100)}%` }} />
-                </div>
-              </div>
-              <div className="shrink-0 text-right font-mono">
-                <div className="text-xs font-bold text-rose-700">{isCode ? formatPct(item.shareOfNg, 1) : formatPct(item.ngRate)}</div>
-                <div className="text-[10px] text-slate-500">{item.ng.toLocaleString()} NG{isCode ? '' : ` / ${compactNumberFormatter.format(item.total)}`}</div>
-              </div>
-            </li>
-          ))}
-        </ol>
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[560px] text-xs">
+            <thead>
+              <tr className="border-b border-slate-200 text-left text-[10px] uppercase tracking-wider text-slate-500">
+                <th className="w-6 py-2 font-semibold">#</th>
+                <th className="py-2 font-semibold">Channel</th>
+                <th className="py-2 font-semibold">Station · Line</th>
+                <th className="py-2 text-right font-semibold">NG / Tổng</th>
+                <th className="w-40 py-2 pl-4 font-semibold">Tỉ lệ NG</th>
+                <th className="py-2 text-right font-semibold">{recentLabel} / 7 ngày trước</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-200">
+              {items.map((item, index) => (
+                <tr key={item.key}>
+                  <td className="py-2 font-mono font-bold text-slate-400">{index + 1}</td>
+                  <td className="py-2 font-semibold text-slate-900">{item.name}</td>
+                  <td className="py-2 text-slate-600">{item.context || '—'}</td>
+                  <td className="py-2 text-right font-mono text-slate-700">
+                    {item.ng.toLocaleString()} / {item.total.toLocaleString()}
+                  </td>
+                  <td className="py-2 pl-4">
+                    <div className="flex items-center gap-2">
+                      <div className="h-1.5 flex-1 rounded bg-slate-200">
+                        <div className="h-1.5 rounded bg-rose-500" style={{ width: `${Math.min(100, item.ngRate / maxRate * 100)}%` }} />
+                      </div>
+                      <span className="w-12 text-right font-mono font-bold text-rose-700">{formatPct(item.ngRate)}</span>
+                    </div>
+                  </td>
+                  <td className="py-2 text-right font-mono">
+                    <span className={item.spike ? 'font-bold text-rose-700' : 'text-slate-700'}>{formatPct(item.recentNgRate)}</span>
+                    <span className="text-slate-400"> / {formatPct(item.baselineNgRate)}</span>
+                    {item.spike && <span className="ml-1.5 rounded bg-rose-600 px-1 text-[9px] font-bold text-white">↑ TĂNG</span>}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
     </div>
   );
