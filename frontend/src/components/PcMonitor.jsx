@@ -398,6 +398,11 @@ function Overview({ rows, standardVersion, standardInfo = {}, offlineAfterSecond
   const oldCount = rows.filter(r => versionState(r.appVersion, standardVersion) === 'old').length;
   const unknownCount = rows.filter(r => !r.neverConnected && !r.appVersion).length;
   const lowDisk = rows.filter(isLowDisk);
+  const clockOff = rows.filter(isClockOff);
+  // One row per low drive (PC + drive), least free space first.
+  const lowDriveRows = useMemo(() => rows.flatMap(r => lowDrives(r).map(d => ({
+    pc: r, ...d, pct: d.total ? Math.round((d.free / d.total) * 100) : null,
+  }))).sort((a, b) => (a.pct ?? 101) - (b.pct ?? 101) || (a.free ?? 0) - (b.free ?? 0)), [rows]);
   const offlineRows = rows.filter(r => !r.isOnline && !r.neverConnected)
     .sort((a, b) => new Date(b.disconnectedAt || b.lastSeenAt || 0) - new Date(a.disconnectedAt || a.lastSeenAt || 0));
 
@@ -414,13 +419,14 @@ function Overview({ rows, standardVersion, standardInfo = {}, offlineAfterSecond
 
   return (
     <div className="space-y-6">
-      <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-7 gap-4">
         <Kpi icon={Monitor} label="Tổng PC" value={loading ? '…' : rows.length} tone="bg-slate-100 text-slate-700" />
         <Kpi icon={Wifi} label="Online" value={online} tone="bg-emerald-100 text-emerald-700" />
         <Kpi icon={WifiOff} label="Offline" value={offline} tone="bg-rose-100 text-rose-700" hint={`Mất kết nối, hoặc không gửi tín hiệu quá ${Math.round(offlineAfterSeconds / 60)} phút`} />
         <Kpi icon={AlertTriangle} label="Version cũ" value={standardVersion ? oldCount : '-'} tone="bg-amber-100 text-amber-700" hint="Cũ hơn version chuẩn" />
         <Kpi icon={HelpCircle} label="Chưa rõ version" value={unknownCount} tone="bg-slate-100 text-slate-600" hint="Backup_Log2 bản cũ, chưa gửi version thật" />
-        <Kpi icon={HardDrive} label="Ổ đĩa sắp đầy" value={lowDisk.length} tone="bg-orange-100 text-orange-700" hint={`Còn dưới ${LOW_DISK_GB} GB hoặc dưới ${LOW_DISK_RATIO * 100}%`} />
+        <Kpi icon={Clock} label="Lệch giờ" value={clockOff.length} tone="bg-blue-100 text-blue-700" hint={`Giờ PC lệch giờ server quá ${CLOCK_DRIFT_LIMIT_SECONDS} giây`} />
+        <Kpi icon={HardDrive} label="Ổ đĩa sắp đầy" value={lowDisk.length} tone="bg-rose-100 text-rose-700" hint={`Số PC có ổ đã dùng trên ${100 - LOW_DISK_RATIO * 100}% hoặc còn dưới ${LOW_DISK_GB} GB`} />
       </div>
 
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
@@ -487,11 +493,48 @@ function Overview({ rows, standardVersion, standardInfo = {}, offlineAfterSecond
               </tbody>
             </table>
           </div>
-          {lowDisk.length > 0 && (
-            <div className="text-xs text-orange-800 bg-orange-50 border border-orange-300 rounded-xl p-3">
-              <b>Ổ đĩa sắp đầy:</b> {lowDisk.map(r => `${r.channelName || r.hostname || r.macAddress} (${lowDrives(r).map(d => `${d.drive} còn ${d.free} GB`).join(', ')})`).join('; ')}
-            </div>
-          )}
+        </div>
+      </div>
+
+      {/* Low drives: one row per drive, least free first. */}
+      <div className="glass-panel border border-slate-200 p-5 space-y-3">
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
+          <h3 className="text-sm font-bold text-slate-900 font-display flex items-center gap-2">
+            <HardDrive className="w-4 h-4 text-rose-700" /> Ổ đĩa sắp đầy ({lowDriveRows.length} ổ / {lowDisk.length} PC)
+          </h3>
+          <span className="text-[11px] text-slate-500">Ổ đã dùng trên {100 - LOW_DISK_RATIO * 100}% hoặc còn dưới {LOW_DISK_GB} GB · bấm một dòng để xem chi tiết PC</span>
+        </div>
+        <div className="max-h-96 overflow-y-auto border border-slate-200 rounded-xl">
+          <table className="w-full text-xs">
+            <thead className="bg-slate-50 text-slate-600 uppercase text-[10px] sticky top-0">
+              <tr className="text-left [&>th]:p-2 [&>th]:whitespace-nowrap">
+                <th>Line</th><th>Trạm</th><th>Channel</th><th>IP</th><th>Ổ</th>
+                <th className="w-48">% trống</th><th className="text-right">Trống / Tổng</th><th>Trạng thái</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-200">
+              {lowDriveRows.length === 0 && <tr><td colSpan={8} className="p-6 text-center text-slate-500">Không có ổ đĩa nào sắp đầy.</td></tr>}
+              {lowDriveRows.map(d => (
+                <tr key={`${d.pc.macKey}-${d.drive}`} className="hover:bg-slate-100 cursor-pointer [&>td]:p-2" onClick={() => onSelect(d.pc)}>
+                  <td className="whitespace-nowrap">{d.pc.lineName || '-'}</td>
+                  <td className="whitespace-nowrap">{d.pc.stationName || '-'}</td>
+                  <td className="max-w-[80px] truncate font-semibold" title={d.pc.channelName || ''}>{d.pc.channelName || '-'}</td>
+                  <td className="font-mono text-blue-700 whitespace-nowrap">{d.pc.connectedIp || '-'}</td>
+                  <td className="font-mono font-bold">{d.drive || '?'}</td>
+                  <td>
+                    <div className="flex items-center gap-2">
+                      <div className="h-1.5 flex-1 rounded-full bg-slate-200 overflow-hidden">
+                        <div className="h-full bg-rose-500" style={{ width: `${100 - (d.pct ?? 0)}%` }} title={`Đã dùng ${100 - (d.pct ?? 0)}%`} />
+                      </div>
+                      <span className="w-10 text-right font-mono font-bold text-rose-700">{d.pct != null ? `${d.pct}%` : '-'}</span>
+                    </div>
+                  </td>
+                  <td className="text-right font-mono whitespace-nowrap">{d.free} / {d.total ?? '?'} GB</td>
+                  <td><StatusText online={d.pc.isOnline} neverConnected={d.pc.neverConnected} /></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       </div>
     </div>
