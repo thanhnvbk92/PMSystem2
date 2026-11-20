@@ -1,4 +1,4 @@
-import React, { memo, useState, useEffect, useMemo, useRef } from 'react';
+import React, { memo, useState, useEffect, useRef } from 'react';
 import {
   Activity, CheckCircle, XCircle, TrendingUp, Radio,
   Sparkles, ShieldCheck, Clock, BarChart3,
@@ -8,7 +8,7 @@ import {
 } from 'lucide-react';
 import {
   AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer,
-  CartesianGrid, Bar, Line, PieChart, Pie, Cell, ComposedChart
+  CartesianGrid, Bar, Line, ComposedChart
 } from 'recharts';
 import { ProductionApi } from '../services/api';
 
@@ -155,6 +155,20 @@ function Dashboard({
     return () => window.clearInterval(timer);
   }, [selectedLineId, startDate, endDate]);
 
+  useEffect(() => {
+    const timer = window.setInterval(async () => {
+      const requestId = backendRequestRef.current;
+      try {
+        const data = await ProductionApi.getQualityModes(selectedLineId ? parseInt(selectedLineId) : null, null, startDate, endDate);
+        if (requestId === backendRequestRef.current) setQualityModes(data);
+      } catch (err) {
+        console.warn('NTF / RTY refresh failed:', err);
+      }
+    }, 60 * 1000);
+    return () => window.clearInterval(timer);
+  }, [selectedLineId, startDate, endDate]);
+
+
   const handleTimeRangeChange = (rangeKey) => {
     forceNextChartUpdateRef.current = true;
     setSelectedTimeRange(rangeKey);
@@ -181,16 +195,12 @@ function Dashboard({
     }
   };
 
-  // KPI Metrics
+  // Retest card: live counters (summary is refreshed every 5 s and by SignalR).
   const totalInspected = summary?.totalInspected || 0;
   const totalOk = summary?.totalOk || 0;
   const totalNg = summary?.totalNg || 0;
-  const yieldRate = summary?.overallYieldRate !== undefined 
-    ? summary.overallYieldRate 
-    : (totalInspected > 0 ? (totalOk / totalInspected) * 100 : 0);
-  const passPct = totalInspected > 0 ? ((totalOk / totalInspected) * 100).toFixed(1) : '0.0';
-  const defectPct = totalInspected > 0 ? ((totalNg / totalInspected) * 100).toFixed(1) : '0.0';
-  const chartYieldRate = chartSummary?.overallYieldRate ?? yieldRate;
+  const passPct = totalInspected > 0 ? ((totalOk / totalInspected) * 100).toFixed(2) : '0.00';
+  const retestDefectPct = totalInspected > 0 ? ((totalNg / totalInspected) * 100).toFixed(2) : '0.00';
 
   // 1. Time-series data formatted automatically per selectedTimeRange
   const getTimeSeriesData = () => {
@@ -250,12 +260,6 @@ function Dashboard({
 
   const timeSeriesData = getTimeSeriesData();
 
-  // 3. Overall defect-rate donut data
-  const chartDefectRate = Math.max(0, Math.min(100, 100 - chartYieldRate));
-  const donutData = useMemo(() => [
-    { name: 'Phát Sinh Lỗi (Defect)', value: parseFloat(chartDefectRate.toFixed(1)), color: '#f43f5e' },
-    { name: 'Đạt Chuẩn (Pass)', value: parseFloat(chartYieldRate.toFixed(1)), color: '#334155' }
-  ], [chartDefectRate, chartYieldRate]);
 
   // 4b. Line Production Volume & Pass Rate Data (Sorted Ascending)
   const lineVolumePassData = (() => {
@@ -301,7 +305,7 @@ function Dashboard({
   })();
 
   return (
-    <div className="space-y-7 w-full animate-in fade-in duration-300 font-sans pb-8">
+    <div className="space-y-4 w-full animate-in fade-in duration-300 font-sans pb-8">
 
       {/* TOOLBAR / HEADER CONTROL ROW */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-200 pb-4">
@@ -352,131 +356,44 @@ function Dashboard({
         </div>
       </div>
 
-      {/* Three quality views: attempt-based Retest, station NTF and system-wide RTY. */}
+      {/* Retest = every test attempt (live, refreshed every 5 s with the production counters);
+          NTF / RTY over the PID summaries (refreshed every 60 s). They replace the Production Overview cards. */}
       <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-        <div className="glass-panel border border-violet-500/20 p-5">
-          <div className="flex items-start justify-between"><div><div className="text-xs font-bold uppercase tracking-wider text-violet-700">Retest</div><div className="mt-1 text-[11px] text-slate-500">Mỗi lần test được tính là một lượt</div></div><RefreshCw className="h-5 w-5 text-violet-700"/></div>
-          <div className="mt-4 text-3xl font-black text-violet-700">{Number(qualityModes?.retestDefectRate ?? defectPct).toFixed(2)}%</div>
-          <div className="mt-2 text-xs text-slate-600">{Number(qualityModes?.retestNgAttempts ?? totalNg).toLocaleString()} NG / {Number(qualityModes?.retestAttempts ?? totalInspected).toLocaleString()} lượt test</div>
+        <div className="glass-panel border border-violet-500/20 p-4">
+          <div className="flex items-start justify-between">
+            <div>
+              <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-violet-700">
+                Retest <span className="flex items-center gap-1 rounded bg-emerald-500/10 px-1.5 py-0.5 text-[9px] font-bold text-emerald-700"><span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500"></span>LIVE</span>
+              </div>
+              <div className="mt-1 text-[11px] text-slate-500">Mỗi lần test được tính là một lượt</div>
+            </div>
+            <RefreshCw className="h-5 w-5 text-violet-700"/>
+          </div>
+          <div className="mt-3 flex items-baseline gap-3">
+            <span className="text-3xl font-black text-violet-700">{retestDefectPct}%</span>
+            <span className="text-xs text-slate-500">NG</span>
+          </div>
+          <div className="mt-2 grid grid-cols-3 gap-2 text-xs">
+            <div><div className="text-[10px] text-slate-500">Lượt test</div><div className="font-mono font-bold text-slate-900" title={totalInspected.toLocaleString()}>{totalInspected.toLocaleString()}</div></div>
+            <div><div className="text-[10px] text-slate-500">OK · {passPct}%</div><div className="font-mono font-bold text-emerald-700">{totalOk.toLocaleString()}</div></div>
+            <div><div className="text-[10px] text-slate-500">NG</div><div className="font-mono font-bold text-rose-700">{totalNg.toLocaleString()}</div></div>
+          </div>
         </div>
-        <div className="glass-panel border border-rose-500/20 p-5">
+        <div className="glass-panel border border-rose-500/20 p-4">
           <div className="flex items-start justify-between"><div><div className="text-xs font-bold uppercase tracking-wider text-rose-700">NTF</div><div className="mt-1 text-[11px] text-slate-500">PID-Station test lần đầu trong kỳ, từng NG tại Station đó</div></div><AlertTriangle className="h-5 w-5 text-rose-700"/></div>
-          <div className="mt-4 text-3xl font-black text-rose-700">{qualityModes ? `${Number(qualityModes.ntfRate).toFixed(2)}%` : '—'}</div>
+          <div className="mt-3 text-3xl font-black text-rose-700">{qualityModes ? `${Number(qualityModes.ntfRate).toFixed(2)}%` : '—'}</div>
           <div className="mt-2 text-xs text-slate-600">{qualityModes ? `${Number(qualityModes.ntfNgPcbStations).toLocaleString()} NG / ${Number(qualityModes.ntfPcbStations).toLocaleString()} PID-Station` : 'Đang tính lịch sử PCB...'}</div>
+          <div className="mt-1 text-[10px] text-slate-400">Cập nhật mỗi 60 giây</div>
         </div>
-        <div className="glass-panel border border-emerald-500/20 p-5">
+        <div className="glass-panel border border-emerald-500/20 p-4">
           <div className="flex items-start justify-between"><div><div className="text-xs font-bold uppercase tracking-wider text-emerald-700">RTY</div><div className="mt-1 text-[11px] text-slate-500">PID test lần đầu trong kỳ, không NG lần nào trên toàn hệ thống</div></div><Zap className="h-5 w-5 text-emerald-700"/></div>
-          <div className="mt-4 text-3xl font-black text-emerald-700">{qualityModes ? `${Number(qualityModes.rtyRate).toFixed(2)}%` : '—'}</div>
+          <div className="mt-3 text-3xl font-black text-emerald-700">{qualityModes ? `${Number(qualityModes.rtyRate).toFixed(2)}%` : '—'}</div>
           <div className="mt-2 text-xs text-slate-600">{qualityModes ? `${Number(qualityModes.rtyStraightThroughPcbs).toLocaleString()} chạy thẳng / ${Number(qualityModes.rtyPcbs).toLocaleString()} PCB` : 'Đang tính lịch sử PCB...'}</div>
+          <div className="mt-1 text-[10px] text-slate-400">Cập nhật mỗi 60 giây</div>
         </div>
       </div>
 
       <WorstPanel worst={worstData} loading={isLoading} />
-
-      {/* SECTION 1: INCIDENTS & PRODUCTION OVERVIEW (4 KPI CARDS + FUNNEL CHART) */}
-      <div className="space-y-3">
-        <h3 className="text-xs font-bold uppercase tracking-wider text-slate-600 font-display">
-          Production Overview
-        </h3>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
-
-          {/* Card 1: Total Incident Costs / Inspected Volume */}
-          <div className="glass-panel p-5 relative overflow-hidden flex flex-col justify-between">
-            <span className="text-xs font-semibold text-slate-600 font-display">Tổng Sản Lượng Kiểm Tra</span>
-            <div className="mt-3">
-              <span title={totalInspected.toLocaleString('en-US')} className="text-3xl font-extrabold text-slate-900 font-mono tracking-tight">
-                {compactNumberFormatter.format(totalInspected)}
-              </span>
-              <div className="flex items-center gap-2 mt-2 text-[11px] font-mono">
-                <span className="text-emerald-700 font-semibold">Tự động</span>
-                <span className="text-slate-600">cập nhật DB</span>
-              </div>
-            </div>
-            <div className="absolute bottom-0 left-0 right-0 h-1 bg-purple-500"></div>
-          </div>
-
-          {/* Card 2: Passed OK Volume */}
-          <div className="glass-panel p-5 relative overflow-hidden flex flex-col justify-between">
-            <span className="text-xs font-semibold text-slate-600 font-display">Sản Phẩm Đạt Chuẩn (OK)</span>
-            <div className="mt-3">
-              <span className="text-3xl font-extrabold text-emerald-700 font-mono tracking-tight">
-                {totalOk.toLocaleString()}
-              </span>
-              <div className="flex items-center gap-2 mt-2 text-[11px] font-mono">
-                <span className="text-emerald-700 font-semibold">{passPct}%</span>
-                <span className="text-slate-600">Pass Rate</span>
-              </div>
-            </div>
-            <div className="absolute bottom-0 left-0 right-0 h-1 bg-emerald-500"></div>
-          </div>
-
-          {/* Card 3: Defects Count */}
-          <div className="glass-panel p-5 relative overflow-hidden flex flex-col justify-between">
-            <span className="text-xs font-semibold text-slate-600 font-display">Sản Phẩm Lỗi (NG)</span>
-            <div className="mt-3">
-              <span className="text-3xl font-extrabold text-rose-700 font-mono tracking-tight">
-                {totalNg.toLocaleString()}
-              </span>
-              <div className="flex items-center gap-2 mt-2 text-[11px] font-mono">
-                <span className="text-rose-700 font-semibold">-{defectPct}%</span>
-                <span className="text-slate-600">Defect Ratio</span>
-              </div>
-            </div>
-            <div className="absolute bottom-0 left-0 right-0 h-1 bg-rose-500"></div>
-          </div>
-
-          {/* Card 4: First Pass Yield Rate */}
-          <div className="glass-panel p-5 relative overflow-hidden flex flex-col justify-between">
-            <span className="text-xs font-semibold text-slate-600 font-display">Tỷ Lệ Yield Thật (FPY)</span>
-            <div className="mt-3">
-              <span className="text-3xl font-extrabold text-purple-700 font-mono tracking-tight">
-                {yieldRate.toFixed(1)}%
-              </span>
-              <div className="flex items-center gap-2 mt-2 text-[11px] font-mono">
-                <span className="text-purple-700 font-semibold">{passPct}%</span>
-                <span className="text-slate-600">Tỷ lệ Đạt</span>
-              </div>
-            </div>
-            <div className="absolute bottom-0 left-0 right-0 h-1 bg-indigo-500"></div>
-          </div>
-
-          {/* Card 5: Overall Defect Rate */}
-          <div className="glass-panel p-4 flex flex-col justify-between">
-            <span className="text-xs font-semibold text-slate-600 font-display text-center">
-              Tỷ Lệ Lỗi Tổng Thể
-            </span>
-            <div className="h-24 w-full relative flex items-center justify-center">
-              <FrozenChart version={chartSummary}>
-                <ResponsiveContainer width="100%" height="100%">
-                  <PieChart>
-                    <Pie
-                      data={donutData}
-                      cx="50%"
-                      cy="50%"
-                      innerRadius={28}
-                      outerRadius={40}
-                      startAngle={90}
-                      endAngle={-270}
-                      dataKey="value"
-                    >
-                      {donutData.map((entry, index) => (
-                        <Cell key={`cell-${index}`} fill={entry.color} stroke="none" />
-                      ))}
-                    </Pie>
-                  </PieChart>
-                </ResponsiveContainer>
-              </FrozenChart>
-              <div className="absolute inset-0 flex items-center justify-center">
-                <span className="text-xl font-extrabold text-rose-700 font-mono tracking-tight">
-                  {chartDefectRate.toFixed(1)}%
-                </span>
-              </div>
-            </div>
-          </div>
-
-        </div>
-      </div>
 
       {/* SECTION 2: INCIDENTS AND INJURIES OVERVIEW (3 CHARTS ROW) */}
       <div className="space-y-3">
@@ -677,27 +594,26 @@ function WorstPanel({ worst, loading }) {
             <tbody className="divide-y divide-slate-200">
               {items.map((item, index) => (
                 <tr key={item.key}>
-                  <td className="py-2 font-mono font-bold text-slate-400">{index + 1}</td>
-                  <td className="py-2 pr-3 font-semibold text-slate-900">{item.name}</td>
-                  <td className="py-2 pr-3 font-mono text-slate-600">{item.ip || '—'}</td>
-                  <td className="py-2 pr-3 text-slate-700">{item.stationName || '—'}</td>
-                  <td className="py-2 pr-3 text-slate-700">{item.lineName || '—'}</td>
-                  <td className="py-2 pr-3">
+                  <td className="py-1.5 font-mono font-bold text-slate-400">{index + 1}</td>
+                  <td className="py-1.5 pr-3 font-semibold text-slate-900">{item.name}</td>
+                  <td className="py-1.5 pr-3 font-mono text-slate-600">{item.ip || '—'}</td>
+                  <td className="py-1.5 pr-3 text-slate-700">{item.stationName || '—'}</td>
+                  <td className="py-1.5 pr-3 text-slate-700">{item.lineName || '—'}</td>
+                  <td className="py-1.5 pr-3">
+                    {/* One line to keep the page on one screen; every top error is in the tooltip. */}
                     {(item.topErrors || []).length === 0 ? '—' : (
-                      <div className="space-y-0.5">
-                        {item.topErrors.map((err, i) => (
-                          <div key={err.errorCode} className="flex items-baseline gap-2">
-                            <span className={`max-w-[260px] truncate ${i === 0 ? 'font-semibold text-rose-700' : 'text-slate-700'}`} title={err.errorCode}>{err.errorCode}</span>
-                            <span className="shrink-0 font-mono text-[10px] text-slate-500">{err.ng.toLocaleString()} · {formatPct(err.shareOfItemNg, 1)}</span>
-                          </div>
-                        ))}
+                      <div className="flex items-baseline gap-2"
+                        title={item.topErrors.map(err => `${err.errorCode}: ${err.ng.toLocaleString()} NG (${formatPct(err.shareOfItemNg, 1)})`).join('\n')}>
+                        <span className="max-w-[260px] truncate font-semibold text-rose-700">{item.topErrors[0].errorCode}</span>
+                        <span className="shrink-0 font-mono text-[10px] text-slate-500">{item.topErrors[0].ng.toLocaleString()} · {formatPct(item.topErrors[0].shareOfItemNg, 1)}</span>
+                        {item.topErrors.length > 1 && <span className="shrink-0 rounded bg-slate-200 px-1 text-[9px] text-slate-600">+{item.topErrors.length - 1}</span>}
                       </div>
                     )}
                   </td>
-                  <td className="py-2 text-right font-mono text-slate-700">
+                  <td className="py-1.5 text-right font-mono text-slate-700">
                     {item.ng.toLocaleString()} / {item.total.toLocaleString()}
                   </td>
-                  <td className="py-2 pl-4">
+                  <td className="py-1.5 pl-4">
                     <div className="flex items-center gap-2">
                       <div className="h-1.5 flex-1 rounded bg-slate-200">
                         <div className="h-1.5 rounded bg-rose-500" style={{ width: `${Math.min(100, item.ngRate / maxRate * 100)}%` }} />
@@ -705,7 +621,7 @@ function WorstPanel({ worst, loading }) {
                       <span className="w-12 text-right font-mono font-bold text-rose-700">{formatPct(item.ngRate)}</span>
                     </div>
                   </td>
-                  <td className="py-2 text-right font-mono">
+                  <td className="py-1.5 text-right font-mono">
                     <span className={item.spike ? 'font-bold text-rose-700' : 'text-slate-700'}>{formatPct(item.recentNgRate)}</span>
                     <span className="text-slate-400"> / {formatPct(item.baselineNgRate)}</span>
                     {item.spike && <span className="ml-1.5 rounded bg-rose-600 px-1 text-[9px] font-bold text-white">↑ TĂNG</span>}
