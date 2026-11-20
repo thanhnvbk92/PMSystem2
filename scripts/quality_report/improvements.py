@@ -127,13 +127,13 @@ def analyze(conn, path, today, excluded_codes=("UNKNOWN", "UNKNOWN_DEFECT"), not
         crel = ((cka / cta - ckb / ctb) / (ckb / ctb) * 100) if ctb > 2000 and cta > 2000 and ckb else None
         days_after = (a1 - a0).days
         notes = []
-        if auto: notes.append("error code detected from the data")
+        if auto: notes.append("NG step detected from the data")
         if tb and ta < 0.1 * tb * days_after / WINDOW:
-            notes.append(f"after-period tests dropped to {ta:,} (logs missing?)")
+            notes.append(f"tests after the action dropped to {ta:,} (logs missing?)")
         if rtb is not None and rta is not None and rta - rtb >= 0.2 and ta >= 2000:
             ups = sorted(((ca.get(c, 0) / ta - cb.get(c, 0) / tb) * 100, c) for c in (set(cb) | set(ca)) - EXCL)[::-1][:2]
             ups = [f"{c} +{v:.2f}%" for v, c in ups if v > 0]
-            if ups: notes.insert(0, "station Re-test up mainly from " + ", ".join(ups))
+            if ups: notes.insert(0, "station Re-test increased, mainly from " + ", ".join(ups))
         # a new job file (program) taking over right after the action also changes the result
         jb, ja = defaultdict(int), defaultdict(int)
         for (dd_, l, s_, m, j), v in tjob.items():
@@ -154,17 +154,17 @@ def analyze(conn, path, today, excluded_codes=("UNKNOWN", "UNKNOWN_DEFECT"), not
         if rel is not None and rel <= -30 and ta:
             moved = max(((ca.get(c, 0) / ta - cb.get(c, 0) / tb) * 100, c) for c in (set(cb) | set(ca)) - EXCL if not _in_family(c, it["code"]))
             if moved[0] >= 0.3 * (rb - ra):
-                notes.append(f"watch: {moved[1]} rose +{moved[0]:.2f}% at the same station")
+                notes.append(f"watch: {moved[1]} increased +{moved[0]:.2f}% at the same station")
         if ta < 2000 or days_after < 3: verdict = "Insufficient data"
-        elif not it["code"]: verdict = "No error code"
+        elif not it["code"]: verdict = "No NG step"
         elif not tb or rb is None: verdict = "No baseline"
-        elif kb == 0 and ka == 0: verdict = "Code not seen"
+        elif kb == 0 and ka == 0: verdict = "NG step not seen"
         elif rel <= -30 and p is not None and p < 0.05:
             verdict = "Effective"
         elif rel < -10: verdict = "Improving (not significant)" if (p is None or p >= 0.05) else "Small improvement"
         elif rel > 10 and p is not None and p < 0.05: verdict = "Worse"
         else: verdict = "No clear effect"
-        if days_after < 7 and verdict not in ("Insufficient data", "No error code", "No baseline", "Code not seen"):
+        if days_after < 7 and verdict not in ("Insufficient data", "No NG step", "No baseline", "NG step not seen"):
             verdict += " (early)"
 
         # trend: weekly, daily when the after period is short
@@ -212,7 +212,7 @@ def analyze(conn, path, today, excluded_codes=("UNKNOWN", "UNKNOWN_DEFECT"), not
                 if new_: why.append("new job " + new_[0])
                 med = sorted(p[3] for p in after_pts)[len(after_pts) // 2]
                 if t_ < 0.3 * med: why.append(f"low volume ({t_:,} tests)")
-                spikes.append(f"{lab} rise to {rate_:.2f}%: " + ", ".join(why))
+                spikes.append(f"{lab} increased to {rate_:.2f}%: " + ", ".join(why))
         notes[:0] = spikes
         res.append(dict(it, before=[b0.isoformat(), b1.isoformat()], after=[a0.isoformat(), a1.isoformat()], days_after=days_after,
                         tests_before=tb, tests_after=ta, ng_before=kb, ng_after=ka, rate_before=rb, rate_after=ra, change_pct=rel,

@@ -164,12 +164,12 @@ msgs = [[("Re-test ", {}), (f"{pc_(KB['rt'])} → {pc_(KA['rt'])}", {"bold": Tru
          (f" and line RTY {pc_(KB['rty'])} → {pc_(KA['rty'])} after the actions from {dd(ACT)}.", {})]]
 if best_st: msgs.append([("Largest gain at ", {}), (STN[best_st], {"bold": True}),
                          (f": Re-test {pc_(STV[best_st][0]['rt'])} → {pc_(STV[best_st][1]['rt'])}.", {})])
-if downs: msgs.append([("Error codes that fell most: ", {}), (", ".join(f"{c_} {d_:+.2f}%" for d_, c_ in downs), {"bold": True, "color": GREEN})])
-if ups: msgs.append([("Codes to watch (rose): ", {}), (", ".join(f"{c_} +{d_:.2f}%" for d_, c_ in ups), {"bold": True, "color": RED})])
+if downs: msgs.append([("NG steps reduced most: ", {}), (", ".join(f"{c_} {d_:+.2f}%" for d_, c_ in downs), {"bold": True, "color": GREEN})])
+if ups: msgs.append([("NG steps increased (to watch): ", {}), (", ".join(f"{c_} +{d_:.2f}%" for d_, c_ in ups), {"bold": True, "color": RED})])
 msgs.append([(f"After period = {DAYS_A} days ({num(KA['tests'])} tests vs {num(KB['tests'])} before); "
               + ("confirm with 4 weeks of data." if DAYS_A < 28 else "enough data for a verdict."), {"color": G3})])
 textbox(f.s, 0.53, y2, 12.24, 2.2, [[("• " + m[0][0], m[0][1])] + m[1:] for m in msgs], size=11, space_after=4, name="Key messages")
-textbox(f.s, 0.53, 6.75, 12.24, 0.2, ["* Error-code changes in % of test attempts. UNKNOWN (NG without an error in the log) is not used as an error code; "
+textbox(f.s, 0.53, 6.75, 12.24, 0.2, ["* NG step changes in % of test attempts. UNKNOWN (NG without an NG step in the log) is not used as an NG step; "
                                       "job changes (CHANGE_JOB) are not counted as tests. "
                                       "Model = job-file mapping."], size=8, color=G3)
 
@@ -212,7 +212,7 @@ sts = [s for s in SIDS if STV[s][0]["tests"] or STV[s][1]["tests"]]
 column_chart(f.s, 0.53, yy, 4.6, min(4.5, 1.2 + 0.9 * len(sts)), [STN[s] for s in sts], [("Before", [round(STV[s][0]["rt"] or 0, 2) for s in sts]),
              ("After", [round(STV[s][1]["rt"] or 0, 2) for s in sts])], ["BFBFBF", GREEN], fmt='0.0', gap=60, overlap=-10, lo=0, name="Station Re-test")
 f.section("Station figures and main changes", x=5.43, w=7.34, unit="(Unit: %, tests)")
-srows = [["Station", "Tests B / A", "Re-test B", "Re-test A", "Δ", "NTF B → A", "Main fall", "Main rise"]]
+srows = [["Station", "Tests B / A", "Re-test B", "Re-test A", "Δ", "NTF B → A", "Most reduced", "Most increased"]]
 for s in sts:
     b, a = STV[s]
     rbs, _, _ = code_rates(*BEF, s); ras, _, _ = code_rates(*AFT, s)
@@ -228,19 +228,19 @@ def sfmt(i, j, v):
     if j == 7 and v != "–": o.update({"color": RED, "align": PP_ALIGN.LEFT})
     return o
 table(f.s, 5.43, yy, 7.34, srows, [0.8, 1.2, 0.7, 0.7, 0.75, 1.05, 2.0, 2.0], row_h=0.62, size=8, header_h=0.32, cell_fmt=sfmt, name="Station table")
-textbox(f.s, 5.43, yy + 0.32 + 0.62 * len(sts) + 0.06, 7.34, 0.4, ["* Main fall / rise = error code with the largest change in % of the station's tests. "
+textbox(f.s, 5.43, yy + 0.32 + 0.62 * len(sts) + 0.06, 7.34, 0.4, ["* Most reduced / increased = NG step with the largest change in % of the station's tests. "
                                                                     "B = before, A = after."], size=8, color=G3)
 
 # ---- 5. error codes ----
-f = Frame(S[6], "Error Codes – Before vs After", f"{A.model} · error-code rate in % of all {SHORTM} test attempts on {A.line}")
+f = Frame(S[6], "NG Steps – Before vs After", f"{A.model} · NG step rate in % of all {SHORTM} test attempts on {A.line}")
 _, _, stb = code_rates(*BEF); _, _, sta = code_rates(*AFT)
 top = sorted(set(rb) | set(ra), key=lambda c_: -max(rb.get(c_, 0), ra.get(c_, 0)))[:10]
-yy = f.section("Top 10 error codes", w=5.6, unit="(Unit: % of tests)")
+yy = f.section("Top 10 NG steps", w=5.6, unit="(Unit: % of tests)")
 rv = top                                             # bar axis is reversed: first category on top
 column_chart(f.s, 0.53, yy, 5.6, 4.6, rv, [("Before", [round(rb.get(c_, 0), 2) for c_ in rv]), ("After", [round(ra.get(c_, 0), 2) for c_ in rv])],
              ["BFBFBF", GREEN], fmt='0.00', bar=True, gap=50, overlap=-10, lo=0, name="Top codes")
 f.section("Detail", x=6.43, w=6.34, unit="(Unit: %)")
-crows = [["Error code", "Station", "Before", "After", "Change", "NG B / A"]]
+crows = [["NG step", "Station", "Before", "After", "Change", "NG B / A"]]
 for c_ in top:
     stn = max(list(stb.get(c_, {}).items()) + list(sta.get(c_, {}).items()), key=lambda kv: kv[1])[0]
     b_, a_ = rb.get(c_, 0), ra.get(c_, 0)
@@ -250,7 +250,7 @@ def cfmt(i, j, v):
     if j == 4: o["color"] = RED if (v == "new" or v.startswith("+")) else GREEN
     return o
 table(f.s, 6.43, yy, 6.34, crows, [2.4, 0.8, 0.7, 0.7, 0.8, 1.0], row_h=0.38, size=8, cell_fmt=cfmt, name="Code table")
-textbox(f.s, 6.43, yy + 0.38 * len(crows) + 0.06, 6.34, 0.3, ["* Station = where the code has most NG. Change = relative change of the rate."], size=8, color=G3)
+textbox(f.s, 6.43, yy + 0.38 * len(crows) + 0.06, 6.34, 0.3, ["* Station = where the NG step has most NG. Change = relative change of the rate."], size=8, color=G3)
 
 # ---- jig statistics (used by the next steps; no slide) ----
 jt = []
@@ -273,7 +273,7 @@ jt.sort(key=lambda x: -(x[5] / x[4]))
 f = Frame(S[8], "Improvement Actions", f"From ImprovementList.xlsx · {A.line} · {A.model}")
 yy = f.section("Actions and verification", unit="(Unit: % of tests)")
 VC = {"Effective": GREEN, "Small improvement": "C9A000", "No clear effect": G3, "Worse": RED, "Insufficient data": G3}
-irows = [["Date", "Station", "Error code", "Action", "Code before", "Code after", "Change", "Station Re-test", "Verdict"]]
+irows = [["Date", "Station", "NG step", "Action", "NG step before", "NG step after", "Change", "Station Re-test", "Verdict"]]
 for x in IMP:
     d_ = x["date"] if isinstance(x["date"], dt.date) else dt.date.fromisoformat(x["date"])
     irows.append([f"{dd(d_)} ({wk(d_)})", x["station"], [c_.strip() for c_ in x["code"].split(";") if c_.strip()], x["action"] or "–",
@@ -286,9 +286,9 @@ def ifmt(i, j, v):
     return o
 irh = min(0.75, 4.5 / max(1, len(IMP)))
 table(f.s, 0.53, yy, 12.24, irows, [0.95, 0.65, 2.1, 3.6, 0.8, 0.8, 0.7, 1.2, 1.2], row_h=irh, size=8, header_h=0.3, cell_fmt=ifmt, name="Action table")
-notes = [f"{x['station']} {x['code'][:30]}: {n_}" for x in IMP for n_ in x["notes"] if " rise to " in n_ or "watch:" in n_][:3]
+notes = [f"{x['station']} {x['code'][:30]}: {n_}" for x in IMP for n_ in x["notes"] if " increased to " in n_ or "watch:" in n_][:3]
 textbox(f.s, 0.53, yy + 0.3 + irh * len(IMP) + 0.06, 12.24, 0.6,
-        ["* Each action is checked on its own error code at its station: 28 days before vs after (action day excluded). Effective = −30% or more and p < 0.05; (early) = fewer than 7 days."]
+        ["* Each action is checked on its own NG step at its station: 28 days before vs after (action day excluded). Effective = −30% or more and p < 0.05; (early) = fewer than 7 days."]
         + [f"* {n_}" for n_ in notes], size=8, color=G3)
 
 # ---- 7b. one 'Verify Corrective Action' page per action (same page as in the monthly report) ----
@@ -299,9 +299,9 @@ for sl, (n_, x) in zip(PCA_SLOTS, PCA): pca_page(sl, n_, x)
 
 # ---- 8. remaining issues and next steps ----
 f = Frame(S[9], "Remaining Issues & Next Steps", f"{A.model} on {A.line} · after {PA}")
-yy = f.section("Top error codes after the action", w=5.9, unit="(Unit: % of tests)")
+yy = f.section("Top NG steps after the action", w=5.9, unit="(Unit: % of tests)")
 topa = sorted(ra.items(), key=lambda kv: -kv[1])[:6]
-rrows = [["#", "Error code", "Station", "After", "vs before"]]
+rrows = [["#", "NG step", "Station", "After", "vs before"]]
 for i, (c_, v) in enumerate(topa, 1):
     stn = max(sta.get(c_, {}).items(), key=lambda kv: kv[1])[0]
     rrows.append([str(i), c_, STN[stn], f"{v:.2f}", f"{v - rb.get(c_, 0):+.2f}"])
@@ -313,8 +313,8 @@ nxt = TODAY + dt.timedelta(days=(4 - TODAY.weekday()) % 7 + 7)
 steps = []
 bad = [x for x in jt if x[5] / x[4] * 100 >= 1.5 * x[6] and x[5] >= 5][:3]
 if bad: steps.append(("Jig", "Check pins / contact of " + ", ".join(f"{STN[x[0]]} {JIG.get(x[1], ('?', ''))[0]} ({x[5] * 100 / x[4]:.1f}%)" for x in bad), nxt))
-if topa: steps.append(("Error code", f"Analyse NG logs of {topa[0][0]} ({topa[0][1]:.2f}% of tests) and define a corrective action", nxt + dt.timedelta(days=7)))
-if ups: steps.append(("Watch", f"{ups[0][1]} rose +{ups[0][0]:.2f}% after the actions: check if related to the pin / pad changes", nxt + dt.timedelta(days=7)))
+if topa: steps.append(("NG step", f"Analyse NG logs of {topa[0][0]} ({topa[0][1]:.2f}% of tests) and define a corrective action", nxt + dt.timedelta(days=7)))
+if ups: steps.append(("Watch", f"{ups[0][1]} increased +{ups[0][0]:.2f}% after the actions: check if related to the pin / pad changes", nxt + dt.timedelta(days=7)))
 steps.append(("Verify", f"Re-check this review with 4 weeks of data after {dd(ACT)} (until {dd(ACT + dt.timedelta(days=28))})", ACT + dt.timedelta(days=30)))
 srows2 = [["#", "Type", "Action", "Due"]] + [[str(i), t_, a_, f"{dd(d_)} ({wk(d_)})"] for i, (t_, a_, d_) in enumerate(steps, 1)]
 table(f.s, 6.73, yy, 6.04, srows2, [0.3, 0.8, 3.9, 1.04], row_h=0.62, size=8.5, header_h=0.32,

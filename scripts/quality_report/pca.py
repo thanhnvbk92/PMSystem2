@@ -4,7 +4,7 @@ from pptlib import *
 
 BORDER = "ADADAD"
 VCOL = {"Effective": GREEN, "Worse": RED, "Small improvement": GREEN, "Improving (not significant)": "BF8F00",
-        "No clear effect": G3, "Insufficient data": G3, "Code not seen": G3, "No baseline": G3, "No error code": G3}
+        "No clear effect": G3, "Insufficient data": G3, "NG step not seen": G3, "No baseline": G3, "No NG step": G3}
 STATUS = {"Effective": ("OK", GREEN, BLACK), "Small improvement": ("Monitor", "FFEB9C", BLACK),
           "Improving (not significant)": ("Monitor", "FFEB9C", BLACK), "Worse": ("NG", RED, WHITE),
           "No clear effect": ("NG", "F4B183", BLACK)}
@@ -54,10 +54,10 @@ def pca_page(sl, num_, x):
              x["action"] or "–",
              f"Done {d_:%d/%m/%Y} ({wk_})"]
     if x["notes"]:
-        paras += ["", [("Notes", {"bold": True})]] + [[("• " + n_, {"color": DARK if " rise to " in n_ else G3, "size": 8.5})] for n_ in x["notes"]]
+        paras += ["", [("Notes", {"bold": True})]] + [[("• " + n_, {"color": DARK if " increased to " in n_ else G3, "size": 8.5})] for n_ in x["notes"]]
     pca_cell(tbl.cell(1, 1), paras, size=9.5)
     result = [[("Result", {"bold": True})],
-              [("Error code: ", {}), (f"{pc(x['rate_before'])} → {pc(x['rate_after'])}", {"bold": True, "color": res_col}),
+              [("NG step: ", {}), (f"{pc(x['rate_before'])} → {pc(x['rate_after'])}", {"bold": True, "color": res_col}),
                (f" ({x['change_pct']:+.0f}%)" if x["change_pct"] is not None else "", {"color": res_col}),
                (f"   ·   Station Re-test: {pc(x['retest_before'], 1)} → {pc(x['retest_after'], 1)}", {})],
               [("Verdict: ", {}), (x["verdict"], {"bold": True, "color": VCOL.get(vbase(x["verdict"]), DARK)}),
@@ -76,7 +76,7 @@ def pca_page(sl, num_, x):
     if pts:
         cx = TX + COLS[0] + COLS[1] + 0.08; cy = TY + H0 + 0.72
         cd = CategoryChartData(); cd.categories = [p[0] for p in pts]
-        cd.add_series("Code rate %", [round(p[1], 3) for p in pts])
+        cd.add_series("NG step rate %", [round(p[1], 3) for p in pts])
         gch = f.s.shapes.add_chart(XL_CHART_TYPE.COLUMN_CLUSTERED, Inches(cx), Inches(cy), Inches(COLS[2] - 0.16), Inches(H1 - 1.05), cd)
         gch.name = f"Trend {num_}"
         ch = gch.chart; chart_text(ch, 8); ch.has_legend = False
