@@ -80,8 +80,9 @@ cur.execute("""WITH x AS (
                GROUP BY 1, 2, 3""", (SIDS, SIDS, min(TS, B0), TODAY, min(TS, B0), TODAY))
 for day, job, mid, n, k in cur.fetchall():
     if is_model(job, mid): r = lrty[day]; r[0] += n; r[1] += k
-IMP = [x for x in improvements.analyze(conn, os.path.join(RD, "ImprovementList.xlsx"), TODAY, sorted(EXCL), NOT_A_TEST)
-       if x["line"] == A.line and x["model"] == A.model]
+_ALL = json.loads(json.dumps(improvements.analyze(conn, os.path.join(RD, "ImprovementList.xlsx"), TODAY, sorted(EXCL), NOT_A_TEST), default=str))
+NUMS = [i for i, x in enumerate(_ALL, 1) if x["line"] == A.line and x["model"] == A.model]   # numbers as in the monthly report
+IMP = [_ALL[i - 1] for i in NUMS]
 conn.close()
 
 def kpi(a, b, sid=None):
@@ -290,6 +291,12 @@ textbox(f.s, 0.53, yy + 0.3 + irh * len(IMP) + 0.06, 12.24, 0.6,
         ["* Each action is checked on its own error code at its station: 28 days before vs after (action day excluded). Effective = −30% or more and p < 0.05; (early) = fewer than 7 days."]
         + [f"* {n_}" for n_ in notes], size=8, color=G3)
 
+# ---- 7b. one 'Verify Corrective Action' page per action (same page as in the monthly report) ----
+from pca import pca_page
+PCA_SLOTS = S[12:36]
+PCA = [(n_, x) for n_, x in zip(NUMS, IMP) if x["verdict"] != "Insufficient data"][:len(PCA_SLOTS)]
+for sl, (n_, x) in zip(PCA_SLOTS, PCA): pca_page(sl, n_, x)
+
 # ---- 8. remaining issues and next steps ----
 f = Frame(S[9], "Remaining Issues & Next Steps", f"{A.model} on {A.line} · after {PA}")
 yy = f.section("Top error codes after the action", w=5.9, unit="(Unit: % of tests)")
@@ -315,7 +322,7 @@ table(f.s, 6.73, yy, 6.04, srows2, [0.3, 0.8, 3.9, 1.04], row_h=0.62, size=8.5, 
 
 # ---- end, drop unused slides, page numbers ----
 strip_annotations(S[39])
-KEEP = {0, 2, 3, 4, 6, 8, 9, 39}
+KEEP = {0, 2, 3, 4, 6, 8, 9, 39} | set(range(12, 12 + len(PCA)))
 def drop_slide(slide):
     lst = prs.slides._sldIdLst
     for sldId in list(lst):
@@ -323,6 +330,10 @@ def drop_slide(slide):
             prs.part.drop_rel(sldId.rId); lst.remove(sldId); return
 for i_, sl in enumerate(S):
     if i_ not in KEEP: drop_slide(sl)
+lst_ = prs.slides._sldIdLst; ids_ = {prs.part.related_part(e.rId): e for e in lst_}
+ref_ = ids_[S[8].part]
+for sl, _ in zip(PCA_SLOTS, PCA):                    # verification pages right after the action summary
+    el_ = ids_[sl.part]; lst_.remove(el_); ref_.addnext(el_); ref_ = el_
 for el in list(prs.part._element.iter("{http://schemas.microsoft.com/office/powerpoint/2010/main}sectionLst")):
     ext = el.getparent(); ext.getparent().remove(ext)
 for idx, sl in enumerate(list(prs.slides), 1):
