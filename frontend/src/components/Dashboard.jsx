@@ -308,7 +308,7 @@ function Dashboard({
     <div className="space-y-4 w-full animate-in fade-in duration-300 font-sans pb-8">
 
       {/* TOOLBAR / HEADER CONTROL ROW */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-200 pb-4">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div className="flex items-center gap-3">
           {/* Time Range Selector */}
           <div className="flex items-center bg-slate-100 border border-slate-300 rounded-xl px-3 py-1.5 text-xs text-slate-700 gap-2">
@@ -345,14 +345,10 @@ function Dashboard({
               fetchBackendData(selectedLineId ? parseInt(selectedLineId) : null, startDate, endDate);
             }}
             className="p-2 rounded-xl bg-slate-200 hover:bg-slate-300 text-slate-700 transition-colors"
-            title="Tải lại dữ liệu"
+            title={`Tải lại dữ liệu\n${loadTimeText('Tổng quan', productionLoadInfo?.loading, productionLoadInfo?.durationMs, productionLoadInfo?.requests)}\n${loadTimeText('Line/Station', isLoading, chartLoadInfo.durationMs, chartLoadInfo.requests)}`}
           >
-            <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin text-purple-700' : ''}`} />
+            <RefreshCw className={`w-4 h-4 ${isLoading || productionLoadInfo?.loading ? 'animate-spin text-purple-700' : ''}`} />
           </button>
-        </div>
-        <div className="flex flex-wrap items-center gap-2 text-[10px] font-mono">
-          <LoadTimeBadge loading={productionLoadInfo?.loading} label="Tổng quan" value={productionLoadInfo?.durationMs} details={productionLoadInfo?.requests} />
-          <LoadTimeBadge loading={isLoading} label="Line/Station" value={chartLoadInfo.durationMs} details={chartLoadInfo.requests} />
         </div>
       </div>
 
@@ -636,12 +632,11 @@ function WorstPanel({ worst, loading }) {
   );
 }
 
-function LoadTimeBadge({ loading, label, value, details = {} }) {
-  const detailText = Object.entries(details).map(([key, ms]) => `${key}: ${(ms / 1000).toFixed(2)}s`).join(' · ');
-  return <span title={detailText || undefined} className={`rounded-lg border px-2.5 py-1.5 ${loading ? 'border-amber-500/30 bg-amber-500/10 text-amber-700' : 'border-slate-300 bg-slate-100/70 text-slate-600'}`}>
-    <Clock className={`mr-1 inline h-3 w-3 ${loading ? 'animate-pulse' : ''}`} />
-    {label}: {loading ? 'đang tải...' : value == null ? '—' : `${(value / 1000).toFixed(2)}s`}
-  </span>;
+// Load times are technical details: shown in the refresh button tooltip instead of on the page.
+function loadTimeText(label, loading, value, details = {}) {
+  const detailText = Object.entries(details || {}).map(([key, ms]) => `${key} ${(ms / 1000).toFixed(2)}s`).join(', ');
+  const total = loading ? 'đang tải...' : value == null ? '—' : `${(value / 1000).toFixed(2)}s`;
+  return `${label}: ${total}${detailText ? ` (${detailText})` : ''}`;
 }
 
 export default memo(Dashboard);
