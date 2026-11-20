@@ -364,13 +364,19 @@ export default function PcMonitor({ view = 'overview', channels = [], stations =
   );
 }
 
-function Kpi({ icon: Icon, label, value, tone, hint }) {
+const sharePct = (count, total) => (total > 0 && typeof count === 'number' ? `${((count / total) * 100).toFixed(count && count < total / 100 ? 1 : 0)}%` : null);
+
+function Kpi({ icon: Icon, label, value, total, tone, hint }) {
+  const pct = total != null ? sharePct(value, total) : null;
   return (
     <div className="glass-panel border border-slate-200 p-4 flex items-center gap-3" title={hint}>
       <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${tone}`}><Icon className="w-5 h-5" /></div>
       <div>
         <div className="text-[11px] uppercase tracking-wider text-slate-500 font-semibold">{label}</div>
-        <div className="text-2xl font-bold text-slate-900 font-mono">{value}</div>
+        <div className="flex items-baseline gap-2">
+          <span className="text-2xl font-bold text-slate-900 font-mono">{value}</span>
+          {pct && <span className="text-xs font-semibold text-slate-500 font-mono" title="Tỉ lệ trên tổng số PC">{pct}</span>}
+        </div>
       </div>
     </div>
   );
@@ -403,30 +409,19 @@ function Overview({ rows, standardVersion, offlineAfterSeconds, loading, now, on
     <div className="space-y-6">
       <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-7 gap-4">
         <Kpi icon={Monitor} label="Tổng PC" value={loading ? '…' : rows.length} tone="bg-slate-100 text-slate-700" />
-        <Kpi icon={Wifi} label="Online" value={online} tone="bg-emerald-100 text-emerald-700" />
-        <Kpi icon={WifiOff} label="Offline" value={offline} tone="bg-rose-100 text-rose-700" hint={`Mất kết nối, hoặc không gửi tín hiệu quá ${Math.round(offlineAfterSeconds / 60)} phút`} />
-        <Kpi icon={AlertTriangle} label="Version cũ" value={standardVersion ? oldCount : '-'} tone="bg-amber-100 text-amber-700" hint="Cũ hơn version chuẩn" />
-        <Kpi icon={HelpCircle} label="Chưa rõ version" value={unknownCount} tone="bg-slate-100 text-slate-600" hint="Backup_Log2 bản cũ, chưa gửi version thật" />
-        <Kpi icon={Clock} label="Lệch giờ" value={clockOff.length} tone="bg-blue-100 text-blue-700" hint={`Giờ PC lệch giờ server quá ${CLOCK_DRIFT_LIMIT_SECONDS} giây`} />
-        <Kpi icon={HardDrive} label="Ổ đĩa sắp đầy" value={lowDisk.length} tone="bg-rose-100 text-rose-700" hint={`Số PC có ổ đã dùng trên ${100 - LOW_DISK_RATIO * 100}% hoặc còn dưới ${LOW_DISK_GB} GB`} />
+        <Kpi icon={Wifi} label="Online" value={online} total={rows.length} tone="bg-emerald-100 text-emerald-700" />
+        <Kpi icon={WifiOff} label="Offline" value={offline} total={rows.length} tone="bg-rose-100 text-rose-700" hint={`Mất kết nối, hoặc không gửi tín hiệu quá ${Math.round(offlineAfterSeconds / 60)} phút`} />
+        <Kpi icon={AlertTriangle} label="Version cũ" value={standardVersion ? oldCount : '-'} total={rows.length} tone="bg-amber-100 text-amber-700" hint="Cũ hơn version chuẩn" />
+        <Kpi icon={HelpCircle} label="Chưa rõ version" value={unknownCount} total={rows.length} tone="bg-slate-100 text-slate-600" hint="Backup_Log2 bản cũ, chưa gửi version thật" />
+        <Kpi icon={Clock} label="Lệch giờ" value={clockOff.length} total={rows.length} tone="bg-blue-100 text-blue-700" hint={`Giờ PC lệch giờ server quá ${CLOCK_DRIFT_LIMIT_SECONDS} giây`} />
+        <Kpi icon={HardDrive} label="Ổ đĩa sắp đầy" value={lowDisk.length} total={rows.length} tone="bg-rose-100 text-rose-700" hint={`Số PC có ổ đã dùng trên ${100 - LOW_DISK_RATIO * 100}% hoặc còn dưới ${LOW_DISK_GB} GB`} />
       </div>
 
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
         <div className="glass-panel border border-slate-200 p-5 space-y-4">
-          <h3 className="text-sm font-bold text-slate-900 font-display">Version chuẩn Backup_Log2</h3>
-          <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-3 text-xs">
-            <div className="flex items-center justify-between gap-2">
-              <span className="text-slate-600">Đang dùng</span>
-              {standardVersion ? <VersionBadge version={standardVersion} standard={standardVersion} /> : <span className="text-slate-400">chưa có</span>}
-            </div>
-            <div className="mt-1 text-[11px] text-slate-500">
-              {standardVersion
-                ? 'Tự động: version cao nhất mà các PC đang báo về. PC thấp hơn được đánh dấu màu vàng và có nút Update.'
-                : 'Chưa PC nào báo version (cần Backup_Log2 bản mới).'}
-            </div>
-          </div>
-          <div className="space-y-1.5 pt-3 border-t border-slate-200">
-            <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Phân bố version</div>
+          <h3 className="text-sm font-bold text-slate-900 font-display"
+            title="Xanh = version mới nhất các PC đang chạy; vàng = cũ hơn (có nút Update trong Danh sách PC)">Phân bố version Backup_Log2</h3>
+          <div className="space-y-1.5">
             {versions.length === 0 && <p className="text-xs text-slate-500">Chưa có dữ liệu.</p>}
             {versions.map(([version, count]) => (
               <div key={version || 'unknown'} className="flex items-center justify-between gap-2">
@@ -435,6 +430,7 @@ function Overview({ rows, standardVersion, offlineAfterSeconds, loading, now, on
                   <div className="h-full bg-teal-500" style={{ width: `${(count / Math.max(1, rows.length)) * 100}%` }} />
                 </div>
                 <span className="text-xs font-mono font-bold text-slate-700 w-10 text-right">{count}</span>
+                <span className="text-[11px] font-mono text-slate-500 w-10 text-right">{sharePct(count, rows.length)}</span>
               </div>
             ))}
           </div>
