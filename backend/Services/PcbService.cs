@@ -25,6 +25,7 @@ namespace PMSystem2.Api.Services
         Task<QualityModeSummaryDto> GetQualityModesAsync(int? lineId = null, int? stationId = null, DateTime? startDate = null, DateTime? endDate = null);
         Task<List<LineYieldStatDto>> GetLineYieldStatsAsync(int? lineId = null, DateTime? startDate = null, DateTime? endDate = null);
         Task<List<StationYieldStatDto>> GetStationYieldStatsAsync(int? lineId = null, DateTime? startDate = null, DateTime? endDate = null);
+        Task<DashboardWorstDto> GetDashboardWorstAsync(int? lineId, DateTime? startDate, DateTime? endDate, int top = 5);
         Task<List<DefectParetoStatDto>> GetDefectParetoAsync(int? lineId = null, int? stationId = null, DateTime? startDate = null, DateTime? endDate = null);
         Task<BiAnalyticsMatrixDto> GetBiMatrixAsync(int? lineId = null, int? stationId = null, int? channelId = null, int? modelId = null, string? errorCode = null, string? jobFile = null, DateTime? startDate = null, DateTime? endDate = null, int hours = 24);
         Task<List<CpkStepOptionDto>> GetCpkStepsAsync(int channelId);
@@ -1229,6 +1230,10 @@ namespace PMSystem2.Api.Services
             DateTime? startDate = null,
             DateTime? endDate = null)
         {
+            // Week / month / year: daily buckets from the rollup (the page shows days or months).
+            if (UseDashboardRollup(startDate, endDate))
+                return await RollupDailyTrendAsync(lineId, stationId, startDate, endDate);
+
             var query = ExcludeUnassignedModelData(_db.PcbResults.AsNoTracking());
 
             if (lineId.HasValue)
@@ -1244,7 +1249,7 @@ namespace PMSystem2.Api.Services
 
             if (startDate.HasValue)
             {
-                var utcStart = EnsureUtc(startDate.Value);
+                var utcStart = ToDbFilterTime(startDate.Value);
                 query = query.Where(p => p.InspectTime >= utcStart);
             }
             else if (hours > 0)
@@ -1256,7 +1261,7 @@ namespace PMSystem2.Api.Services
 
             if (endDate.HasValue)
             {
-                var utcEnd = EnsureUtc(endDate.Value);
+                var utcEnd = ToDbFilterTime(endDate.Value);
                 query = query.Where(p => p.InspectTime <= utcEnd);
             }
 
@@ -1280,7 +1285,10 @@ namespace PMSystem2.Api.Services
                 .ToListAsync();
 
             return grouped.Select(g => {
-                var dt = new DateTime(g.Year, g.Month, g.Day, g.Hour, 0, 0, DateTimeKind.Utc);
+                // The hour parts are read in the database session time zone (the server zone, see
+                // ToDbFilterTime); the bucket is given back as the factory clock with a UTC marker.
+                var sessionHour = new DateTime(g.Year, g.Month, g.Day, g.Hour, 0, 0, DateTimeKind.Unspecified);
+                var dt = DateTime.SpecifyKind(TimeZoneInfo.ConvertTimeToUtc(sessionHour, TimeZoneInfo.Local), DateTimeKind.Utc);
                 return new HourlyStatDto(
                     dt,
                     lineId ?? 0,
@@ -1299,45 +1307,15 @@ namespace PMSystem2.Api.Services
             DateTime? startDate = null,
             DateTime? endDate = null)
         {
-            var query = ExcludeUnassignedModelData(_db.PcbResults.AsNoTracking());
+            var counters = await GetCountersAsync(lineId, stationId, startDate, endDate);
+            long totalInspected = counters.TotalInspected;
+            long totalOk = counters.TotalOk;
+            long totalNg = counters.TotalNg;
 
-            if (lineId.HasValue)
-            {
-                var stations = await _masterDataService.GetStationsAsync();
-                var stationIds = stations.Where(s => s.LineId == lineId.Value).Select(s => s.Id).ToList();
-                query = query.Where(p => stationIds.Contains(p.StationId));
-            }
-            if (stationId.HasValue)
-            {
-                query = query.Where(p => p.StationId == stationId.Value);
-            }
-            if (startDate.HasValue)
-            {
-                var utcStart = EnsureUtc(startDate.Value);
-                query = query.Where(p => p.InspectTime >= utcStart);
-            }
-            if (endDate.HasValue)
-            {
-                var utcEnd = EnsureUtc(endDate.Value);
-                query = query.Where(p => p.InspectTime <= utcEnd);
-            }
-
-            var stats = await query
-                .GroupBy(x => 1)
-                .Select(g => new {
-                    Total = g.Count(),
-                    Ok = g.Count(x => x.Result == "OK" || x.Result == "PASS"),
-                    Ng = g.Count(x => x.Result == "NG" || x.Result == "FAIL")
-                })
-                .SingleOrDefaultAsync();
-
-            int totalInspected = stats?.Total ?? 0;
-            int totalOk = stats?.Ok ?? 0;
-            int totalNg = stats?.Ng ?? 0;
-
-            var yieldRate = totalInspected > 0 ? Math.Round((double)totalOk / totalInspected * 100.0, 2) : 0.0;
+            var yieldRate = counters.OverallYieldRate;
             var activeChannels = (await _masterDataService.GetChannelsAsync()).Count(c => c.Status == "online");
-            var recentHourly = await GetHourlyStatsAsync(24, lineId, stationId, startDate, endDate);
+            // The page loads the trend from /stats/hourly; computing it here as well doubled the cost.
+            var recentHourly = new List<HourlyStatDto>();
 
             return new ProductionSummaryDto(
                 totalInspected,
@@ -1355,7 +1333,13 @@ namespace PMSystem2.Api.Services
             var cacheKey = $"production-counters:{lineId}:{stationId}:{startDate?.Ticks}:{endDate?.Ticks}";
             return await _memoryCache.GetOrCreateAsync(cacheKey, async entry =>
             {
-                entry.AbsoluteExpirationRelativeToNow = TimeSpan.FromSeconds(2);
+                entry.AbsoluteExpirationRelativeToNow = TimeSpan.FromSeconds(UseDashboardRollup(startDate, endDate) ? 10 : 2);
+                if (UseDashboardRollup(startDate, endDate))
+                {
+                    var (t, o, n) = await RollupCountsAsync(lineId, stationId, startDate, endDate);
+                    return new ProductionCounterDto((int)t, (int)o, (int)n,
+                        t > 0 ? Math.Round((double)o / t * 100.0, 2) : 0.0);
+                }
                 var query = ExcludeUnassignedModelData(_db.PcbResults.AsNoTracking());
                 if (lineId.HasValue)
                 {
@@ -1366,12 +1350,12 @@ namespace PMSystem2.Api.Services
                 if (stationId.HasValue) query = query.Where(p => p.StationId == stationId.Value);
                 if (startDate.HasValue)
                 {
-                    var start = EnsureUtc(startDate.Value);
+                    var start = ToDbFilterTime(startDate.Value);
                     query = query.Where(p => p.InspectTime >= start);
                 }
                 if (endDate.HasValue)
                 {
-                    var end = EnsureUtc(endDate.Value);
+                    var end = ToDbFilterTime(endDate.Value);
                     query = query.Where(p => p.InspectTime <= end);
                 }
                 var stats = await query.GroupBy(_ => 1).Select(g => new
@@ -1391,62 +1375,23 @@ namespace PMSystem2.Api.Services
         public async Task<QualityModeSummaryDto> GetQualityModesAsync(
             int? lineId = null, int? stationId = null, DateTime? startDate = null, DateTime? endDate = null)
         {
-            var cacheKey = $"quality-modes-v2:{Volatile.Read(ref _productionVersion)}:{lineId}:{stationId}:{startDate?.Ticks}:{endDate?.Ticks}";
+            // Not keyed by _productionVersion: it changes with every PCB, so the cache never hit.
+            bool longPeriod = UseDashboardRollup(startDate, endDate);
+            var cacheKey = $"quality-modes-v3:{lineId}:{stationId}:{startDate?.Ticks}:{endDate?.Ticks}";
             return await _memoryCache.GetOrCreateAsync(cacheKey, async entry =>
             {
-                entry.AbsoluteExpirationRelativeToNow = TimeSpan.FromSeconds(30);
-                var periodQuery = ExcludeUnassignedModelData(_db.PcbResults.AsNoTracking());
-                if (startDate.HasValue)
-                {
-                    var start = EnsureUtc(startDate.Value);
-                    periodQuery = periodQuery.Where(p => p.InspectTime >= start);
-                }
-                if (endDate.HasValue)
-                {
-                    var end = EnsureUtc(endDate.Value);
-                    periodQuery = periodQuery.Where(p => p.InspectTime <= end);
-                }
+                entry.AbsoluteExpirationRelativeToNow = longPeriod ? TimeSpan.FromMinutes(5) : TimeSpan.FromSeconds(60);
 
                 // Retest: every test attempt is counted once in the selected scope.
-                var scopedQuery = periodQuery;
-                if (lineId.HasValue)
-                {
-                    var stationIds = (await _masterDataService.GetStationsAsync())
-                        .Where(s => s.LineId == lineId.Value).Select(s => s.Id).ToList();
-                    scopedQuery = scopedQuery.Where(p => stationIds.Contains(p.StationId));
-                }
-                if (stationId.HasValue) scopedQuery = scopedQuery.Where(p => p.StationId == stationId.Value);
-                var retest = await scopedQuery.GroupBy(_ => 1).Select(g => new
-                {
-                    Total = g.LongCount(),
-                    Ng = g.LongCount(x => x.Result == "NG" || x.Result == "FAIL")
-                }).SingleOrDefaultAsync();
+                var attempts = await GetCountersAsync(lineId, stationId, startDate, endDate);
+                long retestTotal = attempts.TotalInspected;
+                long retestNg = attempts.TotalNg;
 
-                // NTF: one PCB per PID + Station. The period selects the PCB set;
-                // its complete history at that Station determines whether it ever failed.
-                var selectedPidStations = scopedQuery.Select(p => new { p.Pid, p.StationId }).Distinct();
-                long ntfTotal = await selectedPidStations.LongCountAsync();
-                long ntfNg = await selectedPidStations
-                    .Join(_db.PcbNtfSummaries.AsNoTracking().Where(summary => summary.EverNg),
-                        selected => new { selected.Pid, selected.StationId },
-                        summary => new { summary.Pid, summary.StationId },
-                        (_, _) => 1)
-                    .LongCountAsync();
-
-                // RTY: system-wide unique PIDs appearing in the period. Any NG at
-                // any Station in their complete history means they did not run straight through.
-                var selectedPids = periodQuery.Select(p => p.Pid).Distinct();
-                long rtyTotal = await selectedPids.LongCountAsync();
-                long rtyEverNg = await selectedPids
-                    .Join(_db.PcbRtySummaries.AsNoTracking().Where(summary => summary.EverNg),
-                        pid => pid,
-                        summary => summary.Pid,
-                        (_, _) => 1)
-                    .LongCountAsync();
+                // NTF: PID + Station pairs first tested in the period, NG at least once at that Station.
+                // RTY: plant-wide PIDs first tested in the period that never failed at any Station.
+                var (ntfTotal, ntfNg, rtyTotal, rtyEverNg) = await CohortQualityAsync(lineId, stationId, startDate, endDate);
                 long rtyStraight = rtyTotal - rtyEverNg;
 
-                long retestTotal = retest?.Total ?? 0;
-                long retestNg = retest?.Ng ?? 0;
                 return new QualityModeSummaryDto(
                     retestTotal, retestNg, retestTotal > 0 ? Math.Round(retestNg * 100.0 / retestTotal, 2) : 0,
                     ntfTotal, ntfNg, ntfTotal > 0 ? Math.Round(ntfNg * 100.0 / ntfTotal, 2) : 0,
@@ -1518,6 +1463,8 @@ namespace PMSystem2.Api.Services
             DateTime? startDate = null,
             DateTime? endDate = null)
         {
+            if (UseDashboardRollup(startDate, endDate))
+                return await RollupStationYieldAsync(lineId, startDate, endDate);
             var stations = await _masterDataService.GetStationsAsync();
             var lines = await _masterDataService.GetLinesAsync();
             var query = ExcludeUnassignedModelData(_db.PcbResults.AsNoTracking());
@@ -1529,12 +1476,12 @@ namespace PMSystem2.Api.Services
             }
             if (startDate.HasValue)
             {
-                var utcStart = EnsureUtc(startDate.Value);
+                var utcStart = ToDbFilterTime(startDate.Value);
                 query = query.Where(p => p.InspectTime >= utcStart);
             }
             if (endDate.HasValue)
             {
-                var utcEnd = EnsureUtc(endDate.Value);
+                var utcEnd = ToDbFilterTime(endDate.Value);
                 query = query.Where(p => p.InspectTime <= utcEnd);
             }
 

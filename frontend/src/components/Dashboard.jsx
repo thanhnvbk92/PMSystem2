@@ -45,6 +45,7 @@ function Dashboard({
   const [isLoading, setIsLoading] = useState(false);
   const [chartLoadInfo, setChartLoadInfo] = useState({ durationMs: null, requests: {} });
   const [qualityModes, setQualityModes] = useState(null);
+  const [worstData, setWorstData] = useState(null);
   const latestHourlyStatsRef = useRef(hourlyStats);
   const latestSummaryRef = useRef(summary);
   const forceNextChartUpdateRef = useRef(true);
@@ -92,39 +93,52 @@ function Dashboard({
     return { sDate: toProductionClockIso(sDate), eDate: toProductionClockIso(eDate) };
   };
 
-  // Load backend stats used by the remaining line and station charts.
+  const applyStationYields = (stationYields) => {
+    const lineMap = new Map();
+    (stationYields || []).forEach(station => {
+      const key = station.lineId || 0;
+      const current = lineMap.get(key) || { lineId: key, lineName: station.lineName || `Line ${key}`, total: 0, ok: 0, ng: 0 };
+      current.total += station.total || 0;
+      current.ok += station.ok || 0;
+      current.ng += station.ng || 0;
+      lineMap.set(key, current);
+    });
+    const lineYields = [...lineMap.values()].map(line => ({ ...line,
+      yieldRate: line.total > 0 ? line.ok / line.total * 100 : 0 }));
+    setLineYieldData(lineYields);
+    setStationYieldData(stationYields || []);
+  };
+
+  // Load the line / station charts, the NTF-RTY cards and the Worst panel. Each one is shown as
+  // soon as its own request returns: NTF / RTY over a month takes a few seconds and must not
+  // hold back the charts. Responses of an older filter are dropped.
+  const backendRequestRef = useRef(0);
   const fetchBackendData = async (lineId, sDate, eDate) => {
+    const requestId = ++backendRequestRef.current;
+    const from = sDate || startDate;
+    const to = eDate || endDate;
     setIsLoading(true);
     const loadStarted = performance.now();
-    try {
-      const timed = async (name, request) => { const started = performance.now(); const data = await request(); return { name, data, durationMs: performance.now() - started }; };
-      const results = await Promise.all([
-        timed('station', () => ProductionApi.getStationYieldStats(lineId || null, sDate || startDate, eDate || endDate)),
-        timed('qualityModes', () => ProductionApi.getQualityModes(lineId || null, null, sDate || startDate, eDate || endDate))
-      ]);
-      const byName = Object.fromEntries(results.map(x => [x.name, x]));
-      const stationYields = byName.station.data;
-      setQualityModes(byName.qualityModes.data);
-      const lineMap = new Map();
-      (stationYields || []).forEach(station => {
-        const key = station.lineId || 0;
-        const current = lineMap.get(key) || { lineId: key, lineName: station.lineName || `Line ${key}`, total: 0, ok: 0, ng: 0 };
-        current.total += station.total || 0;
-        current.ok += station.ok || 0;
-        current.ng += station.ng || 0;
-        lineMap.set(key, current);
-      });
-      const lineYields = [...lineMap.values()].map(line => ({ ...line,
-        yieldRate: line.total > 0 ? line.ok / line.total * 100 : 0 }));
-      setLineYieldData(lineYields || []);
-      setStationYieldData(stationYields || []);
-      setChartLoadInfo({ durationMs: performance.now() - loadStarted,
-        requests: Object.fromEntries(results.map(x => [x.name, x.durationMs])) });
-    } catch (err) {
-      console.error('Failed to fetch dashboard data:', err);
-    } finally {
-      setIsLoading(false);
-    }
+    const requests = {};
+    const timed = async (name, request, apply) => {
+      const started = performance.now();
+      try {
+        const data = await request();
+        if (requestId === backendRequestRef.current) apply(data);
+      } catch (err) {
+        console.error(`Failed to fetch dashboard ${name}:`, err);
+      } finally {
+        requests[name] = performance.now() - started;
+      }
+    };
+    await Promise.all([
+      timed('station', () => ProductionApi.getStationYieldStats(lineId || null, from, to), applyStationYields),
+      timed('worst', () => ProductionApi.getDashboardWorst(lineId || null, from, to), setWorstData),
+      timed('qualityModes', () => ProductionApi.getQualityModes(lineId || null, null, from, to), setQualityModes),
+    ]);
+    if (requestId !== backendRequestRef.current) return;
+    setChartLoadInfo({ durationMs: performance.now() - loadStarted, requests: { ...requests } });
+    setIsLoading(false);
   };
 
   useEffect(() => {
@@ -346,16 +360,18 @@ function Dashboard({
           <div className="mt-2 text-xs text-slate-600">{Number(qualityModes?.retestNgAttempts ?? totalNg).toLocaleString()} NG / {Number(qualityModes?.retestAttempts ?? totalInspected).toLocaleString()} lượt test</div>
         </div>
         <div className="glass-panel border border-rose-500/20 p-5">
-          <div className="flex items-start justify-between"><div><div className="text-xs font-bold uppercase tracking-wider text-rose-700">NTF</div><div className="mt-1 text-[11px] text-slate-500">PID từng NG tại cùng Station</div></div><AlertTriangle className="h-5 w-5 text-rose-700"/></div>
+          <div className="flex items-start justify-between"><div><div className="text-xs font-bold uppercase tracking-wider text-rose-700">NTF</div><div className="mt-1 text-[11px] text-slate-500">PID-Station test lần đầu trong kỳ, từng NG tại Station đó</div></div><AlertTriangle className="h-5 w-5 text-rose-700"/></div>
           <div className="mt-4 text-3xl font-black text-rose-700">{qualityModes ? `${Number(qualityModes.ntfRate).toFixed(2)}%` : '—'}</div>
           <div className="mt-2 text-xs text-slate-600">{qualityModes ? `${Number(qualityModes.ntfNgPcbStations).toLocaleString()} NG / ${Number(qualityModes.ntfPcbStations).toLocaleString()} PID-Station` : 'Đang tính lịch sử PCB...'}</div>
         </div>
         <div className="glass-panel border border-emerald-500/20 p-5">
-          <div className="flex items-start justify-between"><div><div className="text-xs font-bold uppercase tracking-wider text-emerald-700">RTY</div><div className="mt-1 text-[11px] text-slate-500">PID không NG lần nào trên toàn hệ thống</div></div><Zap className="h-5 w-5 text-emerald-700"/></div>
+          <div className="flex items-start justify-between"><div><div className="text-xs font-bold uppercase tracking-wider text-emerald-700">RTY</div><div className="mt-1 text-[11px] text-slate-500">PID test lần đầu trong kỳ, không NG lần nào trên toàn hệ thống</div></div><Zap className="h-5 w-5 text-emerald-700"/></div>
           <div className="mt-4 text-3xl font-black text-emerald-700">{qualityModes ? `${Number(qualityModes.rtyRate).toFixed(2)}%` : '—'}</div>
           <div className="mt-2 text-xs text-slate-600">{qualityModes ? `${Number(qualityModes.rtyStraightThroughPcbs).toLocaleString()} chạy thẳng / ${Number(qualityModes.rtyPcbs).toLocaleString()} PCB` : 'Đang tính lịch sử PCB...'}</div>
         </div>
       </div>
+
+      <WorstPanel worst={worstData} loading={isLoading} />
 
       {/* SECTION 1: INCIDENTS & PRODUCTION OVERVIEW (4 KPI CARDS + FUNNEL CHART) */}
       <div className="space-y-3">
@@ -605,6 +621,132 @@ function Dashboard({
         </div>
       </div>
 
+    </div>
+  );
+}
+
+const WORST_KINDS = {
+  station: { label: 'Station', Icon: Factory },
+  jig: { label: 'Jig', Icon: Cpu },
+  code: { label: 'Mã lỗi', Icon: AlertTriangle },
+  model: { label: 'Model', Icon: Layers },
+};
+
+const formatPct = (value, digits = 2) => `${Number(value || 0).toFixed(digits)}%`;
+const formatDay = (isoDay) => {
+  if (!isoDay) return '';
+  const [y, m, d] = isoDay.split('-');
+  return `${d}/${m}/${y}`;
+};
+
+// Worst panel: what to fix first in the selected period, and what just got worse on its last day.
+function WorstPanel({ worst, loading }) {
+  const todayIso = (() => {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  })();
+  const recentLabel = worst?.recentDay === todayIso ? 'hôm nay' : `ngày ${formatDay(worst?.recentDay)}`;
+  const alerts = worst?.alerts || [];
+  const columns = [
+    { kind: 'station', title: 'Worst Station', items: worst?.stations },
+    { kind: 'jig', title: 'Worst Jig', items: worst?.jigs },
+    { kind: 'code', title: 'Top Mã Lỗi', items: worst?.errorCodes },
+    { kind: 'model', title: 'Worst Model', items: worst?.models },
+  ];
+
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <h3 className="text-xs font-bold uppercase tracking-wider text-slate-600 font-display">
+          Worst &amp; Cảnh Báo Sớm
+        </h3>
+        <span className="text-[10px] text-slate-500">
+          {worst ? `NG trung bình kỳ: ${formatPct(worst.ngRate)} · Xếp theo số NG vượt mức trung bình · ↑ = ${recentLabel} cao hơn hẳn 7 ngày trước` : ''}
+        </span>
+      </div>
+
+      {/* Spikes on the last day of the period: a jig / station / code / model that just got worse. */}
+      <div className={`glass-panel border p-4 ${alerts.length ? 'border-rose-500/40' : 'border-emerald-500/30'}`}>
+        <div className="flex items-center gap-2 text-xs font-bold">
+          <TrendingUp className={`h-4 w-4 ${alerts.length ? 'text-rose-700' : 'text-emerald-700'}`} />
+          <span className={alerts.length ? 'text-rose-700' : 'text-emerald-700'}>
+            {!worst ? (loading ? 'Đang phân tích...' : 'Chưa có dữ liệu')
+              : alerts.length ? `${alerts.length} mục tăng NG đột biến ${recentLabel}`
+              : `Không có mục nào tăng NG đột biến ${recentLabel}`}
+          </span>
+        </div>
+        {alerts.length > 0 && (
+          <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-3">
+            {alerts.map(item => {
+              const { label, Icon } = WORST_KINDS[item.kind] || WORST_KINDS.station;
+              return (
+                <div key={`${item.kind}-${item.key}`} className="flex items-start gap-2 rounded-lg border border-rose-500/20 bg-rose-500/5 px-3 py-2"
+                  title={`NG ${recentLabel}: ${item.recentNg.toLocaleString()} / ${item.recentTotal.toLocaleString()}`}>
+                  <Icon className="mt-0.5 h-3.5 w-3.5 shrink-0 text-rose-700" />
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-xs font-semibold text-slate-900">
+                      <span className="text-rose-700">{label}</span> {item.name}
+                    </div>
+                    {item.context && <div className="truncate text-[10px] text-slate-500">{item.context}</div>}
+                  </div>
+                  <div className="shrink-0 text-right font-mono text-[11px]">
+                    <div className="font-bold text-rose-700">{formatPct(item.recentNgRate)}</div>
+                    <div className="text-[10px] text-slate-500">7 ngày: {formatPct(item.baselineNgRate)}</div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+        {columns.map(({ kind, title, items }) => (
+          <WorstList key={kind} kind={kind} title={title} items={items || []} loading={loading && !worst} recentLabel={recentLabel} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function WorstList({ kind, title, items, loading, recentLabel }) {
+  const { Icon } = WORST_KINDS[kind];
+  const isCode = kind === 'code';
+  // Codes have no OK tests: their bar is the share of every NG; the others use their own NG rate.
+  const barOf = item => (isCode ? item.shareOfNg : item.ngRate);
+  const maxBar = Math.max(1, ...items.map(barOf));
+  return (
+    <div className="glass-panel p-4">
+      <div className="mb-2 flex items-center gap-2">
+        <Icon className="h-4 w-4 text-rose-700" />
+        <h4 className="text-xs font-bold uppercase tracking-wider text-slate-900 font-display">{title}</h4>
+      </div>
+      {items.length === 0 ? (
+        <div className="py-4 text-center text-[11px] text-slate-500">{loading ? 'Đang tải...' : 'Không có mục nào xấu hơn trung bình'}</div>
+      ) : (
+        <ol className="divide-y divide-slate-200">
+          {items.map((item, index) => (
+            <li key={item.key} className="flex items-start gap-2 py-2"
+              title={`NG ${item.ng.toLocaleString()} / ${item.total.toLocaleString()} test · ${formatPct(item.shareOfNg, 1)} tổng NG · ${recentLabel}: ${formatPct(item.recentNgRate)} (7 ngày trước: ${formatPct(item.baselineNgRate)})`}>
+              <span className="w-4 shrink-0 pt-0.5 text-center font-mono text-[11px] font-bold text-slate-400">{index + 1}</span>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-1.5">
+                  <span className="truncate text-xs font-semibold text-slate-900">{item.name}</span>
+                  {item.spike && <span className="shrink-0 rounded bg-rose-600 px-1 text-[9px] font-bold text-white">↑ {formatPct(item.recentNgRate, 1)}</span>}
+                </div>
+                {item.context && <div className="truncate text-[10px] text-slate-500">{item.context}</div>}
+                <div className="mt-1 h-1 rounded bg-slate-200">
+                  <div className="h-1 rounded bg-rose-500" style={{ width: `${Math.min(100, barOf(item) / maxBar * 100)}%` }} />
+                </div>
+              </div>
+              <div className="shrink-0 text-right font-mono">
+                <div className="text-xs font-bold text-rose-700">{isCode ? formatPct(item.shareOfNg, 1) : formatPct(item.ngRate)}</div>
+                <div className="text-[10px] text-slate-500">{item.ng.toLocaleString()} NG{isCode ? '' : ` / ${compactNumberFormatter.format(item.total)}`}</div>
+              </div>
+            </li>
+          ))}
+        </ol>
+      )}
     </div>
   );
 }

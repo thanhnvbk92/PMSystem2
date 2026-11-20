@@ -432,6 +432,27 @@ namespace PMSystem2.Api.Models
         long NtfPcbStations, long NtfNgPcbStations, double NtfRate,
         long RtyPcbs, long RtyStraightThroughPcbs, double RtyRate);
 
+    /// <summary>
+    /// One entry of the dashboard "Worst" panel (kind: station, jig, code, model).
+    /// NgRate: NG / tests of the item (for a code: NG of the code / every test in scope).
+    /// Excess: NG above what the average NG rate would give (for a code: its NG count) - the rank.
+    /// Recent*: the last day of the period; Baseline: the 7 days before it. Spike: clearly worse now.
+    /// </summary>
+    public record DashboardWorstItemDto(
+        string Kind, string Key, string Name, string? Context,
+        long Total, long Ng, double NgRate, double ShareOfNg,
+        long RecentTotal, long RecentNg, double RecentNgRate, double BaselineNgRate,
+        bool Spike, double Excess);
+
+    public record DashboardWorstDto(
+        DateOnly? FromDay, DateOnly? ToDay, DateOnly RecentDay,
+        long Total, long Ng, double NgRate,
+        List<DashboardWorstItemDto> Stations,
+        List<DashboardWorstItemDto> Jigs,
+        List<DashboardWorstItemDto> ErrorCodes,
+        List<DashboardWorstItemDto> Models,
+        List<DashboardWorstItemDto> Alerts);
+
     public record LineYieldStatDto(
         int LineId,
         string LineName,
