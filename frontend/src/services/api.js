@@ -192,6 +192,5 @@ export const ReportsApi = {
 // PC monitoring: state of every Backup_Log2 PC and the standard Backup_Log2 version.
 export const MachinesApi = {
   getAll: () => api.get('/machines').then(res => res.data),
-  setStandardVersion: (version) => api.put('/machines/standard-version', { version }).then(res => res.data),
   remove: (mac) => api.delete(`/machines/${encodeURIComponent(mac)}`).then(res => res.data),
 };

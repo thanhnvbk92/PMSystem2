@@ -58,7 +58,6 @@ public sealed record MachineStatusDto(
 public sealed class MachineStatusService
 {
     public static readonly TimeSpan OfflineAfter = TimeSpan.FromMinutes(3);
-    public const string StandardVersionKey = "backuplog.standard_version";
 
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<MachineStatusService> _logger;
