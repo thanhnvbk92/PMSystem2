@@ -477,7 +477,7 @@ function Overview({ rows, standardVersion, standardInfo = {}, offlineAfterSecond
                   <tr key={r.macKey} className="hover:bg-slate-100 cursor-pointer" onClick={() => onSelect(r)}>
                     <td className="p-2 whitespace-nowrap">{r.lineName || '-'}</td>
                     <td className="p-2 whitespace-nowrap">{r.stationName || '-'}</td>
-                    <td className="p-2 whitespace-nowrap font-semibold">{r.channelName || '-'}</td>
+                    <td className="p-2 max-w-[80px] truncate font-semibold" title={r.channelName || ''}>{r.channelName || '-'}</td>
                     <td className="p-2 font-mono">{r.hostname || '-'}</td>
                     <td className="p-2"><VersionBadge version={r.appVersion} standard={standardVersion} /></td>
                     <td className="p-2 text-slate-600">{formatAgo(r.disconnectedAt || r.lastSeenAt, now)}</td>
@@ -583,7 +583,7 @@ function PcList({ rows, lines, standardVersion, loading, now, serverSkewMs, onSe
               <tr key={r.macKey} className="hover:bg-slate-100/70 cursor-pointer [&>td]:px-2 [&>td]:py-2" onClick={() => onSelect(r)}>
                 <td className="whitespace-nowrap">{r.lineName || '-'}</td>
                 <td className="whitespace-nowrap">{r.stationName || '-'}</td>
-                <td className="whitespace-nowrap font-semibold">{r.channelName || '-'}</td>
+                <td className="max-w-[80px] truncate font-semibold" title={r.channelName || ''}>{r.channelName || '-'}</td>
                 <td className="font-mono max-w-[100px] truncate" title={r.hostname || ''}>{r.hostname || '-'}</td>
                 <td className="font-mono text-blue-700 max-w-[110px] truncate" title={r.ipAddress || r.channelIp || ''}>{r.ipAddress || r.channelIp || '-'}</td>
                 <td className="whitespace-nowrap">
