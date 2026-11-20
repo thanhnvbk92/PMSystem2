@@ -16,10 +16,13 @@ conn = psycopg2.connect(host=kv["host"], port=kv["port"], dbname=kv["database"],
 conn.autocommit = True
 cur = conn.cursor()
 t0 = time.time()
-cur.execute("SET lock_timeout = '10s'")
-cur.execute("ALTER TABLE pcb_ntf_summaries ADD COLUMN IF NOT EXISTS first_ng_error_code TEXT")
-cur.execute("ALTER TABLE pcb_ntf_summaries ADD COLUMN IF NOT EXISTS first_ng_channel_id INT")
-cur.execute("SET lock_timeout = 0")
+cur.execute("""SELECT count(*) FROM information_schema.columns
+               WHERE table_name = 'pcb_ntf_summaries' AND column_name IN ('first_ng_error_code', 'first_ng_channel_id')""")
+if cur.fetchone()[0] < 2:                       # ALTER takes a table lock even with IF NOT EXISTS: only when needed
+    cur.execute("SET lock_timeout = '30s'")
+    cur.execute("ALTER TABLE pcb_ntf_summaries ADD COLUMN IF NOT EXISTS first_ng_error_code TEXT")
+    cur.execute("ALTER TABLE pcb_ntf_summaries ADD COLUMN IF NOT EXISTS first_ng_channel_id INT")
+    cur.execute("SET lock_timeout = 0")
 cur.execute("SELECT DISTINCT station_id FROM pcb_ntf_summaries WHERE ever_ng ORDER BY 1")
 stations = [r[0] for r in cur.fetchall()]
 total = 0
