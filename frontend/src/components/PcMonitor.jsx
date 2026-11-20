@@ -411,13 +411,15 @@ function Overview({ rows, standardVersion, offlineAfterSeconds, loading, now, on
           <div className="max-h-80 overflow-y-auto border border-slate-200 rounded-xl">
             <table className="w-full text-xs">
               <thead className="bg-slate-50 text-slate-600 uppercase text-[10px] sticky top-0">
-                <tr><th className="p-2 text-left">Line / Trạm / Channel</th><th className="p-2 text-left">Hostname</th><th className="p-2 text-left">Version</th><th className="p-2 text-left">Mất kết nối</th></tr>
+                <tr><th className="p-2 text-left">Line</th><th className="p-2 text-left">Trạm</th><th className="p-2 text-left">Channel</th><th className="p-2 text-left">Hostname</th><th className="p-2 text-left">Version</th><th className="p-2 text-left">Mất kết nối</th></tr>
               </thead>
               <tbody className="divide-y divide-slate-200">
-                {offlineRows.length === 0 && <tr><td colSpan={4} className="p-6 text-center text-slate-500">Không có PC nào offline.</td></tr>}
+                {offlineRows.length === 0 && <tr><td colSpan={6} className="p-6 text-center text-slate-500">Không có PC nào offline.</td></tr>}
                 {offlineRows.map(r => (
                   <tr key={r.macKey} className="hover:bg-slate-100 cursor-pointer" onClick={() => onSelect(r)}>
-                    <td className="p-2">{r.lineName || '-'} / {r.stationName || '-'} / <b>{r.channelName || '-'}</b></td>
+                    <td className="p-2 whitespace-nowrap">{r.lineName || '-'}</td>
+                    <td className="p-2 whitespace-nowrap">{r.stationName || '-'}</td>
+                    <td className="p-2 whitespace-nowrap font-semibold">{r.channelName || '-'}</td>
                     <td className="p-2 font-mono">{r.hostname || '-'}</td>
                     <td className="p-2"><VersionBadge version={r.appVersion} standard={standardVersion} /></td>
                     <td className="p-2 text-slate-600">{formatAgo(r.disconnectedAt || r.lastSeenAt, now)}</td>
@@ -496,47 +498,51 @@ function PcList({ rows, lines, standardVersion, loading, now, serverSkewMs, onSe
       </div>
 
       <div className="overflow-x-auto rounded-xl border border-slate-200">
-        <table className="w-full text-left text-xs">
+        <table className="w-full text-left text-[11px]">
           <thead className="bg-slate-50/90 text-slate-600 uppercase font-semibold tracking-wider border-b border-slate-200 text-[10px]">
-            <tr>
-              <th className="p-3">Trạng thái</th>
-              <th className="p-3">Line / Trạm / Channel</th>
-              <th className="p-3">Hostname</th>
-              <th className="p-3">IP</th>
-              <th className="p-3">Version</th>
-              <th className="p-3">Giờ PC</th>
-              <th className="p-3">Log type</th>
-              <th className="p-3 text-right">CPU</th>
-              <th className="p-3 text-right">RAM</th>
-              <th className="p-3 text-right">Ổ trống</th>
-              <th className="p-3">Upload gần nhất</th>
-              <th className="p-3">Lần cuối thấy</th>
+            <tr className="[&>th]:px-2 [&>th]:py-2 [&>th]:whitespace-nowrap">
+              <th>Trạng thái</th>
+              <th>Line</th>
+              <th>Trạm</th>
+              <th>Channel</th>
+              <th>Hostname</th>
+              <th>IP</th>
+              <th>Version</th>
+              <th>Giờ PC</th>
+              <th>Log type</th>
+              <th className="text-right">CPU</th>
+              <th className="text-right">RAM</th>
+              <th className="text-right">Ổ trống</th>
+              <th>Upload gần nhất</th>
+              <th>Lần cuối thấy</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-200">
             {filtered.length === 0 && (
-              <tr><td colSpan={12} className="p-10 text-center text-slate-500">{loading ? 'Đang tải…' : 'Không có PC phù hợp bộ lọc.'}</td></tr>
+              <tr><td colSpan={14} className="p-10 text-center text-slate-500">{loading ? 'Đang tải…' : 'Không có PC phù hợp bộ lọc.'}</td></tr>
             )}
             {filtered.map(r => (
-              <tr key={r.macKey} className="hover:bg-slate-100/70 cursor-pointer" onClick={() => onSelect(r)}>
-                <td className="p-3"><StatusBadge online={r.isOnline} neverConnected={r.neverConnected} /></td>
-                <td className="p-3 whitespace-nowrap">{r.lineName || '-'} / {r.stationName || '-'} / <b>{r.channelName || '-'}</b></td>
-                <td className="p-3 font-mono">{r.hostname || '-'}</td>
-                <td className="p-3 font-mono text-blue-700 max-w-[160px] truncate" title={r.ipAddress || r.channelIp || ''}>{r.ipAddress || r.channelIp || '-'}</td>
-                <td className="p-3 whitespace-nowrap">
+              <tr key={r.macKey} className="hover:bg-slate-100/70 cursor-pointer [&>td]:px-2 [&>td]:py-2" onClick={() => onSelect(r)}>
+                <td><StatusBadge online={r.isOnline} neverConnected={r.neverConnected} /></td>
+                <td className="whitespace-nowrap">{r.lineName || '-'}</td>
+                <td className="whitespace-nowrap">{r.stationName || '-'}</td>
+                <td className="whitespace-nowrap font-semibold">{r.channelName || '-'}</td>
+                <td className="font-mono max-w-[120px] truncate" title={r.hostname || ''}>{r.hostname || '-'}</td>
+                <td className="font-mono text-blue-700 max-w-[110px] truncate" title={r.ipAddress || r.channelIp || ''}>{r.ipAddress || r.channelIp || '-'}</td>
+                <td className="whitespace-nowrap">
                   <VersionBadge version={r.appVersion} standard={standardVersion} />
                   {canUpdate(r, standardVersion) && <CommandButton pc={r} kind="update" commands={commands} />}
                 </td>
-                <td className="p-3 whitespace-nowrap">
+                <td className="whitespace-nowrap">
                   <PcClock pc={r} now={now} serverSkewMs={serverSkewMs} />
                   {canSyncTime(r) && <CommandButton pc={r} kind="sync" commands={commands} />}
                 </td>
-                <td className="p-3 max-w-[160px] truncate" title={r.logType || ''}>{r.logType || '-'}</td>
-                <td className="p-3 text-right font-mono">{r.cpuPercent != null ? `${r.cpuPercent}%` : '-'}</td>
-                <td className="p-3 text-right font-mono">{r.ramTotalMb ? `${Math.round((r.ramUsedMb / r.ramTotalMb) * 100)}%` : '-'}</td>
-                <td className={`p-3 text-right font-mono ${isLowDisk(r) ? 'text-orange-700 font-bold' : ''}`}>{r.diskFreeGb != null ? `${r.diskFreeGb} GB` : '-'}</td>
-                <td className="p-3 text-slate-600 whitespace-nowrap">{formatAgo(r.lastUploadAt, now)}</td>
-                <td className="p-3 text-slate-600 whitespace-nowrap">{formatAgo(r.lastSeenAt, now)}</td>
+                <td className="max-w-[100px] truncate" title={r.logType || ''}>{r.logType || '-'}</td>
+                <td className="text-right font-mono whitespace-nowrap">{r.cpuPercent != null ? `${r.cpuPercent}%` : '-'}</td>
+                <td className="text-right font-mono whitespace-nowrap">{r.ramTotalMb ? `${Math.round((r.ramUsedMb / r.ramTotalMb) * 100)}%` : '-'}</td>
+                <td className={`text-right font-mono whitespace-nowrap ${isLowDisk(r) ? 'text-orange-700 font-bold' : ''}`}>{r.diskFreeGb != null ? `${r.diskFreeGb} GB` : '-'}</td>
+                <td className="text-slate-600 whitespace-nowrap" title={formatTime(r.lastUploadAt)}>{formatAgo(r.lastUploadAt, now)}</td>
+                <td className="text-slate-600 whitespace-nowrap" title={formatTime(r.lastSeenAt)}>{formatAgo(r.lastSeenAt, now)}</td>
               </tr>
             ))}
           </tbody>
