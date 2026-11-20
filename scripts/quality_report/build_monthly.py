@@ -27,9 +27,9 @@ def mstart(i):
     return dt.date(y, mo, 1)
 def mname(i, short=True):
     return mstart(i).strftime("%b" if short else "%B %Y") + ("*" if i == 0 and MTD and short else "")
-def d2(d): return d.strftime("%d %b")
-MONTH_TITLE = mname(0, False) + (f" (MTD 01–{LAST.strftime('%d %b')})" if MTD else "")
-def rng(p): return f"{d2(p[0])} – {d2(p[1] - dt.timedelta(days=1))}"
+def d2(d): return dm(d)
+MONTH_TITLE = mname(0, False) + (f" (MTD {dm(RM)} to {dm(LAST)})" if MTD else "")
+def rng(p): return f"{d2(p[0])} to {d2(p[1] - dt.timedelta(days=1))}"
 def ptxt(m_): return f"before {rng(m_['B'])} · after {rng(m_['A'])}"
 STARTS = " · ".join(f"{m_['short']} from {d2(m_['A'][0])}" for m_ in MI)
 def chg(a, b): return (b - a) * 100 / a if a else 0
@@ -103,7 +103,7 @@ def dfmt(i, j, v):
 table(f.s, 0.53, y2, 12.24, defs, [1.0, 5.6, 1.1, 1.1, 1.1, 1.3], row_h=0.4,
       aligns=[PP_ALIGN.CENTER, PP_ALIGN.LEFT] + [PP_ALIGN.CENTER] * 4, cell_fmt=dfmt, name="KPI definitions")
 textbox(f.s, 0.53, y2 + 0.4 * 4 + 0.08, 12.24, 0.4,
-        [("* " + (f"{mname(0, False)} is month-to-date until {LAST.strftime('%d %b')}. " if MTD else "") + "Periods by test start time (factory clock)."), DQ], size=8, color=G3)
+        [("* " + (f"{mname(0, False)} is month-to-date until {dm(LAST)}. " if MTD else "") + "Periods by test start time (factory clock)."), DQ], size=8, color=G3)
 
 # ---------- 4. 6-month trend ----------
 f = Frame(S[3], "6-Month Trend", f"{mname(5, False)} – {mname(0, False)}")
@@ -119,7 +119,7 @@ trows = [["KPI"] + cats, ["RTY (%)"] + [f"{v:.2f}" for v in fv], ["Re-test (%)"]
          ["NTF (%)"] + [f"{v:.2f}" for v in nv], ["Test attempts"] + [num(m["retestAttempts"]) for m in mm], ["PCBs (PID)"] + [num(m["rtyPcbs"]) for m in mm]]
 table(f.s, 0.53, y2, 12.24, trows, [1.6] + [1] * len(cats), row_h=0.27,
       cell_fmt=lambda i, j, v: ({"bold": True} if j == 0 else {}) | ({"fill": LVIOLET, "bold": True} if j == len(cats) else {}), name="Monthly figures")
-textbox(f.s, 0.53, y2 + 0.27 * len(trows) + 0.06, 12.24, 0.2, [f"* {mname(0)} = month-to-date until {LAST.strftime('%d %b')}." if MTD else "* Full calendar months."], size=8, color=G3)
+textbox(f.s, 0.53, y2 + 0.27 * len(trows) + 0.06, 12.24, 0.2, [f"* {mname(0)} = month-to-date until {dm(LAST)}." if MTD else "* Full calendar months."], size=8, color=G3)
 
 # ---------- 5. KPI by line ----------
 f = Frame(S[4], "KPI by Line", f"{MONTH_TITLE} · vs {mname(1, False)}")
@@ -188,7 +188,7 @@ if low_more:
 pts.append([(f"With the {mname(1)} volume per line, plant Re-test in {mname(0)} would be ", {}),
             (f"{R_fix:.2f}%", {"bold": True, "color": RED if R_fix > R1 else GREEN}),
             (f" ({R_fix - R1:+.2f}% vs {mname(1)}): the reduction comes mainly from the volume change, not from better lines.", {})])
-if MTD: pts.append([(f"{mname(0)} = {RM:%d}–{LAST:%d %b} only ({LAST.day} days), so its test counts are lower for every line.", {"color": G3})])
+if MTD: pts.append([(f"{mname(0)} = {dm(RM)} to {dm(LAST)} only ({LAST.day} days), so its test counts are lower for every line.", {"color": G3})])
 textbox(f.s, 6.73, yk, 6.04, 1.75, [[("• " + r[0][0], r[0][1])] + r[1:] for r in pts], size=9, name="Key points")
 yt = f.section("Re-test and test attempts by line", x=6.73, y=yk + 1.85, w=6.04, unit="(Unit: %, tests)")
 vrows = [["Line", f"Re-test {mname(1)}", f"Re-test {mname(0)}", f"Tests {mname(1)}", f"Tests {mname(0)}"]]
@@ -353,9 +353,9 @@ VCOL = {"Effective": GREEN, "Worse": RED, "Small improvement": GREEN, "Improving
 VFILL = {"Effective": "C6EFCE", "Worse": "FFC7CE", "Small improvement": "E2EFDA", "Improving (not significant)": "FFEB9C"}
 section_slide(S[10], ["Improvement", "Verification"])
 def pc(v, d=2): return "–" if v is None else f"{v:.{d}f}%"
-def dd(s): return dt.date.fromisoformat(s).strftime("%d/%m")
+def dd(s): return dm(s)
 def ddw(s):                                   # date with its ISO week, e.g. 30/10 (W44)
-    d_ = dt.date.fromisoformat(s); return f"{d_:%d/%m} (W{d_.isocalendar()[1]})"
+    d_ = dt.date.fromisoformat(s); return f"{dm(d_)} (W{d_.isocalendar()[1]})"
 import os as _os
 def codes_short(code):
     """'LTE_B5_Connected_V2; LTE_B1_Connected_V2' -> 'LTE_B5/B1_Connected_V2' (common prefix / suffix kept once)."""
@@ -492,10 +492,10 @@ textbox(f.s, 8.13, yy + 0.36 * len(prow) + 0.06, 4.64, 0.2, [f"* Top 10 = {sum(p
 # ---------- 13. Action plan ----------
 f = Frame(S[38], "Action Plan", f"Follow-up from the {mname(0, False)} review · generated from the findings of this report")
 nxt = LAST + dt.timedelta(days=7 - LAST.weekday() + 4)          # Friday of next week
-def due(d): return f"{d:%d/%m} (W{d.isocalendar()[1]})"
+def due(d): return f"{dm(d)} (W{d.isocalendar()[1]})"
 D_URG, D_REV = due(nxt), due(nxt + dt.timedelta(days=21))
 plan = []                                                        # (priority, category, issue, action, due)
-JIG = re.compile(r"(W\d+|\d\d/\d\d) increased to ([\d.]+)%: (Jig \d+(?: \(IP [\d.]+\))?) = (\d+)% of the NG \((\d+) NG / ([\d,]+) tests")
+JIG = re.compile(r"(W\d+|\d{1,2}-[A-Z][a-z]{2}) increased to ([\d.]+)%: (Jig \d+(?: \(IP [\d.]+\))?) = (\d+)% of the NG \((\d+) NG / ([\d,]+) tests")
 seen_jig = set()
 for num_, x in enumerate(IMP, 1):
     for n_ in x["notes"]:

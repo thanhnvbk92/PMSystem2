@@ -117,9 +117,9 @@ def ptest(nb, tb, na, ta):
 # ======================= deck =======================
 prs = Presentation(os.path.join(HERE, "assets", "skeleton_monthly.pptx")); S = list(prs.slides)
 SHORTM = A.model.replace("BMW ", "")
-def dd(d): return d.strftime("%d/%m")
+def dd(d): return dm(d)
 def wk(d): return f"W{d.isocalendar()[1]}"
-PB = f"{dd(B0)}–{dd(ACT - dt.timedelta(days=1))}"; PA = f"{dd(ACT)}–{dd(TODAY - dt.timedelta(days=1))}"
+PB = f"{dd(B0)} to {dd(ACT - dt.timedelta(days=1))}"; PA = f"{dd(ACT)} to {dd(TODAY - dt.timedelta(days=1))}"
 def pc_(v, d=2): return "–" if v is None else f"{v:.{d}f}%"
 def dlt(b, a, hb=False):
     if b is None or a is None: return "–", G3

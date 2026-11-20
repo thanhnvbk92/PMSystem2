@@ -9,7 +9,7 @@ STATUS = {"Effective": ("OK", GREEN, BLACK), "Small improvement": ("Monitor", "F
           "Improving (not significant)": ("Monitor", "FFEB9C", BLACK), "Worse": ("NG", RED, WHITE),
           "No clear effect": ("NG", "F4B183", BLACK)}
 def pc(v, d=2): return "–" if v is None else f"{v:.{d}f}%"
-def dd(s): return dt.date.fromisoformat(s).strftime("%d/%m")
+def dd(s): return dm(s)
 def vbase(v): return v.replace(" (early)", "")
 def status_of(v):
     st, fill, fc = STATUS.get(vbase(v), ("Check", G1, BLACK))
@@ -52,7 +52,7 @@ def pca_page(sl, num_, x):
              "",
              [("Corrective action", {"bold": True})],
              x["action"] or "–",
-             f"Done {d_:%d/%m/%Y} ({wk_})"]
+             f"Done {dm(d_, True)} ({wk_})"]
     if x["notes"]:
         paras += ["", [("Notes", {"bold": True})]] + [[("• " + n_, {"color": DARK if " increased to " in n_ else G3, "size": 8.5})] for n_ in x["notes"]]
     pca_cell(tbl.cell(1, 1), paras, size=9.5)
@@ -61,14 +61,14 @@ def pca_page(sl, num_, x):
                (f" ({x['change_pct']:+.0f}%)" if x["change_pct"] is not None else "", {"color": res_col}),
                (f"   ·   Station Re-test: {pc(x['retest_before'], 1)} → {pc(x['retest_after'], 1)}", {})],
               [("Verdict: ", {}), (x["verdict"], {"bold": True, "color": VCOL.get(vbase(x["verdict"]), DARK)}),
-               (f"   ·   before {dd(x['before'][0])}–{dd((dt.date.fromisoformat(x['before'][1]) - dt.timedelta(days=1)).isoformat())}, "
-                f"after {dd(x['after'][0])}–{dd((dt.date.fromisoformat(x['after'][1]) - dt.timedelta(days=1)).isoformat())}", {"color": G3})]]
+               (f"   ·   before {dd(x['before'][0])} to {dd((dt.date.fromisoformat(x['before'][1]) - dt.timedelta(days=1)).isoformat())}, "
+                f"after {dd(x['after'][0])} to {dd((dt.date.fromisoformat(x['after'][1]) - dt.timedelta(days=1)).isoformat())}", {"color": G3})]]
     pca_cell(tbl.cell(1, 2), result, size=9)
     textbox(f.s, TX + COLS[0] + COLS[1] + 0.08, TY + H0 + H1 - 0.3, COLS[2] - 0.16, 0.22,
             ["grey = before · green = after · " + ("by day" if x["trend_daily"] else "by ISO week") + f" · action {dd(x['date'])} ({wk_})"],
             size=8, color=G3, align=PP_ALIGN.CENTER, name=f"Trend legend {num_}")
     pca_cell(tbl.cell(1, 3), [""], align=PP_ALIGN.CENTER, anchor=MSO_ANCHOR.MIDDLE)
-    pca_cell(tbl.cell(1, 4), [f"{d_:%d/%m/%Y}", f"({wk_})"], size=10, align=PP_ALIGN.CENTER, anchor=MSO_ANCHOR.MIDDLE)
+    pca_cell(tbl.cell(1, 4), [dm(d_, True), f"({wk_})"], size=10, align=PP_ALIGN.CENTER, anchor=MSO_ANCHOR.MIDDLE)
     st_, sfill, sfc = status_of(x["verdict"])
     pca_cell(tbl.cell(1, 5), st_.split("\n"), size=10.5, align=PP_ALIGN.CENTER, anchor=MSO_ANCHOR.MIDDLE, fill=sfill, color=sfc, right=None)
     # trend chart inside the "Actual Check" cell

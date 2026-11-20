@@ -30,7 +30,7 @@ def _p2(k1, n1, k2, n2):
 def bucket_range(label, d, daily):
     """Date range [a, b) of a trend bucket label ('W46' or 'dd/mm')."""
     if daily:
-        day = dt.datetime.strptime(label + f"/{d.year}", "%d/%m/%Y").date()
+        day = dt.datetime.strptime(f"{label}-{d.year}", "%d-%b-%Y").date()
         if day > d + dt.timedelta(days=200): day = day.replace(year=d.year - 1)
         return day, day + dt.timedelta(days=1)
     w = int(label[1:]); y = d.year if w >= d.isocalendar()[1] - 30 else d.year + 1
@@ -52,7 +52,10 @@ def read_list(path):
             except ValueError: continue        # header or text row
         items.append(dict(line=str(line).strip(), station=str(station).strip(), code=(str(code).strip() if code else ""),
                           model=str(model).strip(), action=(str(action).strip() if action else ""), date=d))
+    items.sort(key=lambda it: it["date"])            # verification in date order (same day: list order)
     return items
+
+def _dm(d): return f"{d.day}-{d:%b}"
 
 def analyze(conn, path, today, excluded_codes=("UNKNOWN", "UNKNOWN_DEFECT"), not_a_test=r"CHANGE[_.]JOB"):
     """today = exclusive end of data. Returns a list of dicts (one per improvement).
@@ -147,7 +150,7 @@ def analyze(conn, path, today, excluded_codes=("UNKNOWN", "UNKNOWN_DEFECT"), not
         earlier = sorted({x["date"] for x in items if x["line"] == it["line"] and x["station"] == it["station"]
                           and x["model"] == it["model"] and b0 <= x["date"] < d})
         if earlier:
-            notes.append("before period includes the action of " + ", ".join(f"{e:%d/%m} (W{e.isocalendar()[1]})" for e in earlier))
+            notes.append("before period includes the action of " + ", ".join(f"{_dm(e)} (W{e.isocalendar()[1]})" for e in earlier))
         if days_after < WINDOW: notes.append(f"only {days_after} days after")
         if crel is not None and rel is not None and rel < 0 and crel <= rel * 0.6:
             notes.append(f"control lines also {crel:+.0f}%")
@@ -174,7 +177,7 @@ def analyze(conn, path, today, excluded_codes=("UNKNOWN", "UNKNOWN_DEFECT"), not
             day = d - dt.timedelta(days=14)
             while day < today:
                 t, k = agg(it["line"], it["station"], it["model"], it["code"], day, day + dt.timedelta(days=1))
-                if day != d: pts.append((day.strftime("%d/%m"), k * 100 / t if t else None, day > d, t))
+                if day != d: pts.append((_dm(day), k * 100 / t if t else None, day > d, t))
                 day += dt.timedelta(days=1)
         else:
             w = d - dt.timedelta(days=d.weekday()) - dt.timedelta(weeks=6)

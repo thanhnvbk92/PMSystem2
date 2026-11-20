@@ -221,6 +221,10 @@ def line_chart(slide, x, y, w, h, cats, series, colors, fmt='0.00', lo=None, hi=
     return ch
 
 # ---------- formatting ----------
+def dm(d, year=False):
+    """Unambiguous short date: 1-Nov (or 1-Nov-2026)."""
+    if isinstance(d, str): d = dt.date.fromisoformat(d[:10])
+    return f"{d.day}-{d:%b}" + (f"-{d.year}" if year else "")
 def pct(v, d=2): return f"{v:.{d}f}%"
 def num(v): return f"{int(v):,}"
 def delta(v_cur, v_prev, higher_better):
