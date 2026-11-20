@@ -285,6 +285,7 @@ function PcDetail({ pc, standardVersion, now, serverSkewMs, onClose, onDelete })
     ['Trạng thái', <StatusBadge key="s" online={pc.isOnline} neverConnected={pc.neverConnected} />],
     ['Dây chuyền / Trạm / Channel', `${pc.lineName || '-'} / ${pc.stationName || '-'} / ${pc.channelName || '-'} (#${pc.channelId ?? '-'})`],
     ['Hostname', pc.hostname || '-'],
+    ['IP (Master Data)', pc.channelIp || '-'],
     ['IP kết nối tới server', pc.connectedIp || '-'],
     ['IP các card mạng', pc.ipAddress || '-'],
     ['MAC', pc.macAddress || pc.macKey],
@@ -544,8 +545,15 @@ function pcColumns({ standardVersion, now, serverSkewMs, commands }) {
       cell: r => <td className="max-w-[80px] truncate font-semibold" title={r.channelName || ''}>{r.channelName || '-'}</td> },
     { key: 'hostname', label: 'Hostname', sort: r => r.hostname, filter: { type: 'text', get: r => r.hostname },
       cell: r => <td className="font-mono max-w-[100px] truncate" title={r.hostname || ''}>{r.hostname || '-'}</td> },
-    { key: 'ip', label: 'IP', title: 'IP mà PC dùng để kết nối tới server', sort: r => r.connectedIp, filter: { type: 'text', get: r => r.connectedIp },
-      cell: r => <td className="font-mono text-blue-700 whitespace-nowrap" title="IP PC dùng để kết nối tới server">{r.connectedIp || '-'}</td> },
+    { key: 'ip', label: 'IP', title: 'IP của Channel trong Master Data (cam = khác IP PC đang kết nối)', sort: r => r.channelIp, filter: { type: 'text', get: r => r.channelIp },
+      cell: r => {
+        const differs = r.channelIp && r.connectedIp && r.channelIp.trim() !== r.connectedIp.trim();
+        return (
+          <td className={`font-mono whitespace-nowrap ${differs ? 'text-amber-700 font-bold' : 'text-blue-700'}`}
+            title={`Master Data: ${r.channelIp || '-'}\nPC đang kết nối từ: ${r.connectedIp || '-'}${differs ? '\nKhác nhau: kiểm tra lại Master Data' : ''}`}>
+            {r.channelIp || '-'}
+          </td>);
+      } },
     { key: 'version', label: 'Version', sort: r => versionKey(r.appVersion),
       filter: { type: 'choice', options: [['standard', 'Mới nhất'], ['old', 'Cũ hơn'], ['unknown', 'Chưa rõ']],
         match: (r, v) => (v === 'unknown' ? !r.appVersion : versionState(r.appVersion, standardVersion) === v) },
