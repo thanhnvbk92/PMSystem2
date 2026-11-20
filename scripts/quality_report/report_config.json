@@ -20,5 +20,6 @@
   "excluded_error_codes": [
     "UNKNOWN",
     "UNKNOWN_DEFECT"
-  ]
+  ],
+  "not_a_test_regex": "CHANGE[_.]JOB"
 }

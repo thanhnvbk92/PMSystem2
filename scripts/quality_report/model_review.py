@@ -28,6 +28,7 @@ TS = dt.date.fromisoformat(A.trend_start) if A.trend_start else ACT - dt.timedel
 TS -= dt.timedelta(days=TS.weekday())
 cfg = json.load(open(os.path.join(HERE, "report_config.json"), encoding="utf-8"))
 EXCL = set(cfg.get("excluded_error_codes", ["UNKNOWN", "UNKNOWN_DEFECT"]))
+NOT_A_TEST = cfg.get("not_a_test_regex") or "^$NONE"          # e.g. job change: not a test, left out completely
 ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))
 RD = A.reports_dir or os.path.join(ROOT, "Reports")
 OUT = A.out or os.path.join(RD, f"{A.line.replace(' ', '')}_{A.model.replace(' ', '_')}_Review_{TODAY - dt.timedelta(days=1):%Y-%m-%d}.pptx")
@@ -47,8 +48,8 @@ jig = defaultdict(lambda: [0, 0])          # (day, sid, ch) -> [tests, ng]
 jigc = defaultdict(int)                    # (day, sid, ch, code) -> ng
 cur.execute("""SELECT bucket_date, station_id, channel_id, job_file, model_id, result, error_code, sum(total_count)::bigint
                FROM pcb_analytics_daily
-               WHERE bucket_date >= %s AND bucket_date < %s AND station_id = ANY(%s) AND error_code <> 'DEFECT_UNSPECIFIED'
-               GROUP BY 1, 2, 3, 4, 5, 6, 7""", (min(TS, B0), TODAY, SIDS))
+               WHERE bucket_date >= %s AND bucket_date < %s AND station_id = ANY(%s) AND error_code <> 'DEFECT_UNSPECIFIED' AND error_code !~* %s
+               GROUP BY 1, 2, 3, 4, 5, 6, 7""", (min(TS, B0), TODAY, SIDS, NOT_A_TEST))
 for day, sid, ch, job, mid, res, code, n in cur.fetchall():
     if not is_model(job, mid): continue
     ng = res in ("NG", "FAIL")
@@ -79,7 +80,7 @@ cur.execute("""WITH x AS (
                GROUP BY 1, 2, 3""", (SIDS, SIDS, min(TS, B0), TODAY, min(TS, B0), TODAY))
 for day, job, mid, n, k in cur.fetchall():
     if is_model(job, mid): r = lrty[day]; r[0] += n; r[1] += k
-IMP = [x for x in improvements.analyze(conn, os.path.join(RD, "ImprovementList.xlsx"), TODAY, sorted(EXCL))
+IMP = [x for x in improvements.analyze(conn, os.path.join(RD, "ImprovementList.xlsx"), TODAY, sorted(EXCL), NOT_A_TEST)
        if x["line"] == A.line and x["model"] == A.model]
 conn.close()
 
@@ -167,7 +168,8 @@ if ups: msgs.append([("Codes to watch (rose): ", {}), (", ".join(f"{c_} +{d_:.2f
 msgs.append([(f"After period = {DAYS_A} days ({num(KA['tests'])} tests vs {num(KB['tests'])} before); "
               + ("confirm with 4 weeks of data." if DAYS_A < 28 else "enough data for a verdict."), {"color": G3})])
 textbox(f.s, 0.53, y2, 12.24, 2.2, [[("• " + m[0][0], m[0][1])] + m[1:] for m in msgs], size=11, space_after=4, name="Key messages")
-textbox(f.s, 0.53, 6.75, 12.24, 0.2, ["* Error-code changes in % of test attempts. UNKNOWN (NG without an error in the log) is not used as an error code. "
+textbox(f.s, 0.53, 6.75, 12.24, 0.2, ["* Error-code changes in % of test attempts. UNKNOWN (NG without an error in the log) is not used as an error code; "
+                                      "job changes (CHANGE_JOB) are not counted as tests. "
                                       "Model = job-file mapping."], size=8, color=G3)
 
 # ---- 3. weekly trend ----
@@ -249,8 +251,7 @@ def cfmt(i, j, v):
 table(f.s, 6.43, yy, 6.34, crows, [2.4, 0.8, 0.7, 0.7, 0.8, 1.0], row_h=0.38, size=8, cell_fmt=cfmt, name="Code table")
 textbox(f.s, 6.43, yy + 0.38 * len(crows) + 0.06, 6.34, 0.3, ["* Station = where the code has most NG. Change = relative change of the rate."], size=8, color=G3)
 
-# ---- 6. jigs ----
-f = Frame(S[7], "Jig Check – After the Action", f"{A.model} · Re-test by jig, after {PA} vs before {PB}")
+# ---- jig statistics (used by the next steps; no slide) ----
 jt = []
 for s in sts:
     sa = STV[s][1]["rt"] or 0
@@ -266,22 +267,6 @@ for s in sts:
         topc = max(cc.items(), key=lambda kv: kv[1]) if cc else ("–", 0)
         jt.append((s, ch, tb, nbj, ta, naj, sa, topc))
 jt.sort(key=lambda x: -(x[5] / x[4]))
-yy = f.section("Jigs with the highest Re-test after the action (min. 30 tests)", unit="(Unit: tests, %)")
-jrows = [["#", "Station", "Jig", "IP", "Tests B", "Re-test B", "Tests A", "NG A", "Re-test A", "Station A", "Top error code after"]]
-for i, (s, ch, tb, nbj, ta, naj, sa, topc) in enumerate(jt[:12], 1):
-    nm, ip = JIG.get(ch, (str(ch), ""))
-    jrows.append([str(i), STN[s], nm, ip or "–", num(tb), pc_(nbj * 100 / tb if tb else None).rstrip("%"), num(ta), num(naj),
-                  f"{naj * 100 / ta:.2f}", f"{sa:.2f}", f"{topc[0]} ({topc[1]})" if topc[1] else "–"])
-def jfmt(i, j, v):
-    o = {"bold": True} if j == 2 else {}
-    if j == 8 and i:
-        x = jt[i - 1]
-        if x[5] / x[4] * 100 >= 1.5 * x[6] and x[5] >= 5: o.update({"color": RED, "bold": True})
-    if j == 10: o["align"] = PP_ALIGN.LEFT
-    return o
-table(f.s, 0.53, yy, 12.24, jrows, [0.3, 0.8, 0.7, 1.2, 0.8, 0.8, 0.8, 0.6, 0.8, 0.8, 3.2], row_h=0.33, size=8, cell_fmt=jfmt, name="Jig table")
-textbox(f.s, 0.53, yy + 0.33 * len(jrows) + 0.06, 12.24, 0.2, ["* Red = at least 1.5× the station's Re-test after the action (and ≥ 5 NG): check pins / contact of that jig first."],
-        size=8, color=G3)
 
 # ---- 7. improvement actions ----
 f = Frame(S[8], "Improvement Actions", f"From ImprovementList.xlsx · {A.line} · {A.model}")
@@ -330,7 +315,7 @@ table(f.s, 6.73, yy, 6.04, srows2, [0.3, 0.8, 3.9, 1.04], row_h=0.62, size=8.5, 
 
 # ---- end, drop unused slides, page numbers ----
 strip_annotations(S[39])
-KEEP = {0, 2, 3, 4, 6, 7, 8, 9, 39}
+KEEP = {0, 2, 3, 4, 6, 8, 9, 39}
 def drop_slide(slide):
     lst = prs.slides._sldIdLst
     for sldId in list(lst):

@@ -54,7 +54,7 @@ def read_list(path):
                           model=str(model).strip(), action=(str(action).strip() if action else ""), date=d))
     return items
 
-def analyze(conn, path, today, excluded_codes=("UNKNOWN", "UNKNOWN_DEFECT")):
+def analyze(conn, path, today, excluded_codes=("UNKNOWN", "UNKNOWN_DEFECT"), not_a_test=r"CHANGE[_.]JOB"):
     """today = exclusive end of data. Returns a list of dicts (one per improvement).
     excluded_codes are not real error codes: they stay in the Re-test totals but are never named as a cause."""
     EXCL = set(excluded_codes)
@@ -73,7 +73,8 @@ def analyze(conn, path, today, excluded_codes=("UNKNOWN", "UNKNOWN_DEFECT")):
     cur.execute("""SELECT bucket_date, station_id, job_file, model_id, result, error_code, sum(total_count)::bigint, channel_id
                    FROM pcb_analytics_daily
                    WHERE bucket_date >= %s AND bucket_date < %s AND station_id = ANY(%s) AND error_code <> 'DEFECT_UNSPECIFIED'
-                   GROUP BY 1, 2, 3, 4, 5, 6, 8""", (start, today, sids))
+                     AND error_code !~* %s
+                   GROUP BY 1, 2, 3, 4, 5, 6, 8""", (start, today, sids, not_a_test or "^$NONE"))
     tests = defaultdict(int); ngc = defaultdict(int); tjob = defaultdict(int)
     jt = defaultdict(int); jng = defaultdict(int)          # per jig: (day, line, station, model, channel) -> tests / NG per code
     for day, sid, job, mid, res, code, n, chn in cur.fetchall():

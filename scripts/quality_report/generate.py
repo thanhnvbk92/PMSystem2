@@ -27,7 +27,7 @@ lst = os.path.join(args.out_dir, cfg.get("improvement_list", "ImprovementList.xl
 print(f"STEP 1/3 Verifying improvements ({os.path.basename(lst)})", flush=True)
 conn = qfast.connect()
 data["improvements"] = improvements.analyze(conn, lst, dt.date.fromisoformat(data["meta"]["report_end"][:10]),
-                                            cfg.get("excluded_error_codes", ["UNKNOWN", "UNKNOWN_DEFECT"]))
+                                            cfg.get("excluded_error_codes", ["UNKNOWN", "UNKNOWN_DEFECT"]), cfg.get("not_a_test_regex"))
 conn.close()
 
 with tempfile.TemporaryDirectory() as tmp:

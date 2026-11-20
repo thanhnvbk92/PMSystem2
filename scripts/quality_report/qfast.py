@@ -77,7 +77,8 @@ def collect(month: str, cfg: dict):
     cur.execute("""SELECT bucket_date, station_id, job_file, model_id, result, error_code, sum(total_count)::bigint
                    FROM pcb_analytics_daily
                    WHERE bucket_date >= %s AND bucket_date < %s AND error_code <> 'DEFECT_UNSPECIFIED'
-                   GROUP BY 1, 2, 3, 4, 5, 6""", WIN)
+                     AND error_code !~* %s    -- not a test (e.g. job change), left out completely
+                   GROUP BY 1, 2, 3, 4, 5, 6""", WIN + (cfg.get("not_a_test_regex") or "^$NONE",))
     for day, sid, job, mid, res, code, n in cur.fetchall():
         em = eff_model(job, mid)
         if em == 0 or st_line.get(sid, 0) == 0: continue
