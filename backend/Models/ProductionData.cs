@@ -442,7 +442,12 @@ namespace PMSystem2.Api.Models
         string Kind, string Key, string Name, string? Context,
         long Total, long Ng, double NgRate, double ShareOfNg,
         long RecentTotal, long RecentNg, double RecentNgRate, double BaselineNgRate,
-        bool Spike, double Excess);
+        bool Spike, double Excess,
+        string? Ip = null, string? StationName = null, string? LineName = null,
+        List<DashboardWorstErrorDto>? TopErrors = null);
+
+    /// <summary>An NG error of a worst item: NG count and share of the item's NG.</summary>
+    public record DashboardWorstErrorDto(string ErrorCode, long Ng, double ShareOfItemNg);
 
     public record DashboardWorstDto(
         DateOnly? FromDay, DateOnly? ToDay, DateOnly RecentDay,

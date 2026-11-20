@@ -660,12 +660,15 @@ function WorstPanel({ worst, loading }) {
         </div>
       ) : (
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[560px] text-xs">
+          <table className="w-full min-w-[960px] text-xs">
             <thead>
               <tr className="border-b border-slate-200 text-left text-[10px] uppercase tracking-wider text-slate-500">
                 <th className="w-6 py-2 font-semibold">#</th>
-                <th className="py-2 font-semibold">Channel</th>
-                <th className="py-2 font-semibold">Station · Line</th>
+                <th className="py-2 pr-3 font-semibold">Channel</th>
+                <th className="py-2 pr-3 font-semibold">IP</th>
+                <th className="py-2 pr-3 font-semibold">Station</th>
+                <th className="py-2 pr-3 font-semibold">Line</th>
+                <th className="py-2 pr-3 font-semibold">Lỗi chính (NG · % NG của channel)</th>
                 <th className="py-2 text-right font-semibold">NG / Tổng</th>
                 <th className="w-40 py-2 pl-4 font-semibold">Tỉ lệ NG</th>
                 <th className="py-2 text-right font-semibold">{recentLabel} / 7 ngày trước</th>
@@ -675,8 +678,22 @@ function WorstPanel({ worst, loading }) {
               {items.map((item, index) => (
                 <tr key={item.key}>
                   <td className="py-2 font-mono font-bold text-slate-400">{index + 1}</td>
-                  <td className="py-2 font-semibold text-slate-900">{item.name}</td>
-                  <td className="py-2 text-slate-600">{item.context || '—'}</td>
+                  <td className="py-2 pr-3 font-semibold text-slate-900">{item.name}</td>
+                  <td className="py-2 pr-3 font-mono text-slate-600">{item.ip || '—'}</td>
+                  <td className="py-2 pr-3 text-slate-700">{item.stationName || '—'}</td>
+                  <td className="py-2 pr-3 text-slate-700">{item.lineName || '—'}</td>
+                  <td className="py-2 pr-3">
+                    {(item.topErrors || []).length === 0 ? '—' : (
+                      <div className="space-y-0.5">
+                        {item.topErrors.map((err, i) => (
+                          <div key={err.errorCode} className="flex items-baseline gap-2">
+                            <span className={`max-w-[260px] truncate ${i === 0 ? 'font-semibold text-rose-700' : 'text-slate-700'}`} title={err.errorCode}>{err.errorCode}</span>
+                            <span className="shrink-0 font-mono text-[10px] text-slate-500">{err.ng.toLocaleString()} · {formatPct(err.shareOfItemNg, 1)}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </td>
                   <td className="py-2 text-right font-mono text-slate-700">
                     {item.ng.toLocaleString()} / {item.total.toLocaleString()}
                   </td>

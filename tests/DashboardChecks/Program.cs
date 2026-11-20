@@ -122,6 +122,13 @@ foreach (var (label, from, to) in new[] { ("today", todayStart, todayEnd), ("mon
         foreach (var x in list)
             Console.WriteLine($"    {name,-8} {x.Name,-28} {x.Context,-34} NG {x.Ng,7:N0}/{x.Total,9:N0} {x.NgRate,6:F2}%  excess {x.Excess,8:F0}  recent {x.RecentNgRate,6:F2}% vs {x.BaselineNgRate,6:F2}%{(x.Spike ? "  SPIKE" : "")}");
     }
+    foreach (var x in worst.Jigs)
+    {
+        Console.WriteLine($"    channel  {x.Name} | IP {x.Ip} | {x.StationName} | {x.LineName} | " +
+            string.Join("; ", (x.TopErrors ?? new()).Select(e => $"{e.ErrorCode} {e.Ng} ({e.ShareOfItemNg}%)")));
+        Check(x.TopErrors != null && x.TopErrors.Sum(e => e.Ng) <= x.Ng && x.TopErrors.Count > 0,
+            $"{label} channel {x.Name} top errors are part of its NG");
+    }
     Check(worst.Alerts.All(x => x.Spike), $"{label} alerts are spikes ({worst.Alerts.Count})");
     foreach (var x in worst.Alerts)
         Console.WriteLine($"    alert    [{x.Kind}] {x.Name} {x.Context}: {x.RecentNgRate:F2}% on {worst.RecentDay} vs {x.BaselineNgRate:F2}% (7 days)");

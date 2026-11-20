@@ -286,10 +286,34 @@ namespace PMSystem2.Api.Services
 
                 var stationItems = Rank("station", r => r.StationId,
                     id => (StationName(id), LineOfStation(id)), true);
+                // Channels: IP, station and line apart, and the NG errors that make them worst.
+                var channelErrors = period.Where(x => x.IsNg).GroupBy(x => x.ChannelId)
+                    .ToDictionary(g => g.Key, g =>
+                    {
+                        long channelNg = g.Sum(x => x.Count);
+                        return g.GroupBy(x => x.Code)
+                            .Select(c => new DashboardWorstErrorDto(
+                                string.IsNullOrWhiteSpace(c.Key) ? "(không mã lỗi)" : c.Key, c.Sum(x => x.Count),
+                                channelNg > 0 ? Math.Round(c.Sum(x => x.Count) * 100.0 / channelNg, 1) : 0))
+                            .OrderByDescending(c => c.Ng).Take(3).ToList();
+                    });
                 var jigItems = Rank("jig", r => r.ChannelId,
                     id => channels.TryGetValue(id, out var c)
                         ? ($"{c.Name}", $"{c.StationName} · {c.LineName}")
-                        : ($"Jig #{id}", null), true);
+                        : ($"Jig #{id}", null), true)
+                    .Select(x =>
+                    {
+                        int id = int.Parse(x.Key);
+                        channels.TryGetValue(id, out var c);
+                        var stationRow = period.FirstOrDefault(r => r.ChannelId == id);
+                        return x with
+                        {
+                            Ip = c?.IpAddress,
+                            StationName = c?.StationName ?? (stationRow != null ? StationName(stationRow.StationId) : null),
+                            LineName = c?.LineName ?? (stationRow != null ? LineOfStation(stationRow.StationId) : null),
+                            TopErrors = channelErrors.GetValueOrDefault(id) ?? new List<DashboardWorstErrorDto>()
+                        };
+                    }).ToList();
                 var codeTopStation = period.Where(x => x.IsNg).GroupBy(x => x.Code)
                     .ToDictionary(g => g.Key, g => g.GroupBy(x => x.StationId)
                         .Select(s => new { s.Key, Ng = s.Sum(x => x.Count) }).OrderByDescending(s => s.Ng).First());
