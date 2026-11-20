@@ -205,7 +205,8 @@ function StatusText({ online, neverConnected }) {
 
 /** PCs from the server, plus channels with a MAC that never connected; names from master data. */
 function usePcData(channels, stations, lines) {
-  const [data, setData] = useState({ machines: [], standardVersion: null, offlineAfterSeconds: 180, serverSkewMs: 0 });
+  const [data, setData] = useState({ machines: [], standardVersion: null, standardVersionSource: null, latestReportedVersion: null,
+    manualStandardVersion: null, offlineAfterSeconds: 180, serverSkewMs: 0 });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [now, setNow] = useState(Date.now());
@@ -216,7 +217,9 @@ function usePcData(channels, stations, lines) {
       const result = await MachinesApi.getAll();
       // The PC clock column is server time + PC drift, so a wrong clock on this browser does not matter.
       const serverMs = result.serverTime ? new Date(result.serverTime).getTime() : NaN;
-      setData({ machines: result.machines || [], standardVersion: result.standardVersion || null, offlineAfterSeconds: result.offlineAfterSeconds || 180,
+      setData({ machines: result.machines || [], standardVersion: result.standardVersion || null,
+        standardVersionSource: result.standardVersionSource || null, latestReportedVersion: result.latestReportedVersion || null,
+        manualStandardVersion: result.manualStandardVersion || null, offlineAfterSeconds: result.offlineAfterSeconds || 180,
         serverSkewMs: Number.isFinite(serverMs) ? serverMs - Date.now() : 0 });
       setError(null);
     } catch (err) {
@@ -273,7 +276,9 @@ function usePcData(channels, stations, lines) {
       (a.channelName || '~').localeCompare(b.channelName || '~', undefined, { numeric: true }));
   }, [data.machines, channels, stations, lines]);
 
-  return { rows, standardVersion: data.standardVersion, offlineAfterSeconds: data.offlineAfterSeconds, serverSkewMs: data.serverSkewMs, loading, error, now, reload: load, setStandardVersion: (v) => setData(d => ({ ...d, standardVersion: v })) };
+  return { rows, standardVersion: data.standardVersion, standardInfo: { source: data.standardVersionSource,
+    latest: data.latestReportedVersion, manual: data.manualStandardVersion },
+    offlineAfterSeconds: data.offlineAfterSeconds, serverSkewMs: data.serverSkewMs, loading, error, now, reload: load };
 }
 
 // ---------------------------------------------------------------- detail
@@ -337,7 +342,7 @@ function PcDetail({ pc, standardVersion, now, serverSkewMs, onClose, onDelete })
 // ---------------------------------------------------------------- pages
 
 export default function PcMonitor({ view = 'overview', channels = [], stations = [], lines = [] }) {
-  const { rows, standardVersion, offlineAfterSeconds, serverSkewMs, loading, error, now, reload, setStandardVersion } = usePcData(channels, stations, lines);
+  const { rows, standardVersion, standardInfo, offlineAfterSeconds, serverSkewMs, loading, error, now, reload } = usePcData(channels, stations, lines);
   const [selected, setSelected] = useState(null);
 
   const handleDelete = async (pc) => {
@@ -354,7 +359,7 @@ export default function PcMonitor({ view = 'overview', channels = [], stations =
         </div>
       )}
       {view === 'overview'
-        ? <Overview rows={rows} standardVersion={standardVersion} offlineAfterSeconds={offlineAfterSeconds} loading={loading} now={now} onSelect={setSelected} onStandardSaved={setStandardVersion} />
+        ? <Overview rows={rows} standardVersion={standardVersion} standardInfo={standardInfo} offlineAfterSeconds={offlineAfterSeconds} loading={loading} now={now} onSelect={setSelected} onStandardSaved={reload} />
         : <PcList rows={rows} lines={lines} standardVersion={standardVersion} loading={loading} now={now} serverSkewMs={serverSkewMs} onSelect={setSelected} onReload={reload} />}
       {selected && <PcDetail pc={selected} standardVersion={standardVersion} now={now} serverSkewMs={serverSkewMs} onClose={() => setSelected(null)} onDelete={handleDelete} />}
     </div>
@@ -373,11 +378,11 @@ function Kpi({ icon: Icon, label, value, tone, hint }) {
   );
 }
 
-function Overview({ rows, standardVersion, offlineAfterSeconds, loading, now, onSelect, onStandardSaved }) {
-  const [draft, setDraft] = useState(standardVersion || '');
+function Overview({ rows, standardVersion, standardInfo = {}, offlineAfterSeconds, loading, now, onSelect, onStandardSaved }) {
+  const [draft, setDraft] = useState(standardInfo.manual || '');
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState(null);
-  useEffect(() => setDraft(standardVersion || ''), [standardVersion]);
+  useEffect(() => setDraft(standardInfo.manual || ''), [standardInfo.manual]);
 
   const online = rows.filter(r => r.isOnline).length;
   const offline = rows.length - online;
@@ -399,8 +404,8 @@ function Overview({ rows, standardVersion, offlineAfterSeconds, loading, now, on
     setSaving(true); setMessage(null);
     try {
       const result = await MachinesApi.setStandardVersion(draft.trim() || null);
-      onStandardSaved(result.version || null);
-      setMessage({ ok: true, text: result.version ? `Đã đặt version chuẩn ${result.version}` : 'Đã bỏ version chuẩn' });
+      onStandardSaved();
+      setMessage({ ok: true, text: result.version ? `Đã ghi đè version chuẩn = ${result.version}` : 'Đã bỏ ghi đè: dùng version cao nhất các PC đang chạy' });
     } catch (err) {
       setMessage({ ok: false, text: err?.response?.data?.message || 'Không lưu được version chuẩn.' });
     } finally { setSaving(false); }
@@ -420,15 +425,28 @@ function Overview({ rows, standardVersion, offlineAfterSeconds, loading, now, on
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
         <div className="glass-panel border border-slate-200 p-5 space-y-4">
           <h3 className="text-sm font-bold text-slate-900 font-display">Version chuẩn Backup_Log2</h3>
+          <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-3 text-xs">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-slate-600">Đang dùng</span>
+              {standardVersion ? <VersionBadge version={standardVersion} standard={standardVersion} /> : <span className="text-slate-400">chưa có</span>}
+            </div>
+            <div className="mt-1 text-[11px] text-slate-500">
+              {standardInfo.source === 'manual'
+                ? `Ghi đè bằng tay. Version cao nhất các PC đang chạy: ${standardInfo.latest || 'chưa có'}.`
+                : standardInfo.source === 'auto'
+                  ? 'Tự động: version cao nhất mà các PC đang báo về.'
+                  : 'Chưa PC nào báo version (cần Backup_Log2 bản mới).'}
+            </div>
+          </div>
           <div className="flex gap-2">
-            <input value={draft} onChange={e => setDraft(e.target.value)} placeholder="vd. 2.0.6.144"
+            <input value={draft} onChange={e => setDraft(e.target.value)} placeholder={`Ghi đè (để trống = tự động${standardInfo.latest ? `: ${standardInfo.latest}` : ''})`}
               className="flex-1 bg-slate-50/80 border border-slate-300 rounded-xl px-3 py-2 text-sm font-mono focus:outline-none focus:border-blue-500" />
             <button onClick={save} disabled={saving} className="px-3 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold flex items-center gap-1.5 disabled:opacity-50">
               <Save className="w-4 h-4" /> Lưu
             </button>
           </div>
           {message && <p className={`text-xs ${message.ok ? 'text-emerald-700' : 'text-rose-700'}`}>{message.text}</p>}
-          <p className="text-[11px] text-slate-500">PC chạy version thấp hơn version chuẩn được đánh dấu màu vàng. Để trống để bỏ so sánh.</p>
+          <p className="text-[11px] text-slate-500">PC chạy version thấp hơn version chuẩn được đánh dấu màu vàng và có nút Update. Nhập version để ghi đè (ví dụ khi một PC đang chạy bản thử nghiệm); để trống rồi Lưu để quay lại tự động.</p>
           <div className="space-y-1.5 pt-3 border-t border-slate-200">
             <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Phân bố version</div>
             {versions.length === 0 && <p className="text-xs text-slate-500">Chưa có dữ liệu.</p>}
