@@ -107,6 +107,8 @@ namespace PMSystem2.Api.Hubs
         [JsonPropertyName("log_folders")] public string? LogFolders { get; set; }
         /// <summary>Wall clock shown on the PC, no time zone ("2026-11-20T07:00:05.123").</summary>
         [JsonPropertyName("local_time")] public string? LocalTime { get; set; }
+        /// <summary>Every fixed drive of the PC (builds that send it).</summary>
+        [JsonPropertyName("disks")] public List<MachineDisk>? Disks { get; set; }
     }
 
     public interface ICommandClient
@@ -322,7 +324,8 @@ namespace PMSystem2.Api.Hubs
                 LastUploadAt = telemetry.LastUploadAt,
                 LogType = telemetry.LogType,
                 LogFolders = telemetry.LogFolders,
-                LocalTime = telemetry.LocalTime
+                LocalTime = telemetry.LocalTime,
+                Disks = telemetry.Disks
             });
             await BroadcastMachineAsync(new
             {

@@ -32,7 +32,13 @@ export const versionState = (version, standard) => {
 
 const LOW_DISK_GB = 5;
 const LOW_DISK_RATIO = 0.1;
-export const isLowDisk = (m) => m.diskFreeGb != null && (m.diskFreeGb < LOW_DISK_GB || (m.diskTotalGb && m.diskFreeGb / m.diskTotalGb < LOW_DISK_RATIO));
+const isLowDrive = (free, total) => free != null && (free < LOW_DISK_GB || (total && free / total < LOW_DISK_RATIO));
+/** Drives of a PC: every fixed drive (new builds) or the log drive only (older builds). */
+const drivesOf = (m) => (m.disks && m.disks.length)
+  ? m.disks.map(d => ({ drive: d.drive, total: d.total_gb, free: d.free_gb }))
+  : (m.diskFreeGb != null ? [{ drive: m.diskDrive, total: m.diskTotalGb, free: m.diskFreeGb }] : []);
+const lowDrives = (m) => drivesOf(m).filter(d => isLowDrive(d.free, d.total));
+export const isLowDisk = (m) => lowDrives(m).length > 0;
 
 // PC clock: wall clock shown on the PC minus the server's (time zones are not used). Above this the
 // row is red and offers "Sync giờ" (Backup_Log2 then sets the PC clock to the server wall clock).
@@ -161,6 +167,26 @@ function CommandButton({ pc, kind, commands }) {
   );
 }
 
+/** One line per drive: "C: 45.2 / 120 GB · 38%" (free / total, % free), orange when low. */
+function DriveList({ pc }) {
+  const drives = drivesOf(pc);
+  if (drives.length === 0) return <span className="text-slate-400">-</span>;
+  return (
+    <div className="space-y-0.5">
+      {drives.map(d => {
+        const pct = d.total ? Math.round((d.free / d.total) * 100) : null;
+        const low = isLowDrive(d.free, d.total);
+        return (
+          <div key={d.drive || 'drive'} className={`font-mono whitespace-nowrap ${low ? 'text-orange-700 font-bold' : ''}`}
+            title={`${d.drive || ''} trống ${d.free} GB / tổng ${d.total ?? '?'} GB${pct != null ? ` (${pct}% trống)` : ''}`}>
+            {d.drive || '?'} {d.free}{d.total ? ` / ${d.total}` : ''} GB{pct != null && <span className={low ? '' : 'text-slate-500'}> · {pct}%</span>}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 /** Status as coloured text (PC list). */
 function StatusText({ online, neverConnected }) {
   if (neverConnected) return <span className="text-slate-400 whitespace-nowrap" title="Channel đã đăng ký nhưng PC chưa từng kết nối từ khi có module này">Chưa kết nối</span>;
@@ -261,7 +287,7 @@ function PcDetail({ pc, standardVersion, now, serverSkewMs, onClose, onDelete })
     ['Model hiện tại', pc.currentModel || '-'],
     ['CPU', pc.cpuPercent != null ? `${pc.cpuPercent}%` : '-'],
     ['RAM', pc.ramTotalMb ? `${(pc.ramUsedMb / 1024).toFixed(1)} / ${(pc.ramTotalMb / 1024).toFixed(1)} GB` : '-'],
-    ['Ổ đĩa log', pc.diskTotalGb ? `${pc.diskDrive || ''} trống ${pc.diskFreeGb} / ${pc.diskTotalGb} GB` : '-'],
+    ['Ổ đĩa (trống / tổng)', <DriveList key="d" pc={pc} />],
     ['App chạy được', pc.appStartedAt ? `${formatUptime(pc.appStartedAt, now)} (từ ${formatTime(pc.appStartedAt)})` : '-'],
     ['Upload thành công gần nhất', pc.lastUploadAt ? `${formatTime(pc.lastUploadAt)} (${formatAgo(pc.lastUploadAt, now)})` : '-'],
     ['Lần cuối thấy', pc.lastSeenAt ? `${formatTime(pc.lastSeenAt)} (${formatAgo(pc.lastSeenAt, now)})` : '-'],
@@ -438,7 +464,7 @@ function Overview({ rows, standardVersion, offlineAfterSeconds, loading, now, on
           </div>
           {lowDisk.length > 0 && (
             <div className="text-xs text-orange-800 bg-orange-50 border border-orange-300 rounded-xl p-3">
-              <b>Ổ đĩa sắp đầy:</b> {lowDisk.map(r => `${r.channelName || r.hostname || r.macAddress} (${r.diskDrive} còn ${r.diskFreeGb} GB)`).join(', ')}
+              <b>Ổ đĩa sắp đầy:</b> {lowDisk.map(r => `${r.channelName || r.hostname || r.macAddress} (${lowDrives(r).map(d => `${d.drive} còn ${d.free} GB`).join(', ')})`).join('; ')}
             </div>
           )}
         </div>
@@ -519,7 +545,7 @@ function PcList({ rows, lines, standardVersion, loading, now, serverSkewMs, onSe
               <th>Log type</th>
               <th className="text-right">CPU</th>
               <th className="text-right">RAM</th>
-              <th className="text-right">Ổ trống</th>
+              <th className="text-right" title="Mỗi ổ: dung lượng trống / tổng (GB) · % trống">Ổ đĩa (trống / tổng)</th>
               <th>Upload gần nhất</th>
               <th>Trạng thái</th>
               <th>Lần cuối thấy</th>
@@ -547,7 +573,7 @@ function PcList({ rows, lines, standardVersion, loading, now, serverSkewMs, onSe
                 <td className="max-w-[100px] truncate" title={r.logType || ''}>{r.logType || '-'}</td>
                 <td className="text-right font-mono whitespace-nowrap">{r.cpuPercent != null ? `${r.cpuPercent}%` : '-'}</td>
                 <td className="text-right font-mono whitespace-nowrap">{r.ramTotalMb ? `${Math.round((r.ramUsedMb / r.ramTotalMb) * 100)}%` : '-'}</td>
-                <td className={`text-right font-mono whitespace-nowrap ${isLowDisk(r) ? 'text-orange-700 font-bold' : ''}`}>{r.diskFreeGb != null ? `${r.diskFreeGb} GB` : '-'}</td>
+                <td className="text-right"><DriveList pc={r} /></td>
                 <td className="text-slate-600 whitespace-nowrap" title={formatTime(r.lastUploadAt)}>{formatAgo(r.lastUploadAt, now)}</td>
                 <td><StatusText online={r.isOnline} neverConnected={r.neverConnected} /></td>
                 <td className="text-slate-600 whitespace-nowrap" title={formatTime(r.lastSeenAt)}>{formatAgo(r.lastSeenAt, now)}</td>

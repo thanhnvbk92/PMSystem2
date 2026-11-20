@@ -40,6 +40,8 @@ namespace PMSystem2.Api.Models
         [Column("last_telemetry_at")] public DateTime? LastTelemetryAt { get; set; }
         /// <summary>PC wall clock minus server wall clock at the last telemetry (seconds).</summary>
         [Column("clock_offset_seconds")] public double? ClockOffsetSeconds { get; set; }
+        /// <summary>Every fixed drive at the last telemetry: [{"drive":"C:","total_gb":..,"free_gb":..}].</summary>
+        [Column("disks_json")] public string? DisksJson { get; set; }
     }
 
     /// <summary>Simple key/value settings (e.g. the standard Backup_Log2 version).</summary>
