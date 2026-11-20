@@ -144,9 +144,14 @@ using (var scope = app.Services.CreateScope())
         db.Database.EnsureCreated();
 
         // Persistent PID-level quality state used by NTF and system-wide RTY.
-        // CREATE IF NOT EXISTS is cheap on subsequent starts; historical data is
-        // populated by scripts/backfill_quality_summaries.sql once per database.
-        await db.Database.ExecuteSqlRawAsync(@"
+        // historical data is populated by scripts/backfill_quality_summaries.sql once per database.
+        // Every ALTER / CREATE INDEX runs only when the column or index is missing: ALTER TABLE takes
+        // an exclusive lock even with IF NOT EXISTS, and on these 26 M-row tables it waited behind the
+        // running dashboard / summary queries until the 60 s timeout - which then skipped the rest of the
+        // start-up (master data cache). Its own try so a failure here never skips the steps after it.
+        try
+        {
+            await db.Database.ExecuteSqlRawAsync(@"
             CREATE TABLE IF NOT EXISTS pcb_ntf_summaries (
                 pid TEXT NOT NULL,
                 station_id INT NOT NULL,
@@ -158,9 +163,6 @@ using (var scope = app.Services.CreateScope())
                 updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                 PRIMARY KEY (pid, station_id)
             );
-            CREATE INDEX IF NOT EXISTS ix_pcb_ntf_summaries_station_ever_ng
-                ON pcb_ntf_summaries (station_id, ever_ng);
-
             CREATE TABLE IF NOT EXISTS pcb_rty_summaries (
                 pid TEXT PRIMARY KEY,
                 first_test_time TIMESTAMPTZ NOT NULL,
@@ -171,19 +173,40 @@ using (var scope = app.Services.CreateScope())
                 ever_ng BOOLEAN NOT NULL,
                 updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
             );
-            CREATE INDEX IF NOT EXISTS ix_pcb_rty_summaries_ever_ng
-                ON pcb_rty_summaries (ever_ng);
-
-            -- Model of a PID-Station (job file and model id of its latest test) for reports by model,
-            -- and first-test indexes for period cohorts (reports, quality-data).
-            ALTER TABLE pcb_ntf_summaries ADD COLUMN IF NOT EXISTS job_file TEXT;
-            ALTER TABLE pcb_ntf_summaries ADD COLUMN IF NOT EXISTS model_id INT;
-            -- NG step and jig of the first NG of the PID-Station (NTF by NG step / by jig).
-            ALTER TABLE pcb_ntf_summaries ADD COLUMN IF NOT EXISTS first_ng_error_code TEXT;
-            ALTER TABLE pcb_ntf_summaries ADD COLUMN IF NOT EXISTS first_ng_channel_id INT;
-            CREATE INDEX IF NOT EXISTS ix_pcb_ntf_summaries_first_test ON pcb_ntf_summaries (first_test_time);
-            CREATE INDEX IF NOT EXISTS ix_pcb_rty_summaries_first_test ON pcb_rty_summaries (first_test_time);
+            DO $ddl$
+            DECLARE col RECORD;
+            BEGIN
+                -- Model of a PID-Station (job file and model id of its latest test) for reports by model;
+                -- NG step and jig of the first NG of the PID-Station (NTF by NG step / by jig).
+                FOR col IN SELECT * FROM (VALUES ('job_file', 'TEXT'), ('model_id', 'INT'),
+                        ('first_ng_error_code', 'TEXT'), ('first_ng_channel_id', 'INT')) AS c(name, type)
+                LOOP
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public'
+                            AND table_name = 'pcb_ntf_summaries' AND column_name = col.name) THEN
+                        EXECUTE format('ALTER TABLE pcb_ntf_summaries ADD COLUMN %I %s', col.name, col.type);
+                    END IF;
+                END LOOP;
+                -- Indexes, including the first-test indexes for period cohorts (reports, dashboard).
+                IF to_regclass('public.ix_pcb_ntf_summaries_station_ever_ng') IS NULL THEN
+                    CREATE INDEX ix_pcb_ntf_summaries_station_ever_ng ON pcb_ntf_summaries (station_id, ever_ng);
+                END IF;
+                IF to_regclass('public.ix_pcb_rty_summaries_ever_ng') IS NULL THEN
+                    CREATE INDEX ix_pcb_rty_summaries_ever_ng ON pcb_rty_summaries (ever_ng);
+                END IF;
+                IF to_regclass('public.ix_pcb_ntf_summaries_first_test') IS NULL THEN
+                    CREATE INDEX ix_pcb_ntf_summaries_first_test ON pcb_ntf_summaries (first_test_time);
+                END IF;
+                IF to_regclass('public.ix_pcb_rty_summaries_first_test') IS NULL THEN
+                    CREATE INDEX ix_pcb_rty_summaries_first_test ON pcb_rty_summaries (first_test_time);
+                END IF;
+            END
+            $ddl$;
         ");
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Quality summary tables could not be checked at start-up.");
+        }
 
         // Ensure all missing ClickHouse master data tables and columns exist in PostgreSQL
         try
