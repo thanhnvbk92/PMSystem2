@@ -161,6 +161,14 @@ function CommandButton({ pc, kind, commands }) {
   );
 }
 
+/** Status as coloured text (PC list). */
+function StatusText({ online, neverConnected }) {
+  if (neverConnected) return <span className="text-slate-400 whitespace-nowrap" title="Channel đã đăng ký nhưng PC chưa từng kết nối từ khi có module này">Chưa kết nối</span>;
+  return online
+    ? <span className="font-semibold text-emerald-700 whitespace-nowrap">Online</span>
+    : <span className="font-semibold text-rose-700 whitespace-nowrap">Offline</span>;
+}
+
 // ---------------------------------------------------------------- data
 
 /** PCs from the server, plus channels with a MAC that never connected; names from master data. */
@@ -501,7 +509,6 @@ function PcList({ rows, lines, standardVersion, loading, now, serverSkewMs, onSe
         <table className="w-full text-left text-[11px]">
           <thead className="bg-slate-50/90 text-slate-600 uppercase font-semibold tracking-wider border-b border-slate-200 text-[10px]">
             <tr className="[&>th]:px-2 [&>th]:py-2 [&>th]:whitespace-nowrap">
-              <th>Trạng thái</th>
               <th>Line</th>
               <th>Trạm</th>
               <th>Channel</th>
@@ -514,6 +521,7 @@ function PcList({ rows, lines, standardVersion, loading, now, serverSkewMs, onSe
               <th className="text-right">RAM</th>
               <th className="text-right">Ổ trống</th>
               <th>Upload gần nhất</th>
+              <th>Trạng thái</th>
               <th>Lần cuối thấy</th>
             </tr>
           </thead>
@@ -523,7 +531,6 @@ function PcList({ rows, lines, standardVersion, loading, now, serverSkewMs, onSe
             )}
             {filtered.map(r => (
               <tr key={r.macKey} className="hover:bg-slate-100/70 cursor-pointer [&>td]:px-2 [&>td]:py-2" onClick={() => onSelect(r)}>
-                <td><StatusBadge online={r.isOnline} neverConnected={r.neverConnected} /></td>
                 <td className="whitespace-nowrap">{r.lineName || '-'}</td>
                 <td className="whitespace-nowrap">{r.stationName || '-'}</td>
                 <td className="whitespace-nowrap font-semibold">{r.channelName || '-'}</td>
@@ -542,6 +549,7 @@ function PcList({ rows, lines, standardVersion, loading, now, serverSkewMs, onSe
                 <td className="text-right font-mono whitespace-nowrap">{r.ramTotalMb ? `${Math.round((r.ramUsedMb / r.ramTotalMb) * 100)}%` : '-'}</td>
                 <td className={`text-right font-mono whitespace-nowrap ${isLowDisk(r) ? 'text-orange-700 font-bold' : ''}`}>{r.diskFreeGb != null ? `${r.diskFreeGb} GB` : '-'}</td>
                 <td className="text-slate-600 whitespace-nowrap" title={formatTime(r.lastUploadAt)}>{formatAgo(r.lastUploadAt, now)}</td>
+                <td><StatusText online={r.isOnline} neverConnected={r.neverConnected} /></td>
                 <td className="text-slate-600 whitespace-nowrap" title={formatTime(r.lastSeenAt)}>{formatAgo(r.lastSeenAt, now)}</td>
               </tr>
             ))}
