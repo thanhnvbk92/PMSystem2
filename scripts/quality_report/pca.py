@@ -89,3 +89,32 @@ def pca_page(sl, num_, x):
         labels(ser, '0.00', XL_LABEL_POSITION.OUTSIDE_END, size=7)
         axis_quiet(ch.value_axis, True, '0.0', 0, None); axis_quiet(ch.category_axis, False)
         ch.category_axis.tick_labels.font.size = Pt(7.5)
+
+
+VFILL = {"Effective": "C6EFCE", "Worse": "FFC7CE", "Small improvement": "E2EFDA", "Improving (not significant)": "FFEB9C"}
+def ddw(s):                                    # date with its ISO week, e.g. 30-Oct (W44)
+    d_ = dt.date.fromisoformat(s[:10]); return f"{dm(d_)} (W{d_.isocalendar()[1]})"
+
+def verification_summary(sl, items, subtitle):
+    """'Improvement Verification' summary table: items = [(number, improvement)] in the order to show."""
+    f = Frame(sl, "Improvement Verification", subtitle)
+    yy = f.section("Summary", unit="(Unit: % of test attempts)")
+    rows = [["#", "Line", "Station", "Model", "NG step", "Action", "Date", "NG step B", "NG step A", "Change", "Re-test B → A", "Verdict"]]
+    for n_, x in items:
+        rows.append([str(n_), x["line"], x["station"], x["model"].replace("BMW ", ""), (codes_short(x["code"]) or "–") + (" *" if x.get("auto_code") else ""),
+                     x["action"] or "–", ddw(x["date"]), pc(x["rate_before"]), pc(x["rate_after"]),
+                     "–" if x["change_pct"] is None else f"{x['change_pct']:+.0f}%",
+                     f"{pc(x['retest_before'], 1)} → {pc(x['retest_after'], 1)}", x["verdict"]])
+    def fmt(i, j, v):
+        x = items[i - 1][1]
+        if j in (4, 5): return {"align": PP_ALIGN.LEFT}
+        if j == 9 and v != "–": return {"bold": True, "color": GREEN if v.startswith("-") else RED}
+        if j == 11: return {"bold": True, "color": VCOL.get(vbase(x["verdict"]), DARK), "fill": VFILL.get(vbase(x["verdict"]))}
+    rh_ = min(0.36, 4.75 / max(len(rows), 1))
+    table(f.s, 0.53, yy, 12.24, rows, [0.3, 0.7, 0.75, 1.15, 1.8, 3.35, 0.8, 0.6, 0.6, 0.6, 1.0, 1.2], row_h=rh_, size=7,
+          cell_fmt=fmt, name="Improvement summary")
+    textbox(f.s, 0.53, yy + rh_ * len(rows) + 0.06, 12.24, 0.4,
+            ["* NG step B/A = NG attempts with that NG step / test attempts at the line + station + model, 28 days before vs up to 28 days after "
+             "(action day excluded). Effective = -30% or more and p < 0.05. * = NG step detected from the data. "
+             "(early) = fewer than 7 days after the action. One 'Verify Corrective Action' page with the trend follows for each improvement "
+             "except 'Insufficient data'."], size=8, color=G3)

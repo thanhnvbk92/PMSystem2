@@ -14,7 +14,7 @@ from collections import defaultdict
 HERE = os.path.dirname(os.path.abspath(__file__)); sys.path.insert(0, HERE)
 import qfast, improvements
 from pptlib import *
-from pca import pca_page
+from pca import pca_page, verification_summary
 
 ap = argparse.ArgumentParser()
 ap.add_argument("--groups", nargs="+", default=["Line 6-1=BMW ICON25 NAD", "Line 6-1=BMW Wave High NAD", "Line 6-2=BMW Wave High NAD"])
@@ -213,6 +213,9 @@ for k, sl in enumerate(DETAIL[:len(GROUPS)]):
           cell_fmt=lambda i, j, v: {"align": PP_ALIGN.LEFT} if j in (0, 3) else None, name=f"NTF jigs {k}")
 
 # ---- verification: one 'Verify Corrective Action' page per action of these models and lines (numbers as in the monthly report) ----
+ALL_G = sorted(((n_, x) for n_, x in enumerate(IMP_ALL, 1) if (x["line"], x["model"]) in GROUPS),
+               key=lambda t: (t[1]["model"], t[1]["line"], t[1]["date"], t[0]))
+verification_summary(S[11], ALL_G, f"{len(ALL_G)} improvements of these models and lines (ImprovementList.xlsx) · numbers as in the monthly report")
 PCA_SLOTS = S[12:36]
 PCA = [(n_, x) for n_, x in enumerate(IMP_ALL, 1) if (x["line"], x["model"]) in GROUPS and x["verdict"] != "Insufficient data"][:len(PCA_SLOTS)]
 PCA.sort(key=lambda t: (t[1]["model"], t[1]["line"], t[1]["date"], t[0]))
@@ -220,7 +223,7 @@ for sl, (n_, x) in zip(PCA_SLOTS, PCA): pca_page(sl, n_, x)
 
 # ---- end, drop unused, page numbers ----
 strip_annotations(S[39])
-keep = {id(S[0]), id(S[2]), id(S[39])} | {id(s) for s in DETAIL[:len(GROUPS)]} | {id(s) for s in PCA_SLOTS[:len(PCA)]}
+keep = {id(S[0]), id(S[2]), id(S[11]), id(S[39])} | {id(s) for s in DETAIL[:len(GROUPS)]} | {id(s) for s in PCA_SLOTS[:len(PCA)]}
 lst = prs.slides._sldIdLst
 for sl in S:
     if id(sl) in keep: continue
