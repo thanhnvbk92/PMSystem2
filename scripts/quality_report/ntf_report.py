@@ -113,55 +113,82 @@ yy = f.section("NTF rate – before vs after", y=1.2, unit="(Unit: %)")
 cw = 3.92
 for k in range(len(GROUPS)):
     x = 0.53 + k * (cw + 0.24); b, a = SB[k], SA[k]
-    rect(f.s, x, yy, cw, 1.62, G2, name=f"NTF card {k}")
+    rect(f.s, x, yy, cw, 1.48, G2, name=f"NTF card {k}")
     textbox(f.s, x + 0.25, yy + 0.08, cw - 0.5, 0.28, [[(short(GROUPS[k][1]), {"size": 14, "bold": True}), (f"  {GROUPS[k][0]}", {"size": 11, "color": G3})]])
     v = (a["ntf"] or 0) - (b["ntf"] or 0); col = GREEN if v < 0 else RED
-    textbox(f.s, x + 0.25, yy + 0.36, cw - 0.5, 0.5, [[(pc_(b["ntf"]), {"color": G3, "size": 16}), (" → ", {"color": G3, "size": 16}),
+    textbox(f.s, x + 0.25, yy + 0.32, cw - 0.5, 0.5, [[(pc_(b["ntf"]), {"color": G3, "size": 16}), (" → ", {"color": G3, "size": 16}),
                                                     (pc_(a["ntf"]), {"color": col, "size": 26, "bold": True})]])
-    textbox(f.s, x + 0.25, yy + 0.88, cw - 0.5, 0.22, [[(f"{'▼' if v < 0 else '▲'} {abs(v):.2f}%", {"color": col, "bold": True}),
+    textbox(f.s, x + 0.25, yy + 0.8, cw - 0.5, 0.22, [[(f"{'▼' if v < 0 else '▲'} {abs(v):.2f}%", {"color": col, "bold": True}),
                                                      ("  after vs before", {"color": G3})]], size=10.5)
-    textbox(f.s, x + 0.25, yy + 1.12, cw - 0.5, 0.2, [f"before {PB(k)} · after {PA(k)} ({wk(ACTS[k])})"], size=8, color=DARK)
-    textbox(f.s, x + 0.25, yy + 1.34, cw - 0.5, 0.2, [f"NG units: {num(b['ng'])} / {num(b['pairs'])} → {num(a['ng'])} / {num(a['pairs'])}"], size=8, color=G3)
-TOPK = 3                                                       # NTF NG items per model and line
-items = []                                                     # by model, then line, then rate
-for k in range(len(GROUPS)):
-    top = sorted(SA[k]["items"].items(), key=lambda kv: -kv[1])[:TOPK]
-    for code, n in top:
-        stn = max(SA[k]["item_st"][code].items(), key=lambda kv: kv[1])[0]
-        rb_ = SB[k]["items"].get(code, 0) * 100.0 / SB[k]["pairs"] if SB[k]["pairs"] else 0
-        items.append((k, code, stn, n, n * 100.0 / SA[k]["pairs"], rb_))
-acts = []
-for k in range(len(GROUPS)):
-    for code, n in sorted(SA[k]["items"].items(), key=lambda kv: -kv[1])[:1]:
-        jj = sorted(SA[k]["item_jig"][code].items(), key=lambda kv: -kv[1]); top_j = jj[0] if jj else None
+    textbox(f.s, x + 0.25, yy + 1.03, cw - 0.5, 0.2, [f"before {PB(k)} · after {PA(k)} ({wk(ACTS[k])})"], size=8, color=DARK)
+    textbox(f.s, x + 0.25, yy + 1.23, cw - 0.5, 0.2, [f"NG units: {num(b['ng'])} / {num(b['pairs'])} → {num(a['ng'])} / {num(a['pairs'])}"], size=8, color=G3)
+from improvements import _in_family
+from pca import codes_short
+def rate(S_, k, fam, sid=None):
+    """% of all units of the group whose first NG was in this NG step family (at this station)."""
+    n = sum(v for c, st_ in S_[k]["item_st"].items() if _in_family(c, fam) for s_, v in st_.items() if sid is None or s_ == sid)
+    return n * 100.0 / S_[k]["pairs"] if S_[k]["pairs"] else 0.0
+items, acts = [], []                                           # by model, then line
+for k, (line, model) in enumerate(GROUPS):
+    imp = [(n_, x) for n_, x in enumerate(IMP_ALL, 1) if x["line"] == line and x["model"] == model]
+    # 1) NG steps of the improvement list (one row per station + NG step), with the action numbers
+    rows_ = {}
+    for n_, x in imp:
+        sid = next((s_ for s_, nm in STN.items() if nm == x["station"] and ST_LINE[s_] == LINE_ID[line]), None)
+        rows_.setdefault((sid, x["code"]), []).append(n_)
+    for (sid, fam), nums in rows_.items():
+        items.append((k, STN.get(sid, "–"), codes_short(fam), rate(SB, k, fam, sid), rate(SA, k, fam, sid), "Improved #" + ",#".join(map(str, nums))))
+    # 2) the NG step that increased most and has no action yet
+    fams = [x["code"] for _, x in imp]
+    cand = []; acts_new = None
+    for c in set(SA[k]["items"]) | set(SB[k]["items"]):
+        if any(_in_family(c, f_) for f_ in fams): continue
+        ra_ = SA[k]["items"].get(c, 0) * 100.0 / max(SA[k]["pairs"], 1); rb_ = SB[k]["items"].get(c, 0) * 100.0 / max(SB[k]["pairs"], 1)
+        if ra_ > rb_: cand.append((ra_ - rb_, c, rb_, ra_))
+    for d_, c, rb_, ra_ in sorted(cand, reverse=True)[:1]:
+        stn = max(SA[k]["item_st"][c].items(), key=lambda kv: kv[1])[0]
+        items.append((k, STN[stn], c, rb_, ra_, "Increased"))
+        n = SA[k]["items"][c]
+        jj = sorted(SA[k]["item_jig"][c].items(), key=lambda kv: -kv[1]); top_j = jj[0] if jj else None
         if top_j and top_j[1] * 100 >= 40 * n:
-            acts.append((short(GROUPS[k][1]), GROUPS[k][0], f"{code}: {top_j[1]} of {n} NG units on {jname(*top_j[0])} → check / clean pins and contact of this jig",
-                         "Daily until OK, then weekly"))
+            act = f"Check / clean pins of {jname(*top_j[0])}: {top_j[1]} of {n} NG units"; cyc = "Daily until OK, then weekly"
         else:
-            stn = max(SA[k]["item_st"][code].items(), key=lambda kv: kv[1])[0]
-            acts.append((short(GROUPS[k][1]), GROUPS[k][0], f"{code} ({STN[stn]}): NG on several jigs → analyse NG logs, check limits and fixture", "Weekly review"))
-acts.append(("All", "Line 6", "Clean pins / pads of all FID and RF jigs (preventive maintenance)", "Weekly"))
-acts.append(("All", "Line 6", "Review NTF rate and top NTF NG items by jig in PMSystem2", "Weekly (production meeting)"))
+            act = f"{STN[stn]}: analyse NG logs (several jigs), check limits and fixture"; cyc = "Weekly review"
+        acts_new = (short(model), line, act, cyc.replace("Daily until OK, then weekly", "Daily → weekly"), "Open")
+    # actions already done (same action text merged)
+    done = {}
+    for n_, x in imp:
+        d = done.setdefault(x["action"] or "–", {"nums": [], "codes": [], "date": x["date"]})
+        d["nums"].append(n_); d["date"] = min(d["date"], x["date"])
+        if codes_short(x["code"]) not in d["codes"]: d["codes"].append(codes_short(x["code"]))
+    for act, d in sorted(done.items(), key=lambda kv: (kv[1]["date"], kv[1]["nums"][0])):
+        acts.append((short(model), line, f"#{', #'.join(map(str, d['nums']))} {act}", "–", f"Done {dm(d['date'])}"))
+    if acts_new: acts.append(acts_new)
 # the two tables side by side: same top, same header height, same total height
-TY2 = yy + 1.84
-y2 = f.section("NTF NG items (after the action)", y=TY2, w=6.0, unit="(Unit: NG units, %)")
-f.section("Actions (item · PIC · cycle)", x=6.73, y=TY2, w=6.04, unit="(PIC to be assigned)")
-HH, BODY = 0.3, 6.78 - y2 - 0.3 - 0.32                          # header height, body height (footnote below)
-nrows = [["#", "Model", "Line", "Station", "NG step", "NG units", "% of units", "Before"]]
-for i, (k, code, stn, n, r_, rb_) in enumerate(items, 1):
-    nrows.append([str(i), short(GROUPS[k][1]), GROUPS[k][0], STN[stn], code, num(n), f"{r_:.2f}", f"{rb_:.2f}"])
+TY2 = yy + 1.66
+y2 = f.section("NTF NG items – improved (ImprovementList) and increased", y=TY2, w=6.0, unit="(Unit: % of units)")
+f.section("Actions – done and to do", x=6.73, y=TY2, w=6.04, unit="(PIC to be assigned)")
+HH, BODY = 0.3, 6.78 - y2 - 0.3 - 0.22                          # header height, body height (footnote below)
+nrows = [["#", "Model", "Line", "Station", "NG step", "Before", "After", "Type"]]
+for i, (k, stn, code, rb_, ra_, typ) in enumerate(items, 1):
+    nrows.append([str(i), short(GROUPS[k][1]), GROUPS[k][0], stn, code, f"{rb_:.2f}", f"{ra_:.2f}", typ])
 def nfmt(i, j, v):
     o = {"align": PP_ALIGN.LEFT, "bold": True} if j == 4 else ({"bold": True} if j in (1, 2) else {})
-    if j == 6 and i: o["color"] = RED if float(v) > float(nrows[i][7]) else GREEN
+    if i and j == 6: o["color"] = RED if float(v) > float(nrows[i][5]) else GREEN
+    if i and j == 7: o.update({"color": RED if v == "Increased" else GREEN, "bold": True})
     return o
-table(f.s, 0.53, y2, 6.0, nrows, [0.25, 0.68, 0.55, 0.62, 2.25, 0.55, 0.6, 0.5], row_h=BODY / len(items), header_h=HH, size=7.5,
+table(f.s, 0.53, y2, 6.0, nrows, [0.25, 0.68, 0.55, 0.6, 1.95, 0.5, 0.5, 0.97], row_h=BODY / len(items), header_h=HH, size=7,
       cell_fmt=nfmt, name="NTF NG items")
-arows = [["#", "Model", "Line", "Action item", "PIC", "Cycle"]] + [[str(i), m_, l_, a_, "", c_] for i, (m_, l_, a_, c_) in enumerate(acts, 1)]
-table(f.s, 6.73, y2, 6.04, arows, [0.25, 0.75, 0.6, 2.84, 0.55, 1.05], row_h=BODY / len(acts), header_h=HH, size=7.5,
-      cell_fmt=lambda i, j, v: {"align": PP_ALIGN.LEFT} if j == 3 else ({"bold": True} if j in (1, 2) else None), name="NTF actions")
+arows = [["#", "Model", "Line", "Action item", "PIC", "Cycle", "Status"]] + [[str(i), m_, l_, a_, "", c_, st_] for i, (m_, l_, a_, c_, st_) in enumerate(acts, 1)]
+def afmt(i, j, v):
+    if j == 3: return {"align": PP_ALIGN.LEFT}
+    if j in (1, 2): return {"bold": True}
+    if i and j == 6: return {"bold": True, "color": GREEN if v.startswith("Done") else RED}
+table(f.s, 6.73, y2, 6.04, arows, [0.25, 0.72, 0.5, 2.82, 0.3, 0.65, 0.8], row_h=BODY / len(acts), header_h=HH, size=7,
+      cell_fmt=afmt, name="NTF actions")
 textbox(f.s, 0.53, y2 + HH + BODY + 0.04, 12.24, 0.25,
-        [f"* Top {TOPK} NTF NG items per model and line. % of units = units whose first NG was this NG step / all units of that model and line after the action; "
-         "Before = the same rate before the action. Unit = one PCB at one station (a PCB tested at 2 stations = 2 units). Job changes (CHANGE_JOB) are not tests."], size=7.5, color=G3)
+        ["* Before / After = units whose first NG was this NG step at this station / all units of the model and line. Improved = NG step with an action in "
+         "ImprovementList; Increased = NG step that increased most without an action. Unit = one PCB at one station; job changes are not tests."], size=7, color=G3)
 
 # ---- 3.. detail per model and line ----
 DETAIL = [S[3], S[4], S[6], S[7], S[8], S[9]]
