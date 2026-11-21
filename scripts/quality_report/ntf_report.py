@@ -151,10 +151,10 @@ for k, (line, model) in enumerate(GROUPS):
         n = SA[k]["items"][c]
         jj = sorted(SA[k]["item_jig"][c].items(), key=lambda kv: -kv[1]); top_j = jj[0] if jj else None
         if top_j and top_j[1] * 100 >= 40 * n:
-            act = f"Check / clean pins of {jname(*top_j[0])}: {top_j[1]} of {n} NG units"; cyc = "Daily until OK, then weekly"
+            act = f"Check / clean pins of {jname(*top_j[0])}: {top_j[1] * 100 // n}% of the NG"; cyc = "daily"
         else:
-            act = f"{STN[stn]}: analyse NG logs (several jigs), check limits and fixture"; cyc = "Weekly review"
-        acts_new = (short(model), line, act, cyc.replace("Daily until OK, then weekly", "Daily → weekly"), "Open")
+            act = f"{STN[stn]} {c}: analyse NG logs, check limits and fixture"; cyc = "weekly"
+        acts_new = (short(model), line, act, f"Open ({cyc})")
     # actions already done (same action text merged)
     done = {}
     for n_, x in imp:
@@ -162,7 +162,7 @@ for k, (line, model) in enumerate(GROUPS):
         d["nums"].append(n_); d["date"] = min(d["date"], x["date"])
         if codes_short(x["code"]) not in d["codes"]: d["codes"].append(codes_short(x["code"]))
     for act, d in sorted(done.items(), key=lambda kv: (kv[1]["date"], kv[1]["nums"][0])):
-        acts.append((short(model), line, f"#{', #'.join(map(str, d['nums']))} {act}", "–", f"Done {dm(d['date'])}"))
+        acts.append((short(model), line, f"#{', #'.join(map(str, d['nums']))} {act}", f"Done {dm(d['date'])}"))
     if acts_new: acts.append(acts_new)
 # the two tables side by side: same top, same header height, same total height
 TY2 = yy + 1.66
@@ -177,14 +177,14 @@ def nfmt(i, j, v):
     if i and j == 6: o["color"] = RED if float(v) > float(nrows[i][5]) else GREEN
     if i and j == 7: o.update({"color": RED if v == "Increased" else GREEN, "bold": True})
     return o
-table(f.s, 0.53, y2, 6.0, nrows, [0.25, 0.68, 0.55, 0.6, 1.95, 0.5, 0.5, 0.97], row_h=BODY / len(items), header_h=HH, size=7,
+table(f.s, 0.53, y2, 6.0, nrows, [0.25, 0.68, 0.55, 0.6, 1.95, 0.5, 0.5, 0.97], row_h=BODY / len(items), header_h=HH, size=6.5,
       cell_fmt=nfmt, name="NTF NG items")
-arows = [["#", "Model", "Line", "Action item", "PIC", "Cycle", "Status"]] + [[str(i), m_, l_, a_, "", c_, st_] for i, (m_, l_, a_, c_, st_) in enumerate(acts, 1)]
+arows = [["#", "Model", "Line", "Action item", "PIC", "Status"]] + [[str(i), m_, l_, a_, "", st_] for i, (m_, l_, a_, st_) in enumerate(acts, 1)]
 def afmt(i, j, v):
     if j == 3: return {"align": PP_ALIGN.LEFT}
     if j in (1, 2): return {"bold": True}
-    if i and j == 6: return {"bold": True, "color": GREEN if v.startswith("Done") else RED}
-table(f.s, 6.73, y2, 6.04, arows, [0.25, 0.72, 0.5, 2.82, 0.3, 0.65, 0.8], row_h=BODY / len(acts), header_h=HH, size=7,
+    if i and j == 5: return {"bold": True, "color": GREEN if v.startswith("Done") else RED}
+table(f.s, 6.73, y2, 6.04, arows, [0.25, 0.65, 0.48, 3.56, 0.3, 0.8], row_h=BODY / len(acts), header_h=HH, size=6.5,
       cell_fmt=afmt, name="NTF actions")
 textbox(f.s, 0.53, y2 + HH + BODY + 0.04, 12.24, 0.25,
         ["* Before / After = units whose first NG was this NG step at this station / all units of the model and line. Improved = NG step with an action in "
