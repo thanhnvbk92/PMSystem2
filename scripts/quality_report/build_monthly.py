@@ -79,7 +79,7 @@ f = Frame(S[2], "Monthly KPI Summary", f"{MONTH_TITLE} · vs {mname(1, False)}")
 yy = f.section(f"Key indicators – {mname(0, False)}", unit="(Unit: %)")
 cards = [("RTY", "plant-wide", rty, True, f"{num(cur['rtyStraightThroughPcbs'])} straight-through PCBs / {num(cur['rtyPcbs'])} PCBs", GREEN),
          ("Re-test", "NG test attempts", rt, False, f"{num(cur['retestNgAttempts'])} NG / {num(cur['retestAttempts'])} test attempts", VIOLET),
-         ("NTF", "PID–Station ever NG", ntf, False, f"{num(cur['ntfNgPcbStations'])} NG / {num(cur['ntfPcbStations'])} PID–Stations", DARK)]
+         ("NTF", "units ever NG", ntf, False, f"{num(cur['ntfNgPcbStations'])} NG units / {num(cur['ntfPcbStations'])} units tested", DARK)]
 cw = 3.92
 for i, (nm, sub_, fn, hb, det, col) in enumerate(cards):
     x = 0.53 + i * (cw + 0.24)
@@ -94,7 +94,7 @@ m2 = q("m2")
 defs = [["KPI", "Definition", mname(2), mname(1), mname(0), f"vs {mname(1)}"]]
 for nm, formula, fn, hb in [("RTY", "Rolled throughput yield: PCBs that passed every Station first time / all PCBs tested (plant: all stations; line: stations of the line)", rty, True),
                             ("Re-test", "NG test attempts / all test attempts (each test run = 1 attempt)", rt, False),
-                            ("NTF", "PID–Station pairs that were ever NG / all PID–Station pairs tested", ntf, False)]:
+                            ("NTF", "Units that were NG at least once / all units tested. Unit = one PCB at one station (a PCB tested at 2 stations = 2 units).", ntf, False)]:
     defs.append([nm, formula, pct(fn(m2)) if m2 else "–", pct(fn(prev)), pct(fn(cur)), delta(fn(cur), fn(prev), hb)[0]])
 def dfmt(i, j, v):
     if j == 0: return {"bold": True}

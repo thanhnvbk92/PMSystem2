@@ -143,7 +143,7 @@ yy = f.section("Key indicators – before vs after", unit="(Unit: %)")
 cw = 3.92
 for i, (nm, sub_, k, hb, det) in enumerate([
         ("Re-test", "NG test attempts", "rt", False, lambda K: f"{num(K['ng'])} NG / {num(K['tests'])} tests"),
-        ("NTF", "PID–Station ever NG", "ntf", False, lambda K: f"{num(K['pairs'])} PID–Stations"),
+        ("NTF", "units ever NG", "ntf", False, lambda K: f"{num(K['pairs'])} units"),
         ("RTY", "line, first pass", "rty", True, lambda K: f"{num(K['pcbs'])} PCBs")]):
     x = 0.53 + i * (cw + 0.24)
     rect(f.s, x, yy, cw, 1.9, G2, name=f"KPI card {nm}")
