@@ -128,19 +128,17 @@ def rate(S_, k, fam, sid=None):
     """% of all units of the group whose first NG was in this NG step family (at this station)."""
     n = sum(v for c, st_ in S_[k]["item_st"].items() if _in_family(c, fam) for s_, v in st_.items() if sid is None or s_ == sid)
     return n * 100.0 / S_[k]["pairs"] if S_[k]["pairs"] else 0.0
-items, acts = [], []                                           # by model, then line
+items, acts = [], []            # row i of 'items' and row i of 'acts' are the same finding (one row per action / increased NG step)
 for k, (line, model) in enumerate(GROUPS):
-    imp = [(n_, x) for n_, x in enumerate(IMP_ALL, 1) if x["line"] == line and x["model"] == model]
-    # 1) NG steps of the improvement list (one row per station + NG step), with the action numbers
-    rows_ = {}
+    imp = sorted(((n_, x) for n_, x in enumerate(IMP_ALL, 1) if x["line"] == line and x["model"] == model), key=lambda t: (t[1]["date"], t[0]))
+    # 1) one row per action of the improvement list: its NG step at its station, and the action done
     for n_, x in imp:
         sid = next((s_ for s_, nm in STN.items() if nm == x["station"] and ST_LINE[s_] == LINE_ID[line]), None)
-        rows_.setdefault((sid, x["code"]), []).append(n_)
-    for (sid, fam), nums in rows_.items():
-        items.append((k, STN.get(sid, "–"), codes_short(fam), rate(SB, k, fam, sid), rate(SA, k, fam, sid), "Improved #" + ",#".join(map(str, nums))))
-    # 2) the NG step that increased most and has no action yet
+        items.append((k, STN.get(sid, "–"), codes_short(x["code"]), rate(SB, k, x["code"], sid), rate(SA, k, x["code"], sid), f"Improved #{n_}"))
+        acts.append((short(model), line, f"#{n_} {x['action'] or '–'}", f"Done {dm(x['date'])}"))
+    # 2) the NG step that increased most and has no action yet, and the action proposed for it
     fams = [x["code"] for _, x in imp]
-    cand = []; acts_new = None
+    cand = []
     for c in set(SA[k]["items"]) | set(SB[k]["items"]):
         if any(_in_family(c, f_) for f_ in fams): continue
         ra_ = SA[k]["items"].get(c, 0) * 100.0 / max(SA[k]["pairs"], 1); rb_ = SB[k]["items"].get(c, 0) * 100.0 / max(SB[k]["pairs"], 1)
@@ -153,17 +151,9 @@ for k, (line, model) in enumerate(GROUPS):
         if top_j and top_j[1] * 100 >= 40 * n:
             act = f"Check / clean pins of {jname(*top_j[0])}: {top_j[1] * 100 // n}% of the NG"; cyc = "daily"
         else:
-            act = f"{STN[stn]} {c}: analyse NG logs, check limits and fixture"; cyc = "weekly"
-        acts_new = (short(model), line, act, f"Open ({cyc})")
-    # actions already done (same action text merged)
-    done = {}
-    for n_, x in imp:
-        d = done.setdefault(x["action"] or "–", {"nums": [], "codes": [], "date": x["date"]})
-        d["nums"].append(n_); d["date"] = min(d["date"], x["date"])
-        if codes_short(x["code"]) not in d["codes"]: d["codes"].append(codes_short(x["code"]))
-    for act, d in sorted(done.items(), key=lambda kv: (kv[1]["date"], kv[1]["nums"][0])):
-        acts.append((short(model), line, f"#{', #'.join(map(str, d['nums']))} {act}", f"Done {dm(d['date'])}"))
-    if acts_new: acts.append(acts_new)
+            act = f"{STN[stn]}: analyse NG logs, check limits and fixture"; cyc = "weekly"
+        acts.append((short(model), line, act, f"Open ({cyc})"))
+assert len(items) == len(acts)
 # the two tables side by side: same top, same header height, same total height
 TY2 = yy + 1.66
 y2 = f.section("NTF NG items – improved (ImprovementList) and increased", y=TY2, w=6.0, unit="(Unit: % of units)")
