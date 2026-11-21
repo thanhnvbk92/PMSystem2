@@ -76,6 +76,8 @@ export const ProductionApi = {
     api.get('/production/quality-modes', { params: { lineId, stationId, startDate, endDate } }).then(res => res.data),
   getLatest: (limit = 100, lineId = null, stationId = null, searchPid = null, searchFid = null, searchError = null, resultFilter = null, startDate = null, endDate = null, lineIds = null, stationIds = null, channelIds = null) =>
     api.get('/production/latest', { params: { limit, lineId, stationId, searchPid, searchFid, searchError, resultFilter, startDate, endDate, lineIds: lineIds?.join?.(','), stationIds: stationIds?.join?.(','), channelIds: channelIds?.join?.(',') } }).then(res => res.data),
+  getDashboardWorst: (lineId = null, startDate = null, endDate = null, top = 5) =>
+    api.get('/production/dashboard/worst', { params: { lineId, startDate, endDate, top } }).then(res => res.data),
   getHourlyStats: (hours = 24, lineId = null, stationId = null, startDate = null, endDate = null) => 
     api.get('/production/stats/hourly', { params: { hours, lineId, stationId, startDate, endDate } }).then(res => res.data),
   getLineYieldStats: (lineId = null, startDate = null, endDate = null) =>
@@ -190,6 +192,5 @@ export const ReportsApi = {
 // PC monitoring: state of every Backup_Log2 PC and the standard Backup_Log2 version.
 export const MachinesApi = {
   getAll: () => api.get('/machines').then(res => res.data),
-  setStandardVersion: (version) => api.put('/machines/standard-version', { version }).then(res => res.data),
   remove: (mac) => api.delete(`/machines/${encodeURIComponent(mac)}`).then(res => res.data),
 };

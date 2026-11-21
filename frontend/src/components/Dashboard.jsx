@@ -1,4 +1,4 @@
-import React, { memo, useState, useEffect, useMemo, useRef } from 'react';
+import React, { memo, useState, useEffect, useRef } from 'react';
 import {
   Activity, CheckCircle, XCircle, TrendingUp, Radio,
   Sparkles, ShieldCheck, Clock, BarChart3,
@@ -8,7 +8,7 @@ import {
 } from 'lucide-react';
 import {
   AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer,
-  CartesianGrid, Bar, Line, PieChart, Pie, Cell, ComposedChart
+  CartesianGrid, Bar, Line, ComposedChart
 } from 'recharts';
 import { ProductionApi } from '../services/api';
 
@@ -45,6 +45,7 @@ function Dashboard({
   const [isLoading, setIsLoading] = useState(false);
   const [chartLoadInfo, setChartLoadInfo] = useState({ durationMs: null, requests: {} });
   const [qualityModes, setQualityModes] = useState(null);
+  const [worstData, setWorstData] = useState(null);
   const latestHourlyStatsRef = useRef(hourlyStats);
   const latestSummaryRef = useRef(summary);
   const forceNextChartUpdateRef = useRef(true);
@@ -92,39 +93,52 @@ function Dashboard({
     return { sDate: toProductionClockIso(sDate), eDate: toProductionClockIso(eDate) };
   };
 
-  // Load backend stats used by the remaining line and station charts.
+  const applyStationYields = (stationYields) => {
+    const lineMap = new Map();
+    (stationYields || []).forEach(station => {
+      const key = station.lineId || 0;
+      const current = lineMap.get(key) || { lineId: key, lineName: station.lineName || `Line ${key}`, total: 0, ok: 0, ng: 0 };
+      current.total += station.total || 0;
+      current.ok += station.ok || 0;
+      current.ng += station.ng || 0;
+      lineMap.set(key, current);
+    });
+    const lineYields = [...lineMap.values()].map(line => ({ ...line,
+      yieldRate: line.total > 0 ? line.ok / line.total * 100 : 0 }));
+    setLineYieldData(lineYields);
+    setStationYieldData(stationYields || []);
+  };
+
+  // Load the line / station charts, the NTF-RTY cards and the Worst panel. Each one is shown as
+  // soon as its own request returns: NTF / RTY over a month takes a few seconds and must not
+  // hold back the charts. Responses of an older filter are dropped.
+  const backendRequestRef = useRef(0);
   const fetchBackendData = async (lineId, sDate, eDate) => {
+    const requestId = ++backendRequestRef.current;
+    const from = sDate || startDate;
+    const to = eDate || endDate;
     setIsLoading(true);
     const loadStarted = performance.now();
-    try {
-      const timed = async (name, request) => { const started = performance.now(); const data = await request(); return { name, data, durationMs: performance.now() - started }; };
-      const results = await Promise.all([
-        timed('station', () => ProductionApi.getStationYieldStats(lineId || null, sDate || startDate, eDate || endDate)),
-        timed('qualityModes', () => ProductionApi.getQualityModes(lineId || null, null, sDate || startDate, eDate || endDate))
-      ]);
-      const byName = Object.fromEntries(results.map(x => [x.name, x]));
-      const stationYields = byName.station.data;
-      setQualityModes(byName.qualityModes.data);
-      const lineMap = new Map();
-      (stationYields || []).forEach(station => {
-        const key = station.lineId || 0;
-        const current = lineMap.get(key) || { lineId: key, lineName: station.lineName || `Line ${key}`, total: 0, ok: 0, ng: 0 };
-        current.total += station.total || 0;
-        current.ok += station.ok || 0;
-        current.ng += station.ng || 0;
-        lineMap.set(key, current);
-      });
-      const lineYields = [...lineMap.values()].map(line => ({ ...line,
-        yieldRate: line.total > 0 ? line.ok / line.total * 100 : 0 }));
-      setLineYieldData(lineYields || []);
-      setStationYieldData(stationYields || []);
-      setChartLoadInfo({ durationMs: performance.now() - loadStarted,
-        requests: Object.fromEntries(results.map(x => [x.name, x.durationMs])) });
-    } catch (err) {
-      console.error('Failed to fetch dashboard data:', err);
-    } finally {
-      setIsLoading(false);
-    }
+    const requests = {};
+    const timed = async (name, request, apply) => {
+      const started = performance.now();
+      try {
+        const data = await request();
+        if (requestId === backendRequestRef.current) apply(data);
+      } catch (err) {
+        console.error(`Failed to fetch dashboard ${name}:`, err);
+      } finally {
+        requests[name] = performance.now() - started;
+      }
+    };
+    await Promise.all([
+      timed('station', () => ProductionApi.getStationYieldStats(lineId || null, from, to), applyStationYields),
+      timed('worst', () => ProductionApi.getDashboardWorst(lineId || null, from, to), setWorstData),
+      timed('qualityModes', () => ProductionApi.getQualityModes(lineId || null, null, from, to), setQualityModes),
+    ]);
+    if (requestId !== backendRequestRef.current) return;
+    setChartLoadInfo({ durationMs: performance.now() - loadStarted, requests: { ...requests } });
+    setIsLoading(false);
   };
 
   useEffect(() => {
@@ -140,6 +154,20 @@ function Dashboard({
     }, 5 * 60 * 1000);
     return () => window.clearInterval(timer);
   }, [selectedLineId, startDate, endDate]);
+
+  useEffect(() => {
+    const timer = window.setInterval(async () => {
+      const requestId = backendRequestRef.current;
+      try {
+        const data = await ProductionApi.getQualityModes(selectedLineId ? parseInt(selectedLineId) : null, null, startDate, endDate);
+        if (requestId === backendRequestRef.current) setQualityModes(data);
+      } catch (err) {
+        console.warn('NTF / RTY refresh failed:', err);
+      }
+    }, 60 * 1000);
+    return () => window.clearInterval(timer);
+  }, [selectedLineId, startDate, endDate]);
+
 
   const handleTimeRangeChange = (rangeKey) => {
     forceNextChartUpdateRef.current = true;
@@ -167,16 +195,12 @@ function Dashboard({
     }
   };
 
-  // KPI Metrics
+  // Retest card: live counters (summary is refreshed every 5 s and by SignalR).
   const totalInspected = summary?.totalInspected || 0;
   const totalOk = summary?.totalOk || 0;
   const totalNg = summary?.totalNg || 0;
-  const yieldRate = summary?.overallYieldRate !== undefined 
-    ? summary.overallYieldRate 
-    : (totalInspected > 0 ? (totalOk / totalInspected) * 100 : 0);
-  const passPct = totalInspected > 0 ? ((totalOk / totalInspected) * 100).toFixed(1) : '0.0';
-  const defectPct = totalInspected > 0 ? ((totalNg / totalInspected) * 100).toFixed(1) : '0.0';
-  const chartYieldRate = chartSummary?.overallYieldRate ?? yieldRate;
+  const passPct = totalInspected > 0 ? ((totalOk / totalInspected) * 100).toFixed(2) : '0.00';
+  const retestDefectPct = totalInspected > 0 ? ((totalNg / totalInspected) * 100).toFixed(2) : '0.00';
 
   // 1. Time-series data formatted automatically per selectedTimeRange
   const getTimeSeriesData = () => {
@@ -236,12 +260,6 @@ function Dashboard({
 
   const timeSeriesData = getTimeSeriesData();
 
-  // 3. Overall defect-rate donut data
-  const chartDefectRate = Math.max(0, Math.min(100, 100 - chartYieldRate));
-  const donutData = useMemo(() => [
-    { name: 'Phát Sinh Lỗi (Defect)', value: parseFloat(chartDefectRate.toFixed(1)), color: '#f43f5e' },
-    { name: 'Đạt Chuẩn (Pass)', value: parseFloat(chartYieldRate.toFixed(1)), color: '#334155' }
-  ], [chartDefectRate, chartYieldRate]);
 
   // 4b. Line Production Volume & Pass Rate Data (Sorted Ascending)
   const lineVolumePassData = (() => {
@@ -287,10 +305,10 @@ function Dashboard({
   })();
 
   return (
-    <div className="space-y-7 w-full animate-in fade-in duration-300 font-sans pb-8">
+    <div className="space-y-4 w-full animate-in fade-in duration-300 font-sans pb-8">
 
       {/* TOOLBAR / HEADER CONTROL ROW */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-200 pb-4">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div className="flex items-center gap-3">
           {/* Time Range Selector */}
           <div className="flex items-center bg-slate-100 border border-slate-300 rounded-xl px-3 py-1.5 text-xs text-slate-700 gap-2">
@@ -327,145 +345,56 @@ function Dashboard({
               fetchBackendData(selectedLineId ? parseInt(selectedLineId) : null, startDate, endDate);
             }}
             className="p-2 rounded-xl bg-slate-200 hover:bg-slate-300 text-slate-700 transition-colors"
-            title="Tải lại dữ liệu"
+            title={`Tải lại dữ liệu\n${loadTimeText('Tổng quan', productionLoadInfo?.loading, productionLoadInfo?.durationMs, productionLoadInfo?.requests)}\n${loadTimeText('Line/Station', isLoading, chartLoadInfo.durationMs, chartLoadInfo.requests)}`}
           >
-            <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin text-purple-700' : ''}`} />
+            <RefreshCw className={`w-4 h-4 ${isLoading || productionLoadInfo?.loading ? 'animate-spin text-purple-700' : ''}`} />
           </button>
         </div>
-        <div className="flex flex-wrap items-center gap-2 text-[10px] font-mono">
-          <LoadTimeBadge loading={productionLoadInfo?.loading} label="Tổng quan" value={productionLoadInfo?.durationMs} details={productionLoadInfo?.requests} />
-          <LoadTimeBadge loading={isLoading} label="Line/Station" value={chartLoadInfo.durationMs} details={chartLoadInfo.requests} />
-        </div>
       </div>
 
-      {/* Three quality views: attempt-based Retest, station NTF and system-wide RTY. */}
+      {/* Retest = every test attempt (live, refreshed every 5 s with the production counters);
+          NTF / RTY over the PID summaries (refreshed every 60 s). They replace the Production Overview cards. */}
       <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-        <div className="glass-panel border border-violet-500/20 p-5">
-          <div className="flex items-start justify-between"><div><div className="text-xs font-bold uppercase tracking-wider text-violet-700">Retest</div><div className="mt-1 text-[11px] text-slate-500">Mỗi lần test được tính là một lượt</div></div><RefreshCw className="h-5 w-5 text-violet-700"/></div>
-          <div className="mt-4 text-3xl font-black text-violet-700">{Number(qualityModes?.retestDefectRate ?? defectPct).toFixed(2)}%</div>
-          <div className="mt-2 text-xs text-slate-600">{Number(qualityModes?.retestNgAttempts ?? totalNg).toLocaleString()} NG / {Number(qualityModes?.retestAttempts ?? totalInspected).toLocaleString()} lượt test</div>
+        <div className="glass-panel border border-violet-500/20 p-4">
+          <div className="flex items-start justify-between">
+            <div>
+              <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-violet-700">
+                Retest <span className="flex items-center gap-1 rounded bg-emerald-500/10 px-1.5 py-0.5 text-[9px] font-bold text-emerald-700"><span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500"></span>LIVE</span>
+              </div>
+              <div className="mt-1 text-[11px] text-slate-500">Mỗi lần test được tính là một lượt</div>
+            </div>
+            <RefreshCw className="h-5 w-5 text-violet-700"/>
+          </div>
+          <div className="mt-3 flex items-baseline gap-3">
+            <span className="text-3xl font-black text-violet-700">{retestDefectPct}%</span>
+            <span className="text-xs text-slate-500">NG</span>
+          </div>
+          <div className="mt-2 grid grid-cols-3 gap-2 text-xs">
+            <div><div className="text-[10px] text-slate-500">Lượt test</div><div className="font-mono font-bold text-slate-900" title={totalInspected.toLocaleString()}>{totalInspected.toLocaleString()}</div></div>
+            <div><div className="text-[10px] text-slate-500">OK · {passPct}%</div><div className="font-mono font-bold text-emerald-700">{totalOk.toLocaleString()}</div></div>
+            <div><div className="text-[10px] text-slate-500">NG</div><div className="font-mono font-bold text-rose-700">{totalNg.toLocaleString()}</div></div>
+          </div>
         </div>
-        <div className="glass-panel border border-rose-500/20 p-5">
-          <div className="flex items-start justify-between"><div><div className="text-xs font-bold uppercase tracking-wider text-rose-700">NTF</div><div className="mt-1 text-[11px] text-slate-500">PID từng NG tại cùng Station</div></div><AlertTriangle className="h-5 w-5 text-rose-700"/></div>
-          <div className="mt-4 text-3xl font-black text-rose-700">{qualityModes ? `${Number(qualityModes.ntfRate).toFixed(2)}%` : '—'}</div>
+        <div className="glass-panel border border-rose-500/20 p-4">
+          <div className="flex items-start justify-between"><div><div className="text-xs font-bold uppercase tracking-wider text-rose-700">NTF</div><div className="mt-1 text-[11px] text-slate-500">PID-Station test lần đầu trong kỳ, từng NG tại Station đó</div></div><AlertTriangle className="h-5 w-5 text-rose-700"/></div>
+          <div className="mt-3 text-3xl font-black text-rose-700">{qualityModes ? `${Number(qualityModes.ntfRate).toFixed(2)}%` : '—'}</div>
           <div className="mt-2 text-xs text-slate-600">{qualityModes ? `${Number(qualityModes.ntfNgPcbStations).toLocaleString()} NG / ${Number(qualityModes.ntfPcbStations).toLocaleString()} PID-Station` : 'Đang tính lịch sử PCB...'}</div>
+          <div className="mt-1 text-[10px] text-slate-400">Cập nhật mỗi 60 giây</div>
         </div>
-        <div className="glass-panel border border-emerald-500/20 p-5">
-          <div className="flex items-start justify-between"><div><div className="text-xs font-bold uppercase tracking-wider text-emerald-700">RTY</div><div className="mt-1 text-[11px] text-slate-500">PID không NG lần nào trên toàn hệ thống</div></div><Zap className="h-5 w-5 text-emerald-700"/></div>
-          <div className="mt-4 text-3xl font-black text-emerald-700">{qualityModes ? `${Number(qualityModes.rtyRate).toFixed(2)}%` : '—'}</div>
+        <div className="glass-panel border border-emerald-500/20 p-4">
+          <div className="flex items-start justify-between"><div><div className="text-xs font-bold uppercase tracking-wider text-emerald-700">RTY</div><div className="mt-1 text-[11px] text-slate-500">{selectedLineId ? 'PID test lần đầu trên line trong kỳ, không NG ở station nào của line' : 'PID test lần đầu trong kỳ, không NG lần nào trên toàn hệ thống'}</div></div><Zap className="h-5 w-5 text-emerald-700"/></div>
+          <div className="mt-3 text-3xl font-black text-emerald-700">{qualityModes ? `${Number(qualityModes.rtyRate).toFixed(2)}%` : '—'}</div>
           <div className="mt-2 text-xs text-slate-600">{qualityModes ? `${Number(qualityModes.rtyStraightThroughPcbs).toLocaleString()} chạy thẳng / ${Number(qualityModes.rtyPcbs).toLocaleString()} PCB` : 'Đang tính lịch sử PCB...'}</div>
+          <div className="mt-1 text-[10px] text-slate-400">Cập nhật mỗi 60 giây</div>
         </div>
       </div>
 
-      {/* SECTION 1: INCIDENTS & PRODUCTION OVERVIEW (4 KPI CARDS + FUNNEL CHART) */}
-      <div className="space-y-3">
-        <h3 className="text-xs font-bold uppercase tracking-wider text-slate-600 font-display">
-          Production Overview
-        </h3>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
-
-          {/* Card 1: Total Incident Costs / Inspected Volume */}
-          <div className="glass-panel p-5 relative overflow-hidden flex flex-col justify-between">
-            <span className="text-xs font-semibold text-slate-600 font-display">Tổng Sản Lượng Kiểm Tra</span>
-            <div className="mt-3">
-              <span title={totalInspected.toLocaleString('en-US')} className="text-3xl font-extrabold text-slate-900 font-mono tracking-tight">
-                {compactNumberFormatter.format(totalInspected)}
-              </span>
-              <div className="flex items-center gap-2 mt-2 text-[11px] font-mono">
-                <span className="text-emerald-700 font-semibold">Tự động</span>
-                <span className="text-slate-600">cập nhật DB</span>
-              </div>
-            </div>
-            <div className="absolute bottom-0 left-0 right-0 h-1 bg-purple-500"></div>
-          </div>
-
-          {/* Card 2: Passed OK Volume */}
-          <div className="glass-panel p-5 relative overflow-hidden flex flex-col justify-between">
-            <span className="text-xs font-semibold text-slate-600 font-display">Sản Phẩm Đạt Chuẩn (OK)</span>
-            <div className="mt-3">
-              <span className="text-3xl font-extrabold text-emerald-700 font-mono tracking-tight">
-                {totalOk.toLocaleString()}
-              </span>
-              <div className="flex items-center gap-2 mt-2 text-[11px] font-mono">
-                <span className="text-emerald-700 font-semibold">{passPct}%</span>
-                <span className="text-slate-600">Pass Rate</span>
-              </div>
-            </div>
-            <div className="absolute bottom-0 left-0 right-0 h-1 bg-emerald-500"></div>
-          </div>
-
-          {/* Card 3: Defects Count */}
-          <div className="glass-panel p-5 relative overflow-hidden flex flex-col justify-between">
-            <span className="text-xs font-semibold text-slate-600 font-display">Sản Phẩm Lỗi (NG)</span>
-            <div className="mt-3">
-              <span className="text-3xl font-extrabold text-rose-700 font-mono tracking-tight">
-                {totalNg.toLocaleString()}
-              </span>
-              <div className="flex items-center gap-2 mt-2 text-[11px] font-mono">
-                <span className="text-rose-700 font-semibold">-{defectPct}%</span>
-                <span className="text-slate-600">Defect Ratio</span>
-              </div>
-            </div>
-            <div className="absolute bottom-0 left-0 right-0 h-1 bg-rose-500"></div>
-          </div>
-
-          {/* Card 4: First Pass Yield Rate */}
-          <div className="glass-panel p-5 relative overflow-hidden flex flex-col justify-between">
-            <span className="text-xs font-semibold text-slate-600 font-display">Tỷ Lệ Yield Thật (FPY)</span>
-            <div className="mt-3">
-              <span className="text-3xl font-extrabold text-purple-700 font-mono tracking-tight">
-                {yieldRate.toFixed(1)}%
-              </span>
-              <div className="flex items-center gap-2 mt-2 text-[11px] font-mono">
-                <span className="text-purple-700 font-semibold">{passPct}%</span>
-                <span className="text-slate-600">Tỷ lệ Đạt</span>
-              </div>
-            </div>
-            <div className="absolute bottom-0 left-0 right-0 h-1 bg-indigo-500"></div>
-          </div>
-
-          {/* Card 5: Overall Defect Rate */}
-          <div className="glass-panel p-4 flex flex-col justify-between">
-            <span className="text-xs font-semibold text-slate-600 font-display text-center">
-              Tỷ Lệ Lỗi Tổng Thể
-            </span>
-            <div className="h-24 w-full relative flex items-center justify-center">
-              <FrozenChart version={chartSummary}>
-                <ResponsiveContainer width="100%" height="100%">
-                  <PieChart>
-                    <Pie
-                      data={donutData}
-                      cx="50%"
-                      cy="50%"
-                      innerRadius={28}
-                      outerRadius={40}
-                      startAngle={90}
-                      endAngle={-270}
-                      dataKey="value"
-                    >
-                      {donutData.map((entry, index) => (
-                        <Cell key={`cell-${index}`} fill={entry.color} stroke="none" />
-                      ))}
-                    </Pie>
-                  </PieChart>
-                </ResponsiveContainer>
-              </FrozenChart>
-              <div className="absolute inset-0 flex items-center justify-center">
-                <span className="text-xl font-extrabold text-rose-700 font-mono tracking-tight">
-                  {chartDefectRate.toFixed(1)}%
-                </span>
-              </div>
-            </div>
-          </div>
-
-        </div>
-      </div>
+      <WorstPanel worst={worstData} loading={isLoading} />
 
       {/* SECTION 2: INCIDENTS AND INJURIES OVERVIEW (3 CHARTS ROW) */}
       <div className="space-y-3">
         <h3 className="text-xs font-bold uppercase tracking-wider text-slate-600 font-display">
-          Incidents and Quality Overview
+          Sản Lượng &amp; Tỉ Lệ Pass
         </h3>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
@@ -609,12 +538,105 @@ function Dashboard({
   );
 }
 
-function LoadTimeBadge({ loading, label, value, details = {} }) {
-  const detailText = Object.entries(details).map(([key, ms]) => `${key}: ${(ms / 1000).toFixed(2)}s`).join(' · ');
-  return <span title={detailText || undefined} className={`rounded-lg border px-2.5 py-1.5 ${loading ? 'border-amber-500/30 bg-amber-500/10 text-amber-700' : 'border-slate-300 bg-slate-100/70 text-slate-600'}`}>
-    <Clock className={`mr-1 inline h-3 w-3 ${loading ? 'animate-pulse' : ''}`} />
-    {label}: {loading ? 'đang tải...' : value == null ? '—' : `${(value / 1000).toFixed(2)}s`}
-  </span>;
+const formatPct = (value, digits = 2) => `${Number(value || 0).toFixed(digits)}%`;
+const formatDay = (isoDay) => {
+  if (!isoDay) return '';
+  const [y, m, d] = isoDay.split('-');
+  return `${d}/${m}/${y}`;
+};
+
+// Worst panel: the 5 channels (jigs) with the most NG above the average NG rate of the period.
+function WorstPanel({ worst, loading }) {
+  const todayIso = (() => {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  })();
+  const recentLabel = worst?.recentDay === todayIso ? 'Hôm nay' : formatDay(worst?.recentDay);
+  const items = worst?.jigs || [];
+  const maxRate = Math.max(1, ...items.map(x => x.ngRate));
+
+  return (
+    <div className="glass-panel p-5 space-y-3">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <Cpu className="h-4 w-4 text-rose-700" />
+          <h4 className="text-xs font-bold uppercase tracking-wider text-slate-900 font-display">Top 5 Channel tệ nhất</h4>
+        </div>
+        <span className="text-[10px] text-slate-500">
+          {worst ? `NG trung bình kỳ: ${formatPct(worst.ngRate)} · Xếp theo số NG vượt mức trung bình` : ''}
+        </span>
+      </div>
+
+      {items.length === 0 ? (
+        <div className="py-4 text-center text-[11px] text-slate-500">
+          {loading && !worst ? 'Đang tải...' : 'Không có channel nào xấu hơn trung bình'}
+        </div>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[960px] text-xs">
+            <thead>
+              <tr className="border-b border-slate-200 text-left text-[10px] uppercase tracking-wider text-slate-500">
+                <th className="w-6 py-2 font-semibold">#</th>
+                <th className="py-2 pr-3 font-semibold">Channel</th>
+                <th className="py-2 pr-3 font-semibold">IP</th>
+                <th className="py-2 pr-3 font-semibold">Station</th>
+                <th className="py-2 pr-3 font-semibold">Line</th>
+                <th className="py-2 pr-3 font-semibold">Lỗi chính (NG · % NG của channel)</th>
+                <th className="py-2 text-right font-semibold">NG / Tổng</th>
+                <th className="w-40 py-2 pl-4 font-semibold">Tỉ lệ NG</th>
+                <th className="py-2 text-right font-semibold">{recentLabel} / 7 ngày trước</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-200">
+              {items.map((item, index) => (
+                <tr key={item.key}>
+                  <td className="py-1.5 font-mono font-bold text-slate-400">{index + 1}</td>
+                  <td className="py-1.5 pr-3 font-semibold text-slate-900">{item.name}</td>
+                  <td className="py-1.5 pr-3 font-mono text-slate-600">{item.ip || '—'}</td>
+                  <td className="py-1.5 pr-3 text-slate-700">{item.stationName || '—'}</td>
+                  <td className="py-1.5 pr-3 text-slate-700">{item.lineName || '—'}</td>
+                  <td className="py-1.5 pr-3">
+                    {/* One line to keep the page on one screen; every top error is in the tooltip. */}
+                    {(item.topErrors || []).length === 0 ? '—' : (
+                      <div className="flex items-baseline gap-2"
+                        title={item.topErrors.map(err => `${err.errorCode}: ${err.ng.toLocaleString()} NG (${formatPct(err.shareOfItemNg, 1)})`).join('\n')}>
+                        <span className="max-w-[260px] truncate font-semibold text-rose-700">{item.topErrors[0].errorCode}</span>
+                        <span className="shrink-0 font-mono text-[10px] text-slate-500">{item.topErrors[0].ng.toLocaleString()} · {formatPct(item.topErrors[0].shareOfItemNg, 1)}</span>
+                        {item.topErrors.length > 1 && <span className="shrink-0 rounded bg-slate-200 px-1 text-[9px] text-slate-600">+{item.topErrors.length - 1}</span>}
+                      </div>
+                    )}
+                  </td>
+                  <td className="py-1.5 text-right font-mono text-slate-700">
+                    {item.ng.toLocaleString()} / {item.total.toLocaleString()}
+                  </td>
+                  <td className="py-1.5 pl-4">
+                    <div className="flex items-center gap-2">
+                      <div className="h-1.5 flex-1 rounded bg-slate-200">
+                        <div className="h-1.5 rounded bg-rose-500" style={{ width: `${Math.min(100, item.ngRate / maxRate * 100)}%` }} />
+                      </div>
+                      <span className="w-12 text-right font-mono font-bold text-rose-700">{formatPct(item.ngRate)}</span>
+                    </div>
+                  </td>
+                  <td className="py-1.5 text-right font-mono">
+                    <span className={item.spike ? 'font-bold text-rose-700' : 'text-slate-700'}>{formatPct(item.recentNgRate)}</span>
+                    <span className="text-slate-400"> / {formatPct(item.baselineNgRate)}</span>
+                    {item.spike && <span className="ml-1.5 rounded bg-rose-600 px-1 text-[9px] font-bold text-white">↑ TĂNG</span>}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Load times are technical details: shown in the refresh button tooltip instead of on the page.
+function loadTimeText(label, loading, value, details = {}) {
+  const detailText = Object.entries(details || {}).map(([key, ms]) => `${key} ${(ms / 1000).toFixed(2)}s`).join(', ');
+  const total = loading ? 'đang tải...' : value == null ? '—' : `${(value / 1000).toFixed(2)}s`;
+  return `${label}: ${total}${detailText ? ` (${detailText})` : ''}`;
 }
 
 export default memo(Dashboard);

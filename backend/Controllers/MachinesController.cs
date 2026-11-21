@@ -3,8 +3,6 @@ using PMSystem2.Api.Services;
 
 namespace PMSystem2.Api.Controllers;
 
-public sealed record StandardVersionRequest(string? Version);
-
 /// <summary>PC monitoring: state of every Backup_Log2 PC and the standard Backup_Log2 version.</summary>
 [ApiController]
 [Route("api/v1/machines")]
@@ -15,28 +13,40 @@ public sealed class MachinesController : ControllerBase
 
     public MachinesController(MachineStatusService machines) => _machines = machines;
 
+    /// <summary>The standard version is always the highest version the PCs report (no manual value).</summary>
     [HttpGet]
-    public async Task<IActionResult> GetAll() => Ok(new
+    public async Task<IActionResult> GetAll()
     {
-        machines = await _machines.GetAllAsync(),
-        standardVersion = await _machines.GetSettingAsync(MachineStatusService.StandardVersionKey),
-        offlineAfterSeconds = (int)MachineStatusService.OfflineAfter.TotalSeconds,
-        serverTime = DateTime.Now
-    });
+        var machines = await _machines.GetAllAsync();
+        return Ok(new
+        {
+            machines,
+            standardVersion = LatestReportedVersion(machines),
+            offlineAfterSeconds = (int)MachineStatusService.OfflineAfter.TotalSeconds,
+            serverTime = DateTime.Now
+        });
+    }
 
+    /// <summary>Highest Backup_Log2 version reported by the PCs (old builds report a fixed one and are skipped).</summary>
+    private static string? LatestReportedVersion(IEnumerable<MachineStatusDto> machines) => machines
+        .Where(m => !m.IsLegacy && !string.IsNullOrWhiteSpace(m.AppVersion))
+        .Select(m => Version.TryParse(m.AppVersion!.Trim(), out var v) ? (Version: v, Text: m.AppVersion.Trim()) : default)
+        .Where(x => x.Version != null)
+        .OrderByDescending(x => x.Version)
+        .Select(x => x.Text)
+        .FirstOrDefault();
+
+    /// <summary>
+    /// Server clock with its offset ("2026-11-20T07:00:00+07:00"). Backup_Log2 sets the PC clock to this
+    /// wall clock (07:00) at start-up and on the time.sync command, keeping the PC time zone.
+    /// </summary>
+    [HttpGet("time")]
+    public IActionResult GetTime() => Ok(new { serverTime = DateTimeOffset.Now });
+
+    /// <summary>Standard version (highest version the PCs report).</summary>
     [HttpGet("standard-version")]
     public async Task<IActionResult> GetStandardVersion() =>
-        Ok(new { version = await _machines.GetSettingAsync(MachineStatusService.StandardVersionKey) });
-
-    [HttpPut("standard-version")]
-    public async Task<IActionResult> SetStandardVersion([FromBody] StandardVersionRequest request)
-    {
-        var version = request.Version?.Trim();
-        if (!string.IsNullOrEmpty(version) && !Version.TryParse(version, out _))
-            return BadRequest(new { message = "Version không hợp lệ, ví dụ đúng: 2.0.6.144" });
-        await _machines.SetSettingAsync(MachineStatusService.StandardVersionKey, version);
-        return Ok(new { version = string.IsNullOrEmpty(version) ? null : version });
-    }
+        Ok(new { version = LatestReportedVersion(await _machines.GetAllAsync()) });
 
     /// <summary>Removes a PC that is no longer used (it comes back by itself if it connects again).</summary>
     [HttpDelete("{mac}")]

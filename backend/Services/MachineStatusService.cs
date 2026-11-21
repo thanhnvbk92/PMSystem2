@@ -4,6 +4,14 @@ using PMSystem2.Api.Models;
 
 namespace PMSystem2.Api.Services;
 
+/// <summary>One fixed drive of a PC (as sent in telemetry and shown on the PC monitor).</summary>
+public sealed class MachineDisk
+{
+    [System.Text.Json.Serialization.JsonPropertyName("drive")] public string? Drive { get; set; }
+    [System.Text.Json.Serialization.JsonPropertyName("total_gb")] public double? TotalGb { get; set; }
+    [System.Text.Json.Serialization.JsonPropertyName("free_gb")] public double? FreeGb { get; set; }
+}
+
 /// <summary>Telemetry a Backup_Log2 PC reports (fields are optional: old builds send only a few).</summary>
 public sealed class MachineTelemetryInput
 {
@@ -26,6 +34,10 @@ public sealed class MachineTelemetryInput
     public DateTime? LastUploadAt { get; init; }
     public string? LogType { get; init; }
     public string? LogFolders { get; init; }
+    /// <summary>Wall clock shown on the PC (no time zone); null from builds that do not send it.</summary>
+    public string? LocalTime { get; init; }
+    /// <summary>Every fixed drive; null from builds that do not send it.</summary>
+    public List<MachineDisk>? Disks { get; init; }
 }
 
 /// <summary>One PC as shown on the PC monitoring page.</summary>
@@ -34,7 +46,8 @@ public sealed record MachineStatusDto(
     string? Hostname, string? IpAddress, string? OsVersion, string? AppVersion, string? CurrentModel,
     string? LogType, string? LogFolders, string? AppStatus, double? CpuPercent, int? RamTotalMb, int? RamUsedMb,
     string? DiskDrive, double? DiskTotalGb, double? DiskFreeGb, DateTime? AppStartedAt, DateTime? LastUploadAt,
-    DateTime? ConnectedAt, DateTime? DisconnectedAt, DateTime? LastSeenAt, DateTime? LastTelemetryAt);
+    DateTime? ConnectedAt, DateTime? DisconnectedAt, DateTime? LastSeenAt, DateTime? LastTelemetryAt,
+    double? ClockOffsetSeconds, List<MachineDisk>? Disks, string? ConnectedIp);
 
 /// <summary>
 /// Keeps the latest state of each Backup_Log2 PC in <c>machine_status</c>.
@@ -45,7 +58,6 @@ public sealed record MachineStatusDto(
 public sealed class MachineStatusService
 {
     public static readonly TimeSpan OfflineAfter = TimeSpan.FromMinutes(3);
-    public const string StandardVersionKey = "backuplog.standard_version";
 
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<MachineStatusService> _logger;
@@ -103,10 +115,11 @@ public sealed class MachineStatusService
         finally { _gate.Release(); }
     }
 
-    public Task<MachineStatusDto?> MarkConnectedAsync(string? mac, int? channelId) =>
+    public Task<MachineStatusDto?> MarkConnectedAsync(string? mac, int? channelId, string? connectedIp = null) =>
         UpdateAsync(mac, (m, now) =>
         {
             m.IsConnected = true;
+            m.ConnectedIp = Cut(connectedIp, 64) ?? m.ConnectedIp;
             m.ConnectedAt = now;
             m.LastSeenAt = now;
             if (channelId is > 0) m.ChannelId = channelId;
@@ -147,6 +160,17 @@ public sealed class MachineStatusService
             m.LastUploadAt = Local(t.LastUploadAt) ?? m.LastUploadAt;
             m.LogType = Cut(t.LogType, 200) ?? m.LogType;
             m.LogFolders = string.IsNullOrWhiteSpace(t.LogFolders) ? m.LogFolders : t.LogFolders.Trim();
+            // PC wall clock minus server wall clock, both as shown (time zones are not used: time.sync
+            // makes the PC show the server's wall clock). Null when the build does not send local_time.
+            m.ClockOffsetSeconds = DateTime.TryParse(t.LocalTime, System.Globalization.CultureInfo.InvariantCulture,
+                    System.Globalization.DateTimeStyles.None, out var pcClock)
+                ? Math.Round((pcClock - now).TotalSeconds, 1)
+                : null;
+            if (t.Disks is { Count: > 0 })
+                m.DisksJson = System.Text.Json.JsonSerializer.Serialize(t.Disks
+                    .Where(d => !string.IsNullOrWhiteSpace(d.Drive))
+                    .Select(d => new MachineDisk { Drive = Cut(d.Drive, 10), TotalGb = d.TotalGb, FreeGb = d.FreeGb })
+                    .Take(26).ToList());
         });
 
     public async Task<List<MachineStatusDto>> GetAllAsync()
@@ -193,6 +217,13 @@ public sealed class MachineStatusService
             m.Hostname, m.IpAddress, m.OsVersion, m.AppVersion, m.CurrentModel, m.LogType, m.LogFolders, m.AppStatus,
             m.CpuPercent, m.RamTotalMb, m.RamUsedMb, m.DiskDrive, m.DiskTotalGb, m.DiskFreeGb,
             Local(m.AppStartedAt), Local(m.LastUploadAt), Local(m.ConnectedAt), Local(m.DisconnectedAt),
-            Local(m.LastSeenAt), Local(m.LastTelemetryAt));
+            Local(m.LastSeenAt), Local(m.LastTelemetryAt), m.ClockOffsetSeconds, ReadDisks(m.DisksJson), m.ConnectedIp);
+    }
+
+    private static List<MachineDisk>? ReadDisks(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return null;
+        try { return System.Text.Json.JsonSerializer.Deserialize<List<MachineDisk>>(json); }
+        catch { return null; }
     }
 }

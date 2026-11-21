@@ -1,8 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Monitor, Wifi, WifiOff, AlertTriangle, HardDrive, Cpu, Search, RefreshCw, Save, X, Trash2, CheckCircle2, HelpCircle, ArrowUpCircle
+  Monitor, Wifi, WifiOff, AlertTriangle, HardDrive, Cpu, Search, RefreshCw, X, Trash2, CheckCircle2, HelpCircle, ArrowUpCircle, Clock
 } from 'lucide-react';
-import { MachinesApi } from '../services/api';
+import { MachinesApi, CommandApi } from '../services/api';
 import { onMachineStatusChanged } from '../services/signalr';
 
 // ---------------------------------------------------------------- helpers
@@ -31,8 +31,31 @@ export const versionState = (version, standard) => {
 };
 
 const LOW_DISK_GB = 5;
-const LOW_DISK_RATIO = 0.1;
-export const isLowDisk = (m) => m.diskFreeGb != null && (m.diskFreeGb < LOW_DISK_GB || (m.diskTotalGb && m.diskFreeGb / m.diskTotalGb < LOW_DISK_RATIO));
+// A drive is shown red when used above 80 % (free below 20 %) or free below 5 GB.
+const LOW_DISK_RATIO = 0.2;
+const isLowDrive = (free, total) => free != null && (free < LOW_DISK_GB || (total && free / total < LOW_DISK_RATIO));
+/** Drives of a PC: every fixed drive (new builds) or the log drive only (older builds). */
+const drivesOf = (m) => (m.disks && m.disks.length)
+  ? m.disks.map(d => ({ drive: d.drive, total: d.total_gb, free: d.free_gb }))
+  : (m.diskFreeGb != null ? [{ drive: m.diskDrive, total: m.diskTotalGb, free: m.diskFreeGb }] : []);
+const lowDrives = (m) => drivesOf(m).filter(d => isLowDrive(d.free, d.total));
+export const isLowDisk = (m) => lowDrives(m).length > 0;
+
+// PC clock: wall clock shown on the PC minus the server's (time zones are not used). Above this the
+// row is red and offers "Sync giờ" (Backup_Log2 then sets the PC clock to the server wall clock).
+const CLOCK_DRIFT_LIMIT_SECONDS = 60;
+const isClockOff = (m) => m.clockOffsetSeconds != null && Math.abs(m.clockOffsetSeconds) > CLOCK_DRIFT_LIMIT_SECONDS;
+const canUpdate = (m, standard) => m.isOnline && versionState(m.appVersion, standard) === 'old';
+const canSyncTime = (m) => m.isOnline && isClockOff(m);
+const formatOffset = (seconds) => {
+  const sign = seconds < 0 ? '-' : '+';
+  let rest = Math.round(Math.abs(seconds));
+  const d = Math.floor(rest / 86400); rest %= 86400;
+  const h = Math.floor(rest / 3600); rest %= 3600;
+  const m = Math.floor(rest / 60); const sec = rest % 60;
+  const parts = d ? [`${d} ngày`, `${h} h`] : h ? [`${h} h`, `${m} m`] : m ? [`${m} m`, `${sec} s`] : [`${sec} s`];
+  return sign + parts.join(' ');
+};
 
 const pad = (n) => String(n).padStart(2, '0');
 const formatTime = (value) => {
@@ -89,11 +112,100 @@ function StatusBadge({ online, neverConnected }) {
     : <span className="badge badge-ng font-sans whitespace-nowrap">Offline</span>;
 }
 
+/** Wall clock shown on the PC now (server time + measured drift) and the drift. */
+function PcClock({ pc, now, serverSkewMs = 0 }) {
+  if (pc.clockOffsetSeconds == null) {
+    return <span className="text-slate-400" title="Cần Backup_Log2 bản mới (gửi giờ của PC trong telemetry)">—</span>;
+  }
+  const off = isClockOff(pc);
+  const d = new Date(now + serverSkewMs + pc.clockOffsetSeconds * 1000);
+  const server = new Date(now + serverSkewMs);
+  // The date only when the PC is on another day than the server (keeps the column narrow).
+  const otherDay = d.toDateString() !== server.toDateString();
+  return (
+    <span className={`font-mono whitespace-nowrap ${off ? 'text-rose-700 font-bold' : 'text-slate-700'}`}
+      title={`Giờ đang hiển thị trên PC: ${formatTime(d)} (đo lúc nhận telemetry gần nhất). Lệch so với server: ${formatOffset(pc.clockOffsetSeconds)}`}>
+      {otherDay && `${pad(d.getDate())}/${pad(d.getMonth() + 1)} `}{pad(d.getHours())}:{pad(d.getMinutes())}
+      <span className={`ml-1.5 text-[10px] ${off ? '' : 'text-slate-400'}`}>({formatOffset(pc.clockOffsetSeconds)})</span>
+    </span>
+  );
+}
+
+/** Sends update / time.sync to PCs by MAC and keeps a short status per PC. */
+function useMachineCommands() {
+  const [sent, setSent] = useState({});
+  const send = useCallback(async (pcs, kind) => {
+    const mark = (pc, value) => setSent(prev => ({ ...prev, [`${kind}:${pc.macKey}`]: value }));
+    await Promise.all(pcs.map(async (pc) => {
+      mark(pc, 'sending');
+      try {
+        if (kind === 'update') {
+          await CommandApi.updateApp({ macAddress: pc.macAddress, force: false, updateXmlPath: null });
+        } else {
+          await CommandApi.sendCommand({ macAddress: pc.macAddress, command: 'time.sync', data: null });
+        }
+        mark(pc, 'sent');
+      } catch {
+        mark(pc, 'error');
+      }
+    }));
+  }, []);
+  return { sent, send };
+}
+
+function CommandButton({ pc, kind, commands }) {
+  const state = commands.sent[`${kind}:${pc.macKey}`];
+  const isUpdate = kind === 'update';
+  const Icon = isUpdate ? ArrowUpCircle : Clock;
+  const label = state === 'sending' ? 'Đang gửi…' : state === 'sent' ? 'Đã gửi' : state === 'error' ? 'Lỗi, gửi lại' : isUpdate ? 'Update' : 'Sync giờ';
+  return (
+    <button type="button" disabled={state === 'sending'}
+      onClick={(e) => { e.stopPropagation(); commands.send([pc], kind); }}
+      title={isUpdate ? 'Gửi lệnh update Backup_Log2 tới PC này' : 'Gửi lệnh time.sync: PC đặt giờ theo giờ server (giữ múi giờ của PC)'}
+      className={`ml-2 inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10px] font-semibold whitespace-nowrap disabled:opacity-50 ${
+        state === 'error' ? 'border-rose-300 bg-rose-50 text-rose-700'
+          : state === 'sent' ? 'border-emerald-300 bg-emerald-50 text-emerald-700'
+          : isUpdate ? 'border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100' : 'border-blue-300 bg-blue-50 text-blue-700 hover:bg-blue-100'}`}>
+      <Icon className="h-3 w-3" /> {label}
+    </button>
+  );
+}
+
+/** % free of each drive on one line ("C 82% · D 15%"), red when low; free / total GB on hover. */
+function DriveList({ pc, detailed = false }) {
+  const drives = drivesOf(pc);
+  if (drives.length === 0) return <span className="text-slate-400">-</span>;
+  const tip = drives.map(d => `${d.drive || '?'} trống ${d.free} GB / tổng ${d.total ?? '?'} GB` +
+    (d.total ? ` (${Math.round((d.free / d.total) * 100)}% trống)` : '')).join('\n');
+  return (
+    <span className="inline-flex flex-wrap gap-x-2 font-mono whitespace-nowrap" title={tip}>
+      {drives.map(d => {
+        const pct = d.total ? Math.round((d.free / d.total) * 100) : null;
+        const low = isLowDrive(d.free, d.total);
+        return (
+          <span key={d.drive || 'drive'} className={low ? 'text-rose-700 font-bold' : 'text-slate-700'}>
+            {(d.drive || '?').replace(':', '')} {pct != null ? `${pct}%` : `${d.free} GB`}
+            {detailed && <span className="font-normal text-slate-500"> ({d.free} / {d.total ?? '?'} GB)</span>}
+          </span>
+        );
+      })}
+    </span>
+  );
+}
+
+/** Status as coloured text (PC list). */
+function StatusText({ online, neverConnected }) {
+  if (neverConnected) return <span className="text-slate-400 whitespace-nowrap" title="Channel đã đăng ký nhưng PC chưa từng kết nối từ khi có module này">Chưa kết nối</span>;
+  return online
+    ? <span className="font-semibold text-emerald-700 whitespace-nowrap">Online</span>
+    : <span className="font-semibold text-rose-700 whitespace-nowrap">Offline</span>;
+}
+
 // ---------------------------------------------------------------- data
 
 /** PCs from the server, plus channels with a MAC that never connected; names from master data. */
 function usePcData(channels, stations, lines) {
-  const [data, setData] = useState({ machines: [], standardVersion: null, offlineAfterSeconds: 180 });
+  const [data, setData] = useState({ machines: [], standardVersion: null, offlineAfterSeconds: 180, serverSkewMs: 0 });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [now, setNow] = useState(Date.now());
@@ -102,7 +214,11 @@ function usePcData(channels, stations, lines) {
   const load = useCallback(async () => {
     try {
       const result = await MachinesApi.getAll();
-      setData({ machines: result.machines || [], standardVersion: result.standardVersion || null, offlineAfterSeconds: result.offlineAfterSeconds || 180 });
+      // The PC clock column is server time + PC drift, so a wrong clock on this browser does not matter.
+      const serverMs = result.serverTime ? new Date(result.serverTime).getTime() : NaN;
+      setData({ machines: result.machines || [], standardVersion: result.standardVersion || null,
+        offlineAfterSeconds: result.offlineAfterSeconds || 180,
+        serverSkewMs: Number.isFinite(serverMs) ? serverMs - Date.now() : 0 });
       setError(null);
     } catch (err) {
       setError(err?.response?.status === 404 ? 'Backend chưa có API giám sát PC (cần khởi động lại backend bản mới).' : 'Không tải được dữ liệu PC.');
@@ -158,26 +274,30 @@ function usePcData(channels, stations, lines) {
       (a.channelName || '~').localeCompare(b.channelName || '~', undefined, { numeric: true }));
   }, [data.machines, channels, stations, lines]);
 
-  return { rows, standardVersion: data.standardVersion, offlineAfterSeconds: data.offlineAfterSeconds, loading, error, now, reload: load, setStandardVersion: (v) => setData(d => ({ ...d, standardVersion: v })) };
+  return { rows, standardVersion: data.standardVersion,
+    offlineAfterSeconds: data.offlineAfterSeconds, serverSkewMs: data.serverSkewMs, loading, error, now, reload: load };
 }
 
 // ---------------------------------------------------------------- detail
 
-function PcDetail({ pc, standardVersion, now, onClose, onDelete }) {
+function PcDetail({ pc, standardVersion, now, serverSkewMs, onClose, onDelete }) {
   const items = [
     ['Trạng thái', <StatusBadge key="s" online={pc.isOnline} neverConnected={pc.neverConnected} />],
     ['Dây chuyền / Trạm / Channel', `${pc.lineName || '-'} / ${pc.stationName || '-'} / ${pc.channelName || '-'} (#${pc.channelId ?? '-'})`],
     ['Hostname', pc.hostname || '-'],
-    ['IP', pc.ipAddress || pc.channelIp || '-'],
+    ['IP (Master Data)', pc.channelIp || '-'],
+    ['IP kết nối tới server', pc.connectedIp || '-'],
+    ['IP các card mạng', pc.ipAddress || '-'],
     ['MAC', pc.macAddress || pc.macKey],
     ['Hệ điều hành', pc.osVersion || '-'],
     ['Version Backup_Log2', <VersionBadge key="v" version={pc.appVersion} standard={standardVersion} />],
+    ['Giờ PC', <PcClock key="c" pc={pc} now={now} serverSkewMs={serverSkewMs} />],
     ['Log type', pc.logType || '-'],
     ['Thư mục log', pc.logFolders || '-'],
     ['Model hiện tại', pc.currentModel || '-'],
     ['CPU', pc.cpuPercent != null ? `${pc.cpuPercent}%` : '-'],
     ['RAM', pc.ramTotalMb ? `${(pc.ramUsedMb / 1024).toFixed(1)} / ${(pc.ramTotalMb / 1024).toFixed(1)} GB` : '-'],
-    ['Ổ đĩa log', pc.diskTotalGb ? `${pc.diskDrive || ''} trống ${pc.diskFreeGb} / ${pc.diskTotalGb} GB` : '-'],
+    ['Ổ đĩa (% trống)', <DriveList key="d" pc={pc} detailed />],
     ['App chạy được', pc.appStartedAt ? `${formatUptime(pc.appStartedAt, now)} (từ ${formatTime(pc.appStartedAt)})` : '-'],
     ['Upload thành công gần nhất', pc.lastUploadAt ? `${formatTime(pc.lastUploadAt)} (${formatAgo(pc.lastUploadAt, now)})` : '-'],
     ['Lần cuối thấy', pc.lastSeenAt ? `${formatTime(pc.lastSeenAt)} (${formatAgo(pc.lastSeenAt, now)})` : '-'],
@@ -221,7 +341,7 @@ function PcDetail({ pc, standardVersion, now, onClose, onDelete }) {
 // ---------------------------------------------------------------- pages
 
 export default function PcMonitor({ view = 'overview', channels = [], stations = [], lines = [] }) {
-  const { rows, standardVersion, offlineAfterSeconds, loading, error, now, reload, setStandardVersion } = usePcData(channels, stations, lines);
+  const { rows, standardVersion, offlineAfterSeconds, serverSkewMs, loading, error, now, reload } = usePcData(channels, stations, lines);
   const [selected, setSelected] = useState(null);
 
   const handleDelete = async (pc) => {
@@ -238,30 +358,32 @@ export default function PcMonitor({ view = 'overview', channels = [], stations =
         </div>
       )}
       {view === 'overview'
-        ? <Overview rows={rows} standardVersion={standardVersion} offlineAfterSeconds={offlineAfterSeconds} loading={loading} now={now} onSelect={setSelected} onStandardSaved={setStandardVersion} />
-        : <PcList rows={rows} lines={lines} standardVersion={standardVersion} loading={loading} now={now} onSelect={setSelected} onReload={reload} />}
-      {selected && <PcDetail pc={selected} standardVersion={standardVersion} now={now} onClose={() => setSelected(null)} onDelete={handleDelete} />}
+        ? <Overview rows={rows} standardVersion={standardVersion} offlineAfterSeconds={offlineAfterSeconds} loading={loading} now={now} onSelect={setSelected} />
+        : <PcList rows={rows} standardVersion={standardVersion} loading={loading} now={now} serverSkewMs={serverSkewMs} onSelect={setSelected} onReload={reload} />}
+      {selected && <PcDetail pc={selected} standardVersion={standardVersion} now={now} serverSkewMs={serverSkewMs} onClose={() => setSelected(null)} onDelete={handleDelete} />}
     </div>
   );
 }
 
-function Kpi({ icon: Icon, label, value, tone, hint }) {
+const sharePct = (count, total) => (total > 0 && typeof count === 'number' ? `${((count / total) * 100).toFixed(count && count < total / 100 ? 1 : 0)}%` : null);
+
+function Kpi({ icon: Icon, label, value, total, tone, hint }) {
+  const pct = total != null ? sharePct(value, total) : null;
   return (
-    <div className="glass-panel border border-slate-200 p-4 flex items-center gap-3" title={hint}>
-      <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${tone}`}><Icon className="w-5 h-5" /></div>
+    <div className="glass-panel border border-slate-200 px-3 py-2.5 flex items-center gap-3" title={hint}>
+      <div className={`w-9 h-9 shrink-0 rounded-xl flex items-center justify-center ${tone}`}><Icon className="w-4 h-4" /></div>
       <div>
-        <div className="text-[11px] uppercase tracking-wider text-slate-500 font-semibold">{label}</div>
-        <div className="text-2xl font-bold text-slate-900 font-mono">{value}</div>
+        <div className="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">{label}</div>
+        <div className="flex items-baseline gap-2">
+          <span className="text-xl font-bold text-slate-900 font-mono">{value}</span>
+          {pct && <span className="text-xs font-semibold text-slate-500 font-mono" title="Tỉ lệ trên tổng số PC">{pct}</span>}
+        </div>
       </div>
     </div>
   );
 }
 
-function Overview({ rows, standardVersion, offlineAfterSeconds, loading, now, onSelect, onStandardSaved }) {
-  const [draft, setDraft] = useState(standardVersion || '');
-  const [saving, setSaving] = useState(false);
-  const [message, setMessage] = useState(null);
-  useEffect(() => setDraft(standardVersion || ''), [standardVersion]);
+function Overview({ rows, standardVersion, offlineAfterSeconds, loading, now, onSelect }) {
 
   const online = rows.filter(r => r.isOnline).length;
   const offline = rows.length - online;
@@ -276,45 +398,31 @@ function Overview({ rows, standardVersion, offlineAfterSeconds, loading, now, on
   const oldCount = rows.filter(r => versionState(r.appVersion, standardVersion) === 'old').length;
   const unknownCount = rows.filter(r => !r.neverConnected && !r.appVersion).length;
   const lowDisk = rows.filter(isLowDisk);
+  const clockOff = rows.filter(isClockOff);
+  // One row per low drive (PC + drive), least free space first.
+  const lowDriveRows = useMemo(() => rows.flatMap(r => lowDrives(r).map(d => ({
+    pc: r, ...d, pct: d.total ? Math.round((d.free / d.total) * 100) : null,
+  }))).sort((a, b) => (a.pct ?? 101) - (b.pct ?? 101) || (a.free ?? 0) - (b.free ?? 0)), [rows]);
   const offlineRows = rows.filter(r => !r.isOnline && !r.neverConnected)
     .sort((a, b) => new Date(b.disconnectedAt || b.lastSeenAt || 0) - new Date(a.disconnectedAt || a.lastSeenAt || 0));
 
-  const save = async () => {
-    setSaving(true); setMessage(null);
-    try {
-      const result = await MachinesApi.setStandardVersion(draft.trim() || null);
-      onStandardSaved(result.version || null);
-      setMessage({ ok: true, text: result.version ? `Đã đặt version chuẩn ${result.version}` : 'Đã bỏ version chuẩn' });
-    } catch (err) {
-      setMessage({ ok: false, text: err?.response?.data?.message || 'Không lưu được version chuẩn.' });
-    } finally { setSaving(false); }
-  };
-
   return (
-    <div className="space-y-6">
-      <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-7 gap-3">
         <Kpi icon={Monitor} label="Tổng PC" value={loading ? '…' : rows.length} tone="bg-slate-100 text-slate-700" />
-        <Kpi icon={Wifi} label="Online" value={online} tone="bg-emerald-100 text-emerald-700" />
-        <Kpi icon={WifiOff} label="Offline" value={offline} tone="bg-rose-100 text-rose-700" hint={`Mất kết nối, hoặc không gửi tín hiệu quá ${Math.round(offlineAfterSeconds / 60)} phút`} />
-        <Kpi icon={AlertTriangle} label="Version cũ" value={standardVersion ? oldCount : '-'} tone="bg-amber-100 text-amber-700" hint="Cũ hơn version chuẩn" />
-        <Kpi icon={HelpCircle} label="Chưa rõ version" value={unknownCount} tone="bg-slate-100 text-slate-600" hint="Backup_Log2 bản cũ, chưa gửi version thật" />
-        <Kpi icon={HardDrive} label="Ổ đĩa sắp đầy" value={lowDisk.length} tone="bg-orange-100 text-orange-700" hint={`Còn dưới ${LOW_DISK_GB} GB hoặc dưới ${LOW_DISK_RATIO * 100}%`} />
+        <Kpi icon={Wifi} label="Online" value={online} total={rows.length} tone="bg-emerald-100 text-emerald-700" />
+        <Kpi icon={WifiOff} label="Offline" value={offline} total={rows.length} tone="bg-rose-100 text-rose-700" hint={`Mất kết nối, hoặc không gửi tín hiệu quá ${Math.round(offlineAfterSeconds / 60)} phút`} />
+        <Kpi icon={AlertTriangle} label="Version cũ" value={standardVersion ? oldCount : '-'} total={rows.length} tone="bg-amber-100 text-amber-700" hint="Cũ hơn version chuẩn" />
+        <Kpi icon={HelpCircle} label="Chưa rõ version" value={unknownCount} total={rows.length} tone="bg-slate-100 text-slate-600" hint="Backup_Log2 bản cũ, chưa gửi version thật" />
+        <Kpi icon={Clock} label="Lệch giờ" value={clockOff.length} total={rows.length} tone="bg-blue-100 text-blue-700" hint={`Giờ PC lệch giờ server quá ${CLOCK_DRIFT_LIMIT_SECONDS} giây`} />
+        <Kpi icon={HardDrive} label="Ổ đĩa sắp đầy" value={lowDisk.length} total={rows.length} tone="bg-rose-100 text-rose-700" hint={`Số PC có ổ đã dùng trên ${100 - LOW_DISK_RATIO * 100}% hoặc còn dưới ${LOW_DISK_GB} GB`} />
       </div>
 
-      <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
-        <div className="glass-panel border border-slate-200 p-5 space-y-4">
-          <h3 className="text-sm font-bold text-slate-900 font-display">Version chuẩn Backup_Log2</h3>
-          <div className="flex gap-2">
-            <input value={draft} onChange={e => setDraft(e.target.value)} placeholder="vd. 2.0.6.144"
-              className="flex-1 bg-slate-50/80 border border-slate-300 rounded-xl px-3 py-2 text-sm font-mono focus:outline-none focus:border-blue-500" />
-            <button onClick={save} disabled={saving} className="px-3 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold flex items-center gap-1.5 disabled:opacity-50">
-              <Save className="w-4 h-4" /> Lưu
-            </button>
-          </div>
-          {message && <p className={`text-xs ${message.ok ? 'text-emerald-700' : 'text-rose-700'}`}>{message.text}</p>}
-          <p className="text-[11px] text-slate-500">PC chạy version thấp hơn version chuẩn được đánh dấu màu vàng. Để trống để bỏ so sánh.</p>
-          <div className="space-y-1.5 pt-3 border-t border-slate-200">
-            <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Phân bố version</div>
+      <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
+        <div className="glass-panel border border-slate-200 p-4 space-y-2">
+          <h3 className="text-sm font-bold text-slate-900 font-display"
+            title="Xanh = version mới nhất các PC đang chạy; vàng = cũ hơn (có nút Update trong Danh sách PC)">Phân bố version Backup_Log2</h3>
+          <div className="space-y-1 max-h-56 overflow-y-auto pr-1">
             {versions.length === 0 && <p className="text-xs text-slate-500">Chưa có dữ liệu.</p>}
             {versions.map(([version, count]) => (
               <div key={version || 'unknown'} className="flex items-center justify-between gap-2">
@@ -323,135 +431,295 @@ function Overview({ rows, standardVersion, offlineAfterSeconds, loading, now, on
                   <div className="h-full bg-teal-500" style={{ width: `${(count / Math.max(1, rows.length)) * 100}%` }} />
                 </div>
                 <span className="text-xs font-mono font-bold text-slate-700 w-10 text-right">{count}</span>
+                <span className="text-[11px] font-mono text-slate-500 w-10 text-right">{sharePct(count, rows.length)}</span>
               </div>
             ))}
           </div>
         </div>
 
-        <div className="glass-panel border border-slate-200 p-5 space-y-3 xl:col-span-2">
+        <div className="glass-panel border border-slate-200 p-4 space-y-2 xl:col-span-2">
           <h3 className="text-sm font-bold text-slate-900 font-display flex items-center gap-2">
             <WifiOff className="w-4 h-4 text-rose-700" /> PC đang offline ({offlineRows.length})
           </h3>
-          <div className="max-h-80 overflow-y-auto border border-slate-200 rounded-xl">
+          <div className="max-h-56 overflow-y-auto border border-slate-200 rounded-xl">
             <table className="w-full text-xs">
               <thead className="bg-slate-50 text-slate-600 uppercase text-[10px] sticky top-0">
-                <tr><th className="p-2 text-left">Line / Trạm / Channel</th><th className="p-2 text-left">Hostname</th><th className="p-2 text-left">Version</th><th className="p-2 text-left">Mất kết nối</th></tr>
+                <tr><th className="px-2 py-1 text-left">Line</th><th className="px-2 py-1 text-left">Trạm</th><th className="px-2 py-1 text-left">Channel</th><th className="px-2 py-1 text-left">Hostname</th><th className="px-2 py-1 text-left">Version</th><th className="px-2 py-1 text-left">Mất kết nối</th></tr>
               </thead>
               <tbody className="divide-y divide-slate-200">
-                {offlineRows.length === 0 && <tr><td colSpan={4} className="p-6 text-center text-slate-500">Không có PC nào offline.</td></tr>}
+                {offlineRows.length === 0 && <tr><td colSpan={6} className="p-4 text-center text-slate-500">Không có PC nào offline.</td></tr>}
                 {offlineRows.map(r => (
                   <tr key={r.macKey} className="hover:bg-slate-100 cursor-pointer" onClick={() => onSelect(r)}>
-                    <td className="p-2">{r.lineName || '-'} / {r.stationName || '-'} / <b>{r.channelName || '-'}</b></td>
-                    <td className="p-2 font-mono">{r.hostname || '-'}</td>
-                    <td className="p-2"><VersionBadge version={r.appVersion} standard={standardVersion} /></td>
-                    <td className="p-2 text-slate-600">{formatAgo(r.disconnectedAt || r.lastSeenAt, now)}</td>
+                    <td className="px-2 py-1 whitespace-nowrap">{r.lineName || '-'}</td>
+                    <td className="px-2 py-1 whitespace-nowrap">{r.stationName || '-'}</td>
+                    <td className="px-2 py-1 max-w-[80px] truncate font-semibold" title={r.channelName || ''}>{r.channelName || '-'}</td>
+                    <td className="px-2 py-1 font-mono">{r.hostname || '-'}</td>
+                    <td className="px-2 py-1"><VersionBadge version={r.appVersion} standard={standardVersion} /></td>
+                    <td className="px-2 py-1 text-slate-600">{formatAgo(r.disconnectedAt || r.lastSeenAt, now)}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
-          {lowDisk.length > 0 && (
-            <div className="text-xs text-orange-800 bg-orange-50 border border-orange-300 rounded-xl p-3">
-              <b>Ổ đĩa sắp đầy:</b> {lowDisk.map(r => `${r.channelName || r.hostname || r.macAddress} (${r.diskDrive} còn ${r.diskFreeGb} GB)`).join(', ')}
-            </div>
-          )}
+        </div>
+      </div>
+
+      {/* Low drives: one row per drive, least free first. */}
+      <div className="glass-panel border border-slate-200 p-4 space-y-2">
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
+          <h3 className="text-sm font-bold text-slate-900 font-display flex items-center gap-2">
+            <HardDrive className="w-4 h-4 text-rose-700" /> Ổ đĩa sắp đầy ({lowDriveRows.length} ổ / {lowDisk.length} PC)
+          </h3>
+          <span className="text-[11px] text-slate-500">Ổ đã dùng trên {100 - LOW_DISK_RATIO * 100}% hoặc còn dưới {LOW_DISK_GB} GB · bấm một dòng để xem chi tiết PC</span>
+        </div>
+        <div className="max-h-56 overflow-y-auto border border-slate-200 rounded-xl">
+          <table className="w-full text-xs">
+            <thead className="bg-slate-50 text-slate-600 uppercase text-[10px] sticky top-0">
+              <tr className="text-left [&>th]:px-2 [&>th]:py-1 [&>th]:whitespace-nowrap">
+                <th>Line</th><th>Trạm</th><th>Channel</th><th>IP</th><th>Ổ</th>
+                <th className="w-48">% trống</th><th className="text-right">Trống / Tổng</th><th>Trạng thái</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-200">
+              {lowDriveRows.length === 0 && <tr><td colSpan={8} className="p-4 text-center text-slate-500">Không có ổ đĩa nào sắp đầy.</td></tr>}
+              {lowDriveRows.map(d => (
+                <tr key={`${d.pc.macKey}-${d.drive}`} className="hover:bg-slate-100 cursor-pointer [&>td]:px-2 [&>td]:py-1" onClick={() => onSelect(d.pc)}>
+                  <td className="whitespace-nowrap">{d.pc.lineName || '-'}</td>
+                  <td className="whitespace-nowrap">{d.pc.stationName || '-'}</td>
+                  <td className="max-w-[80px] truncate font-semibold" title={d.pc.channelName || ''}>{d.pc.channelName || '-'}</td>
+                  <td className="font-mono text-blue-700 whitespace-nowrap">{d.pc.connectedIp || '-'}</td>
+                  <td className="font-mono font-bold">{d.drive || '?'}</td>
+                  <td>
+                    <div className="flex items-center gap-2">
+                      <div className="h-1.5 flex-1 rounded-full bg-slate-200 overflow-hidden">
+                        <div className="h-full bg-rose-500" style={{ width: `${100 - (d.pct ?? 0)}%` }} title={`Đã dùng ${100 - (d.pct ?? 0)}%`} />
+                      </div>
+                      <span className="w-10 text-right font-mono font-bold text-rose-700">{d.pct != null ? `${d.pct}%` : '-'}</span>
+                    </div>
+                  </td>
+                  <td className="text-right font-mono whitespace-nowrap">{d.free} / {d.total ?? '?'} GB</td>
+                  <td><StatusText online={d.pc.isOnline} neverConnected={d.pc.neverConnected} /></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       </div>
     </div>
   );
 }
 
-function PcList({ rows, lines, standardVersion, loading, now, onSelect, onReload }) {
+// ---------------------------------------------------------------- PC list: sort and filter per column
+
+const ramPct = (r) => (r.ramTotalMb ? Math.round((r.ramUsedMb / r.ramTotalMb) * 100) : null);
+const minFreePct = (r) => {
+  const pcts = drivesOf(r).filter(d => d.total).map(d => (d.free / d.total) * 100);
+  return pcts.length ? Math.min(...pcts) : null;
+};
+const timeMs = (value) => (value ? new Date(value).getTime() : null);
+const versionKey = (v) => {
+  const parts = String(v || '').trim().split('.').map(Number);
+  return !v || parts.some(isNaN) ? null : parts.slice(0, 4).reduce((acc, x) => acc * 10000 + x, 0);
+};
+const AGE_OPTIONS = [['1h', 'Quá 1 giờ'], ['1d', 'Quá 1 ngày'], ['never', 'Chưa có']];
+const ageMatch = (value, now, option) => {
+  const t = timeMs(value);
+  if (option === 'never') return t == null;
+  return t != null && now - t > (option === '1h' ? 3600e3 : 86400e3);
+};
+
+/**
+ * Columns of the PC list. sort: value to sort on (null = last). filter:
+ *  text   - contains (get)
+ *  pick   - one of the distinct values of the column (get)
+ *  choice - fixed options [value, label] tested with match(row, value)
+ *  min    - number >= the value typed (get)
+ */
+function pcColumns({ standardVersion, now, serverSkewMs, commands }) {
+  return [
+    { key: 'line', label: 'Line', sort: r => r.lineName, filter: { type: 'pick', get: r => r.lineName },
+      cell: r => <td className="whitespace-nowrap">{r.lineName || '-'}</td> },
+    { key: 'station', label: 'Trạm', sort: r => r.stationName, filter: { type: 'pick', get: r => r.stationName },
+      cell: r => <td className="whitespace-nowrap">{r.stationName || '-'}</td> },
+    { key: 'channel', label: 'Channel', sort: r => r.channelName, filter: { type: 'text', get: r => r.channelName },
+      cell: r => <td className="max-w-[80px] truncate font-semibold" title={r.channelName || ''}>{r.channelName || '-'}</td> },
+    { key: 'hostname', label: 'Hostname', sort: r => r.hostname, filter: { type: 'text', get: r => r.hostname },
+      cell: r => <td className="font-mono max-w-[100px] truncate" title={r.hostname || ''}>{r.hostname || '-'}</td> },
+    { key: 'ip', label: 'IP', title: 'IP của Channel trong Master Data (cam = khác IP PC đang kết nối)', sort: r => r.channelIp, filter: { type: 'text', get: r => r.channelIp },
+      cell: r => {
+        const differs = r.channelIp && r.connectedIp && r.channelIp.trim() !== r.connectedIp.trim();
+        return (
+          <td className={`font-mono whitespace-nowrap ${differs ? 'text-amber-700 font-bold' : 'text-blue-700'}`}
+            title={`Master Data: ${r.channelIp || '-'}\nPC đang kết nối từ: ${r.connectedIp || '-'}${differs ? '\nKhác nhau: kiểm tra lại Master Data' : ''}`}>
+            {r.channelIp || '-'}
+          </td>);
+      } },
+    { key: 'version', label: 'Version', sort: r => versionKey(r.appVersion),
+      filter: { type: 'choice', options: [['standard', 'Mới nhất'], ['old', 'Cũ hơn'], ['unknown', 'Chưa rõ']],
+        match: (r, v) => (v === 'unknown' ? !r.appVersion : versionState(r.appVersion, standardVersion) === v) },
+      cell: r => (
+        <td className="whitespace-nowrap">
+          <VersionBadge version={r.appVersion} standard={standardVersion} />
+          {canUpdate(r, standardVersion) && <CommandButton pc={r} kind="update" commands={commands} />}
+        </td>) },
+    { key: 'clock', label: 'Giờ PC', sort: r => (r.clockOffsetSeconds == null ? null : Math.abs(r.clockOffsetSeconds)),
+      filter: { type: 'choice', options: [['off', `Lệch > ${CLOCK_DRIFT_LIMIT_SECONDS}s`], ['ok', 'Đúng giờ'], ['none', 'Chưa có']],
+        match: (r, v) => (v === 'none' ? r.clockOffsetSeconds == null : v === 'off' ? isClockOff(r) : r.clockOffsetSeconds != null && !isClockOff(r)) },
+      cell: r => (
+        <td className="whitespace-nowrap">
+          <PcClock pc={r} now={now} serverSkewMs={serverSkewMs} />
+          {canSyncTime(r) && <CommandButton pc={r} kind="sync" commands={commands} />}
+        </td>) },
+    { key: 'logType', label: 'Log type', sort: r => r.logType, filter: { type: 'pick', get: r => r.logType },
+      cell: r => <td className="max-w-[80px] truncate" title={r.logType || ''}>{r.logType || '-'}</td> },
+    { key: 'cpu', label: 'CPU', align: 'right', sort: r => r.cpuPercent, filter: { type: 'min', get: r => r.cpuPercent },
+      cell: r => <td className="text-right font-mono whitespace-nowrap">{r.cpuPercent != null ? `${r.cpuPercent}%` : '-'}</td> },
+    { key: 'ram', label: 'RAM', align: 'right', sort: ramPct, filter: { type: 'min', get: ramPct },
+      cell: r => <td className="text-right font-mono whitespace-nowrap">{ramPct(r) != null ? `${ramPct(r)}%` : '-'}</td> },
+    { key: 'disk', label: 'Ổ đĩa (% trống)', title: '% trống của từng ổ; di chuột vào ô để xem GB. Sắp xếp theo ổ ít trống nhất', sort: minFreePct,
+      filter: { type: 'choice', options: [['low', 'Sắp đầy'], ['ok', 'Bình thường']],
+        match: (r, v) => (v === 'low' ? isLowDisk(r) : drivesOf(r).length > 0 && !isLowDisk(r)) },
+      cell: r => <td><DriveList pc={r} /></td> },
+    { key: 'upload', label: 'Upload gần nhất', sort: r => timeMs(r.lastUploadAt),
+      filter: { type: 'choice', options: AGE_OPTIONS, match: (r, v) => ageMatch(r.lastUploadAt, now, v) },
+      cell: r => <td className="text-slate-600 whitespace-nowrap" title={formatTime(r.lastUploadAt)}>{formatAgo(r.lastUploadAt, now)}</td> },
+    { key: 'status', label: 'Trạng thái', sort: r => (r.neverConnected ? 0 : r.isOnline ? 2 : 1),
+      filter: { type: 'choice', options: [['online', 'Online'], ['offline', 'Offline'], ['never', 'Chưa kết nối']],
+        match: (r, v) => (v === 'never' ? r.neverConnected : v === 'online' ? r.isOnline : !r.isOnline && !r.neverConnected) },
+      cell: r => <td><StatusText online={r.isOnline} neverConnected={r.neverConnected} /></td> },
+    { key: 'seen', label: 'Lần cuối thấy', sort: r => timeMs(r.lastSeenAt),
+      filter: { type: 'choice', options: AGE_OPTIONS, match: (r, v) => ageMatch(r.lastSeenAt, now, v) },
+      cell: r => <td className="text-slate-600 whitespace-nowrap" title={formatTime(r.lastSeenAt)}>{formatAgo(r.lastSeenAt, now)}</td> },
+  ];
+}
+
+function PcList({ rows, standardVersion, loading, now, serverSkewMs, onSelect, onReload }) {
+  const commands = useMachineCommands();
   const [search, setSearch] = useState('');
-  const [lineId, setLineId] = useState('');
-  const [status, setStatus] = useState('all');
-  const [version, setVersion] = useState('all');
+  const [filters, setFilters] = useState({});
+  const [sort, setSort] = useState({ key: 'line', dir: 'asc' });
+  const columns = pcColumns({ standardVersion, now, serverSkewMs, commands });
+
+  // Distinct values for the "pick" filters.
+  const picks = useMemo(() => Object.fromEntries(columns.filter(c => c.filter.type === 'pick').map(c => [c.key,
+    [...new Set(rows.map(c.filter.get).filter(Boolean))].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))])),
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  [rows]);
+
+  const setFilter = (key, value) => setFilters(prev => {
+    const next = { ...prev };
+    if (value === '' || value == null) delete next[key]; else next[key] = value;
+    return next;
+  });
+  const toggleSort = (key) => setSort(prev => (prev.key === key ? { key, dir: prev.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: 'asc' }));
 
   const filtered = rows.filter(r => {
-    if (status === 'online' && !r.isOnline) return false;
-    if (status === 'offline' && r.isOnline) return false;
-    if (lineId && String(r.lineId) !== lineId) return false;
-    const vs = versionState(r.appVersion, standardVersion);
-    if (version === 'standard' && vs !== 'standard') return false;
-    if (version === 'old' && vs !== 'old') return false;
-    if (version === 'unknown' && r.appVersion) return false;
     if (search) {
-      const text = `${r.hostname} ${r.ipAddress} ${r.channelIp} ${r.macAddress} ${r.channelName} ${r.stationName} ${r.lineName} ${r.logType} ${r.appVersion}`.toLowerCase();
+      const text = `${r.hostname} ${r.connectedIp} ${r.ipAddress} ${r.channelIp} ${r.macAddress} ${r.channelName} ${r.stationName} ${r.lineName} ${r.logType} ${r.appVersion}`.toLowerCase();
       if (!text.includes(search.toLowerCase())) return false;
     }
-    return true;
+    return columns.every(c => {
+      const value = filters[c.key];
+      if (value == null || value === '') return true;
+      const f = c.filter;
+      if (f.type === 'text') return String(f.get(r) || '').toLowerCase().includes(String(value).toLowerCase());
+      if (f.type === 'pick') return f.get(r) === value;
+      if (f.type === 'min') { const n = f.get(r); return n != null && n >= Number(value); }
+      return f.match(r, value);
+    });
   });
+  const sortColumn = columns.find(c => c.key === sort.key);
+  const sorted = sortColumn ? [...filtered].sort((a, b) => {
+    const x = sortColumn.sort(a), y = sortColumn.sort(b);
+    if (x == null && y == null) return 0;
+    if (x == null) return 1; // empty values always last
+    if (y == null) return -1;
+    const c = typeof x === 'number' && typeof y === 'number' ? x - y : String(x).localeCompare(String(y), undefined, { numeric: true });
+    return sort.dir === 'asc' ? c : -c;
+  }) : filtered;
 
-  const select = 'bg-slate-50/80 border border-slate-300 rounded-xl px-3 py-2 text-xs focus:outline-none focus:border-blue-500';
+  const activeFilters = Object.keys(filters).length + (search ? 1 : 0);
+  const input = 'w-full min-w-[56px] rounded-md border border-slate-300 bg-white px-1 py-0.5 text-[10px] font-normal normal-case tracking-normal text-slate-700 focus:outline-none focus:border-blue-500';
   return (
     <div className="glass-panel border border-slate-200 p-5 space-y-4">
       <div className="flex flex-wrap items-center gap-2">
         <div className="relative flex-1 min-w-[220px]">
           <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Tìm hostname, IP, MAC, channel, log type…"
+          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Tìm chung: hostname, IP, MAC, channel, log type…"
             className="w-full bg-slate-50/80 border border-slate-300 rounded-xl pl-9 pr-3 py-2 text-xs focus:outline-none focus:border-blue-500" />
         </div>
-        <select value={lineId} onChange={e => setLineId(e.target.value)} className={select}>
-          <option value="">Tất cả dây chuyền</option>
-          {lines.map(l => <option key={l.id} value={String(l.id)}>{l.name}</option>)}
-        </select>
-        <select value={status} onChange={e => setStatus(e.target.value)} className={select}>
-          <option value="all">Online + Offline</option>
-          <option value="online">Chỉ Online</option>
-          <option value="offline">Chỉ Offline</option>
-        </select>
-        <select value={version} onChange={e => setVersion(e.target.value)} className={select}>
-          <option value="all">Mọi version</option>
-          <option value="standard">Đúng version chuẩn</option>
-          <option value="old">Cũ hơn chuẩn</option>
-          <option value="unknown">Chưa rõ version</option>
-        </select>
+        {activeFilters > 0 && (
+          <button onClick={() => { setFilters({}); setSearch(''); }} className="px-3 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 border border-slate-200 text-xs font-semibold flex items-center gap-1.5">
+            <X className="w-3.5 h-3.5 text-rose-700" /> Xóa lọc ({activeFilters})
+          </button>
+        )}
         <button onClick={onReload} className="px-3 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 border border-slate-200 text-xs font-semibold flex items-center gap-1.5">
           <RefreshCw className="w-3.5 h-3.5 text-blue-700" /> Tải lại
         </button>
-        <span className="text-xs text-slate-600 font-mono">Hiển thị {filtered.length} / {rows.length}</span>
+        <span className="text-xs text-slate-600 font-mono">Hiển thị {sorted.length} / {rows.length}</span>
+        <BulkButton rows={sorted.filter(r => canUpdate(r, standardVersion))} kind="update" commands={commands}
+          label="Update PC version cũ" confirmText={(n) => `Gửi lệnh update Backup_Log2 tới ${n} PC đang online có version thấp hơn ${standardVersion}?`} />
+        <BulkButton rows={sorted.filter(canSyncTime)} kind="sync" commands={commands}
+          label="Sync giờ PC lệch" confirmText={(n) => `Gửi lệnh sync giờ tới ${n} PC đang online lệch giờ quá ${CLOCK_DRIFT_LIMIT_SECONDS} giây?`} />
       </div>
 
       <div className="overflow-x-auto rounded-xl border border-slate-200">
-        <table className="w-full text-left text-xs">
+        <table className="w-full text-left text-[11px]">
           <thead className="bg-slate-50/90 text-slate-600 uppercase font-semibold tracking-wider border-b border-slate-200 text-[10px]">
-            <tr>
-              <th className="p-3">Trạng thái</th>
-              <th className="p-3">Line / Trạm / Channel</th>
-              <th className="p-3">Hostname</th>
-              <th className="p-3">IP</th>
-              <th className="p-3">Version</th>
-              <th className="p-3">Log type</th>
-              <th className="p-3 text-right">CPU</th>
-              <th className="p-3 text-right">RAM</th>
-              <th className="p-3 text-right">Ổ trống</th>
-              <th className="p-3">Upload gần nhất</th>
-              <th className="p-3">Lần cuối thấy</th>
+            <tr className="[&>th]:px-2 [&>th]:pt-2 [&>th]:pb-1 [&>th]:whitespace-nowrap">
+              {columns.map(c => (
+                <th key={c.key} className={`cursor-pointer select-none hover:text-slate-900 ${c.align === 'right' ? 'text-right' : ''}`}
+                  title={`${c.title ? `${c.title}. ` : ''}Bấm để sắp xếp`} onClick={() => toggleSort(c.key)}>
+                  {c.label}
+                  <span className={`ml-1 ${sort.key === c.key ? 'text-blue-700' : 'text-slate-300'}`}>{sort.key === c.key ? (sort.dir === 'asc' ? '▲' : '▼') : '↕'}</span>
+                </th>
+              ))}
+            </tr>
+            <tr className="[&>th]:px-2 [&>th]:pb-2">
+              {columns.map(c => {
+                const f = c.filter;
+                const value = filters[c.key] ?? '';
+                return (
+                  <th key={c.key}>
+                    {f.type === 'text' && <input value={value} onChange={e => setFilter(c.key, e.target.value)} placeholder="Lọc…" className={input} />}
+                    {f.type === 'min' && <input value={value} onChange={e => setFilter(c.key, e.target.value.replace(/[^0-9.]/g, ''))} placeholder="≥ %" inputMode="decimal" className={`${input} text-right`} />}
+                    {(f.type === 'pick' || f.type === 'choice') && (
+                      <select value={value} onChange={e => setFilter(c.key, e.target.value)} className={input}>
+                        <option value="">Tất cả</option>
+                        {(f.type === 'pick' ? (picks[c.key] || []).map(v => [v, v]) : f.options).map(([v, label]) => <option key={v} value={v}>{label}</option>)}
+                      </select>
+                    )}
+                  </th>
+                );
+              })}
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-200">
-            {filtered.length === 0 && (
-              <tr><td colSpan={11} className="p-10 text-center text-slate-500">{loading ? 'Đang tải…' : 'Không có PC phù hợp bộ lọc.'}</td></tr>
+            {sorted.length === 0 && (
+              <tr><td colSpan={columns.length} className="p-10 text-center text-slate-500">{loading ? 'Đang tải…' : 'Không có PC phù hợp bộ lọc.'}</td></tr>
             )}
-            {filtered.map(r => (
-              <tr key={r.macKey} className="hover:bg-slate-100/70 cursor-pointer" onClick={() => onSelect(r)}>
-                <td className="p-3"><StatusBadge online={r.isOnline} neverConnected={r.neverConnected} /></td>
-                <td className="p-3 whitespace-nowrap">{r.lineName || '-'} / {r.stationName || '-'} / <b>{r.channelName || '-'}</b></td>
-                <td className="p-3 font-mono">{r.hostname || '-'}</td>
-                <td className="p-3 font-mono text-blue-700 max-w-[160px] truncate" title={r.ipAddress || r.channelIp || ''}>{r.ipAddress || r.channelIp || '-'}</td>
-                <td className="p-3"><VersionBadge version={r.appVersion} standard={standardVersion} /></td>
-                <td className="p-3 max-w-[160px] truncate" title={r.logType || ''}>{r.logType || '-'}</td>
-                <td className="p-3 text-right font-mono">{r.cpuPercent != null ? `${r.cpuPercent}%` : '-'}</td>
-                <td className="p-3 text-right font-mono">{r.ramTotalMb ? `${Math.round((r.ramUsedMb / r.ramTotalMb) * 100)}%` : '-'}</td>
-                <td className={`p-3 text-right font-mono ${isLowDisk(r) ? 'text-orange-700 font-bold' : ''}`}>{r.diskFreeGb != null ? `${r.diskFreeGb} GB` : '-'}</td>
-                <td className="p-3 text-slate-600 whitespace-nowrap">{formatAgo(r.lastUploadAt, now)}</td>
-                <td className="p-3 text-slate-600 whitespace-nowrap">{formatAgo(r.lastSeenAt, now)}</td>
+            {sorted.map(r => (
+              <tr key={r.macKey} className="hover:bg-slate-100/70 cursor-pointer [&>td]:px-2 [&>td]:py-2" onClick={() => onSelect(r)}>
+                {columns.map(c => <React.Fragment key={c.key}>{c.cell(r)}</React.Fragment>)}
               </tr>
             ))}
           </tbody>
         </table>
       </div>
-      <p className="text-[11px] text-slate-500 flex items-center gap-1.5"><Cpu className="w-3.5 h-3.5" /> Bấm vào một dòng để xem chi tiết PC. CPU/RAM/ổ đĩa cập nhật mỗi phút từ Backup_Log2 bản mới.</p>
+      <p className="text-[11px] text-slate-500 flex items-center gap-1.5"><Cpu className="w-3.5 h-3.5" /> Bấm tiêu đề cột để sắp xếp, dùng hàng dưới tiêu đề để lọc từng cột. Bấm vào một dòng để xem chi tiết PC.</p>
     </div>
+  );
+}
+
+/** Sends one command to every PC of the list (online PCs that need it) after a confirmation. */
+function BulkButton({ rows, kind, commands, label, confirmText }) {
+  if (rows.length === 0) return null;
+  const Icon = kind === 'update' ? ArrowUpCircle : Clock;
+  return (
+    <button type="button" onClick={() => { if (window.confirm(confirmText(rows.length))) commands.send(rows, kind); }}
+      className={`px-3 py-2 rounded-xl border text-xs font-semibold flex items-center gap-1.5 ${
+        kind === 'update' ? 'bg-amber-50 hover:bg-amber-100 border-amber-300 text-amber-800' : 'bg-blue-50 hover:bg-blue-100 border-blue-300 text-blue-700'}`}>
+      <Icon className="w-3.5 h-3.5" /> {label} ({rows.length})
+    </button>
   );
 }

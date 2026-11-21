@@ -402,6 +402,16 @@ namespace PMSystem2.Api.Controllers
             return Ok(await _pcbService.GetCountersAsync(lineId, stationId, startDate, endDate));
         }
 
+        /// <summary>Dashboard "Worst" panel: worst stations, jigs, NG codes and models, plus spikes on the last day.</summary>
+        [HttpGet("dashboard/worst")]
+        public async Task<ActionResult<DashboardWorstDto>> GetDashboardWorst(
+            [FromQuery] int? lineId = null,
+            [FromQuery] DateTime? startDate = null, [FromQuery] DateTime? endDate = null,
+            [FromQuery] int top = 5)
+        {
+            return Ok(await _pcbService.GetDashboardWorstAsync(lineId, startDate, endDate, top));
+        }
+
         [HttpGet("quality-modes")]
         public async Task<ActionResult<QualityModeSummaryDto>> GetQualityModes(
             [FromQuery] int? lineId = null, [FromQuery] int? stationId = null,

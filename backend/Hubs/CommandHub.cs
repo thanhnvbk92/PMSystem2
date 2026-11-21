@@ -105,6 +105,10 @@ namespace PMSystem2.Api.Hubs
         [JsonPropertyName("last_upload_at")] public DateTime? LastUploadAt { get; set; }
         [JsonPropertyName("log_type")] public string? LogType { get; set; }
         [JsonPropertyName("log_folders")] public string? LogFolders { get; set; }
+        /// <summary>Wall clock shown on the PC, no time zone ("2026-11-20T07:00:05.123").</summary>
+        [JsonPropertyName("local_time")] public string? LocalTime { get; set; }
+        /// <summary>Every fixed drive of the PC (builds that send it).</summary>
+        [JsonPropertyName("disks")] public List<MachineDisk>? Disks { get; set; }
     }
 
     public interface ICommandClient
@@ -162,6 +166,15 @@ namespace PMSystem2.Api.Hubs
             return key != null && Connections.Values.Any(c => c.ConnectionId != connectionId && MachineStatusService.MacKey(c.MacAddress) == key);
         }
 
+        /// <summary>Address the PC connects from, as the server sees it ("10.224.142.116").</summary>
+        private string? RemoteIp()
+        {
+            var ip = Context.GetHttpContext()?.Connection.RemoteIpAddress;
+            if (ip == null) return null;
+            if (ip.IsIPv4MappedToIPv6) ip = ip.MapToIPv4();
+            return ip.ToString();
+        }
+
         public override async Task OnConnectedAsync()
         {
             var httpContext = Context.GetHttpContext();
@@ -206,7 +219,7 @@ namespace PMSystem2.Api.Hubs
             await Groups.AddToGroupAsync(Context.ConnectionId, "AllCommandClients");
 
             // Broadcast Machine Connected status to Web Dashboard via ProductionHub
-            var connected = await _machineStatus.MarkConnectedAsync(macAddress, connectedChannelId);
+            var connected = await _machineStatus.MarkConnectedAsync(macAddress, connectedChannelId, RemoteIp());
             await BroadcastMachineAsync(new
             {
                 mac_address = macAddress,
@@ -319,7 +332,9 @@ namespace PMSystem2.Api.Hubs
                 AppStartedAt = telemetry.AppStartedAt,
                 LastUploadAt = telemetry.LastUploadAt,
                 LogType = telemetry.LogType,
-                LogFolders = telemetry.LogFolders
+                LogFolders = telemetry.LogFolders,
+                LocalTime = telemetry.LocalTime,
+                Disks = telemetry.Disks
             });
             await BroadcastMachineAsync(new
             {
