@@ -238,9 +238,52 @@ PCA = [(n_, x) for n_, x in enumerate(IMP_ALL, 1) if (x["line"], x["model"]) in 
 PCA.sort(key=lambda t: (t[1]["model"], t[1]["line"], t[1]["date"], t[0]))
 for sl, (n_, x) in zip(PCA_SLOTS, PCA): pca_page(sl, n_, x)
 
+# ---- future FCT improvement plan (each action backed by a finding of this report) ----
+fp = Frame(S[38], "Future FCT Improvement Plan", "Actions to keep NTF low on NAD FCT · reasons taken from this report · PIC to be assigned")
+def nums(lst): return ", ".join(f"#{n_}" for n_ in lst)
+pin = [(n_, x) for n_, x in ALL_G if re.search(r"\bpins?\b|\bpads?\b", x["action"] or "", re.I)]
+eff_pin = [n_ for n_, x in pin if x["verdict"].startswith("Effective")]
+spikes = []
+for n_, x in ALL_G:
+    for nt in x["notes"]:
+        m_ = re.match(r"(W\d+|\d{1,2}-[A-Z][a-z]{2}) increased to ([\d.]+)%: (Jig \d+)", nt)
+        if m_: spikes.append(f"#{n_} {x['station']} {m_.group(3)} {m_.group(1)}")
+newjob = [n_ for n_, x in ALL_G if any("new job" in nt for nt in x["notes"])]
+inc = [(items[i], acts[i]) for i in range(len(items)) if items[i][5] == "Increased"]
+inc_jigs = [re.sub(r" \(.*?\)", "", a_[2].replace("Check / clean pins of ", "")).replace(":", "") for _, a_ in inc if a_[2].startswith("Check")]
+early = [n_ for n_, x in ALL_G if x["verdict"] != "Insufficient data" and (x["days_after"] or 0) < 28]
+eff = [n_ for n_, x in ALL_G if x["verdict"].startswith("Effective")]
+others = sorted({l for l in ["Line 6-1", "Line 6-2"]} - set())
+plan = [
+    ("Jig maintenance", "Clean pins and pads of every FID / RF jig weekly; replace pogo pins by test count (count per jig from PMSystem2); keep a PM record per jig",
+     f"Pin / pad actions worked: {len(eff_pin)} of {len(pin)} Effective ({nums(eff_pin)})", "Weekly"),
+    ("Jig monitoring", "Daily PMSystem2 check: jig with NG rate > 1.5× its station average or NTF NG concentrated on one jig → stop and check that jig",
+     ("NG concentrated on one jig: " + ", ".join(inc_jigs)) if inc_jigs else "NTF NG concentrated on single jigs", "Daily"),
+    ("Start-of-shift check", "Run a golden sample (1 OK + 1 NG) on every FCT jig at shift start and after any pin change",
+     ("NG came back on one jig after the pin change: " + "; ".join(spikes[:3])) if spikes else "Contact problems appear on single jigs", "Every shift"),
+    ("New program / job file", "On a new job file or program version: compare NTF by jig for the first 2 days before full release",
+     f"Rises together with a new job file ({nums(newjob)})" if newjob else "New job files change the NG pattern", "Each release"),
+    ("Program / limits", "Review limits and program with LGE for NG steps that increased without an action",
+     "Increased: " + ", ".join(f"{it[2]} ({short(GROUPS[it[0]][1])} {it[0] is not None and GROUPS[it[0]][0]})" for it, _ in inc), "Once, then monthly"),
+    ("Horizontal deployment", "Apply the Effective fixes (pin / pad replacement and cleaning) to the same stations of the other NAD lines and models",
+     f"{len(eff)} of {len(ALL_G)} actions Effective ({nums(eff)})", "Once"),
+    ("Verification", "Every action into ImprovementList with its date; verify after 1 and 4 weeks in this report; review NTF by jig weekly",
+     f"Less than 4 weeks of data: {nums(early)}" if early else "All actions have 4 weeks of data", "Weekly"),
+]
+nxt_ = TODAY + dt.timedelta(days=(4 - TODAY.weekday()) % 7 + 7)
+yp = fp.section("Improvement actions", unit="(Due dates spread over the next month)")
+prows = [["#", "Area", "Action", "Why (from this report)", "PIC", "Cycle", "Due"]]
+for i, (area, act, why, cyc) in enumerate(plan, 1):
+    d_ = nxt_ + dt.timedelta(days=7 * min(3, (i - 1) * 4 // len(plan)))
+    prows.append([str(i), area, act, why, "", cyc, f"{dm(d_)} ({wk(d_)})"])
+table(fp.s, 0.53, yp, 12.24, prows, [0.3, 1.25, 4.15, 4.05, 0.5, 0.95, 1.04], row_h=0.62, header_h=0.3, size=8,
+      cell_fmt=lambda i, j, v: {"align": PP_ALIGN.LEFT} if j in (2, 3) else ({"bold": True} if j == 1 else None), name="FCT plan")
+textbox(fp.s, 0.53, yp + 0.3 + 0.62 * len(plan) + 0.05, 12.24, 0.2,
+        ["* NG rate / NTF by jig are available in PMSystem2 (pcb_ntf_summaries: NG step and jig of the first NG). Unit = one PCB at one station."], size=8, color=G3)
+
 # ---- end, drop unused, page numbers ----
 strip_annotations(S[39])
-keep = {id(S[0]), id(S[2]), id(S[11]), id(S[39])} | {id(s) for s in DETAIL[:len(GROUPS)]} | {id(s) for s in PCA_SLOTS[:len(PCA)]}
+keep = {id(S[0]), id(S[2]), id(S[11]), id(S[38]), id(S[39])} | {id(s) for s in DETAIL[:len(GROUPS)]} | {id(s) for s in PCA_SLOTS[:len(PCA)]}
 lst = prs.slides._sldIdLst
 for sl in S:
     if id(sl) in keep: continue
