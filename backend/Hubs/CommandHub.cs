@@ -96,6 +96,7 @@ namespace PMSystem2.Api.Hubs
         [JsonPropertyName("ip_address")] public string? IpAddress { get; set; }
         [JsonPropertyName("os_version")] public string? OsVersion { get; set; }
         [JsonPropertyName("cpu_percent")] public double? CpuPercent { get; set; }
+        [JsonPropertyName("cpu_name")] public string? CpuName { get; set; }
         [JsonPropertyName("ram_total_mb")] public int? RamTotalMb { get; set; }
         [JsonPropertyName("ram_used_mb")] public int? RamUsedMb { get; set; }
         [JsonPropertyName("disk_drive")] public string? DiskDrive { get; set; }
@@ -324,6 +325,7 @@ namespace PMSystem2.Api.Hubs
                 IpAddress = telemetry.IpAddress,
                 OsVersion = telemetry.OsVersion,
                 CpuPercent = telemetry.CpuPercent,
+                CpuName = telemetry.CpuName,
                 RamTotalMb = telemetry.RamTotalMb,
                 RamUsedMb = telemetry.RamUsedMb,
                 DiskDrive = telemetry.DiskDrive,

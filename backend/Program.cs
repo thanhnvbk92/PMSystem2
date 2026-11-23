@@ -664,6 +664,10 @@ using (var scope = app.Services.CreateScope())
                             AND table_name = 'machine_status' AND column_name = 'connected_ip') THEN
                         ALTER TABLE machine_status ADD COLUMN connected_ip VARCHAR(64);
                     END IF;
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public'
+                            AND table_name = 'machine_status' AND column_name = 'cpu_name') THEN
+                        ALTER TABLE machine_status ADD COLUMN cpu_name VARCHAR(200);
+                    END IF;
                 END $clock$;
                 CREATE TABLE IF NOT EXISTS app_settings (
                     key VARCHAR(100) PRIMARY KEY,
