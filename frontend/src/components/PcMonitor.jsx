@@ -295,7 +295,7 @@ function PcDetail({ pc, standardVersion, now, serverSkewMs, onClose, onDelete })
     ['Log type', pc.logType || '-'],
     ['Thư mục log', pc.logFolders || '-'],
     ['Model hiện tại', pc.currentModel || '-'],
-    ['CPU', pc.cpuPercent != null ? `${pc.cpuPercent}%` : '-'],
+    ['CPU', `${pc.cpuName || 'chưa rõ tên'}${pc.cpuPercent != null ? ` · đang dùng ${pc.cpuPercent}%` : ''}`],
     ['RAM', pc.ramTotalMb ? `${(pc.ramUsedMb / 1024).toFixed(1)} / ${(pc.ramTotalMb / 1024).toFixed(1)} GB` : '-'],
     ['Ổ đĩa (% trống)', <DriveList key="d" pc={pc} detailed />],
     ['App chạy được', pc.appStartedAt ? `${formatUptime(pc.appStartedAt, now)} (từ ${formatTime(pc.appStartedAt)})` : '-'],
@@ -512,6 +512,11 @@ function Overview({ rows, standardVersion, offlineAfterSeconds, loading, now, on
 // ---------------------------------------------------------------- PC list: sort and filter per column
 
 const ramPct = (r) => (r.ramTotalMb ? Math.round((r.ramUsedMb / r.ramTotalMb) * 100) : null);
+const ramTotalGb = (r) => (r.ramTotalMb ? Math.round(r.ramTotalMb / 1024) : null);
+/** "Intel(R) Core(TM) i5-6500 CPU @ 3.20GHz" -> "i5-6500", "Intel(R) Xeon(R) CPU E5-2650 v2" -> "Xeon E5-2650 v2". */
+const shortCpu = (name) => (name || '')
+  .replace(/\((R|TM|tm|r)\)/g, '').replace(/@.*$/, '').replace(/\b\d+-Core\b/g, '').replace(/\b(CPU|Processor|Intel|Core|AMD)\b/g, '')
+  .replace(/\s+/g, ' ').trim() || null;
 const minFreePct = (r) => {
   const pcts = drivesOf(r).filter(d => d.total).map(d => (d.free / d.total) * 100);
   return pcts.length ? Math.min(...pcts) : null;
@@ -572,10 +577,18 @@ function pcColumns({ standardVersion, now, serverSkewMs, commands }) {
         </td>) },
     { key: 'logType', label: 'Log type', sort: r => r.logType, filter: { type: 'pick', get: r => r.logType },
       cell: r => <td className="max-w-[80px] truncate" title={r.logType || ''}>{r.logType || '-'}</td> },
-    { key: 'cpu', label: 'CPU', align: 'right', sort: r => r.cpuPercent, filter: { type: 'min', get: r => r.cpuPercent },
-      cell: r => <td className="text-right font-mono whitespace-nowrap">{r.cpuPercent != null ? `${r.cpuPercent}%` : '-'}</td> },
-    { key: 'ram', label: 'RAM', align: 'right', sort: ramPct, filter: { type: 'min', get: ramPct },
-      cell: r => <td className="text-right font-mono whitespace-nowrap">{ramPct(r) != null ? `${ramPct(r)}%` : '-'}</td> },
+    { key: 'cpu', label: 'CPU', title: 'Tên CPU · % đang dùng (lọc theo % tối thiểu)', align: 'right', sort: r => r.cpuPercent, filter: { type: 'min', get: r => r.cpuPercent },
+      cell: r => (
+        <td className="text-right font-mono whitespace-nowrap" title={r.cpuName || 'Chưa có tên CPU (cần Backup_Log2 bản mới)'}>
+          {shortCpu(r.cpuName) && <span className="mr-1.5 inline-block max-w-[110px] truncate align-bottom text-[10px] text-slate-500">{shortCpu(r.cpuName)}</span>}
+          {r.cpuPercent != null ? `${r.cpuPercent}%` : '-'}
+        </td>) },
+    { key: 'ram', label: 'RAM', title: '% đang dùng / dung lượng tổng (lọc theo % tối thiểu)', align: 'right', sort: ramPct, filter: { type: 'min', get: ramPct },
+      cell: r => (
+        <td className="text-right font-mono whitespace-nowrap"
+          title={r.ramTotalMb ? `Đang dùng ${(r.ramUsedMb / 1024).toFixed(1)} / ${(r.ramTotalMb / 1024).toFixed(1)} GB` : ''}>
+          {ramPct(r) != null ? <>{ramPct(r)}%<span className="text-slate-500"> / {ramTotalGb(r)} GB</span></> : '-'}
+        </td>) },
     { key: 'disk', label: 'Ổ đĩa (% trống)', title: '% trống của từng ổ; di chuột vào ô để xem GB. Sắp xếp theo ổ ít trống nhất', sort: minFreePct,
       filter: { type: 'choice', options: [['low', 'Sắp đầy'], ['ok', 'Bình thường']],
         match: (r, v) => (v === 'low' ? isLowDisk(r) : drivesOf(r).length > 0 && !isLowDisk(r)) },

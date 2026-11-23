@@ -23,6 +23,7 @@ namespace PMSystem2.Api.Models
         [Column("log_folders")] public string? LogFolders { get; set; }
         [MaxLength(50), Column("app_status")] public string? AppStatus { get; set; }
         [Column("cpu_percent")] public double? CpuPercent { get; set; }
+        [MaxLength(200), Column("cpu_name")] public string? CpuName { get; set; }
         [Column("ram_total_mb")] public int? RamTotalMb { get; set; }
         [Column("ram_used_mb")] public int? RamUsedMb { get; set; }
         [MaxLength(20), Column("disk_drive")] public string? DiskDrive { get; set; }

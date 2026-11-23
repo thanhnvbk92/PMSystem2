@@ -25,6 +25,8 @@ public sealed class MachineTelemetryInput
     public string? IpAddress { get; init; }
     public string? OsVersion { get; init; }
     public double? CpuPercent { get; init; }
+    /// <summary>Processor model ("Intel(R) Core(TM) i5-6500 CPU @ 3.20GHz").</summary>
+    public string? CpuName { get; init; }
     public int? RamTotalMb { get; init; }
     public int? RamUsedMb { get; init; }
     public string? DiskDrive { get; init; }
@@ -47,7 +49,7 @@ public sealed record MachineStatusDto(
     string? LogType, string? LogFolders, string? AppStatus, double? CpuPercent, int? RamTotalMb, int? RamUsedMb,
     string? DiskDrive, double? DiskTotalGb, double? DiskFreeGb, DateTime? AppStartedAt, DateTime? LastUploadAt,
     DateTime? ConnectedAt, DateTime? DisconnectedAt, DateTime? LastSeenAt, DateTime? LastTelemetryAt,
-    double? ClockOffsetSeconds, List<MachineDisk>? Disks, string? ConnectedIp);
+    double? ClockOffsetSeconds, List<MachineDisk>? Disks, string? ConnectedIp, string? CpuName);
 
 /// <summary>
 /// Keeps the latest state of each Backup_Log2 PC in <c>machine_status</c>.
@@ -151,6 +153,7 @@ public sealed class MachineStatusService
             m.IpAddress = Cut(t.IpAddress, 200) ?? m.IpAddress;
             m.OsVersion = Cut(t.OsVersion, 200) ?? m.OsVersion;
             m.CpuPercent = t.CpuPercent ?? m.CpuPercent;
+            m.CpuName = Cut(t.CpuName, 200) ?? m.CpuName;
             m.RamTotalMb = t.RamTotalMb ?? m.RamTotalMb;
             m.RamUsedMb = t.RamUsedMb ?? m.RamUsedMb;
             m.DiskDrive = Cut(t.DiskDrive, 20) ?? m.DiskDrive;
@@ -217,7 +220,7 @@ public sealed class MachineStatusService
             m.Hostname, m.IpAddress, m.OsVersion, m.AppVersion, m.CurrentModel, m.LogType, m.LogFolders, m.AppStatus,
             m.CpuPercent, m.RamTotalMb, m.RamUsedMb, m.DiskDrive, m.DiskTotalGb, m.DiskFreeGb,
             Local(m.AppStartedAt), Local(m.LastUploadAt), Local(m.ConnectedAt), Local(m.DisconnectedAt),
-            Local(m.LastSeenAt), Local(m.LastTelemetryAt), m.ClockOffsetSeconds, ReadDisks(m.DisksJson), m.ConnectedIp);
+            Local(m.LastSeenAt), Local(m.LastTelemetryAt), m.ClockOffsetSeconds, ReadDisks(m.DisksJson), m.ConnectedIp, m.CpuName);
     }
 
     private static List<MachineDisk>? ReadDisks(string? json)
