@@ -682,7 +682,8 @@ using (var scope = app.Services.CreateScope())
                     kind VARCHAR(20),
                     ran_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                     received_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                    report_json TEXT NOT NULL DEFAULT '{}',
+                    -- No braces in this SQL: ExecuteSqlRaw runs it through string.Format.
+                    report_json TEXT NOT NULL,
                     warning TEXT,
                     last_cleanup_at TIMESTAMPTZ,
                     last_cleanup_files INT,
