@@ -196,3 +196,13 @@ export const MachinesApi = {
   assignChannel: (mac, channelId, moveData = false) => api.post(`/machines/${encodeURIComponent(mac)}/assign`, { channelId, moveData }, { timeout: 600000 }).then(res => res.data),
   assignPreview: (mac, channelId) => api.get(`/machines/${encodeURIComponent(mac)}/assign-preview`, { params: { channelId } }).then(res => res.data),
 };
+
+// Disk clean-up of the Backup_Log2 PCs: one set of rules for every PC, latest report of each PC.
+export const DiskCleanupApi = {
+  getConfig: () => api.get('/disk-cleanup/config').then(res => res.data),
+  saveConfig: (config) => api.put('/disk-cleanup/config', config).then(res => res.data),
+  getReports: () => api.get('/disk-cleanup/reports').then(res => res.data),
+  /** command = disk.cleanup.preview | disk.cleanup.run; returns { command_id }. */
+  sendCommand: (macAddress, command) => api.post('/commands/send', { macAddress, command, data: null }).then(res => res.data),
+  commandStatus: (commandId) => api.get(`/commands/status/${encodeURIComponent(commandId)}`).then(res => res.data),
+};

@@ -33,6 +33,7 @@ namespace PMSystem2.Api.Data
         public DbSet<PcbAnalyticsDaily> PcbAnalyticsDaily => Set<PcbAnalyticsDaily>();
         public DbSet<MachineStatusEntry> MachineStatus => Set<MachineStatusEntry>();
         public DbSet<AppSetting> AppSettings => Set<AppSetting>();
+        public DbSet<DiskCleanupReportEntry> DiskCleanupReports => Set<DiskCleanupReportEntry>();
 
         public override int SaveChanges(bool acceptAllChangesOnSuccess)
         {

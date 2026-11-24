@@ -52,6 +52,7 @@ export const MODULES = [
         items: [
           { id: 'pc-overview', label: 'Tổng Quan PC', icon: Monitor, color: 'text-teal-700', activeBg: 'from-teal-600 to-emerald-600' },
           { id: 'pc-list', label: 'Danh Sách PC', icon: List, color: 'text-teal-700', activeBg: 'from-teal-600 to-emerald-600' },
+          { id: 'pc-disk-cleanup', label: 'Dọn Ổ Cứng', icon: HardDrive, color: 'text-teal-700', activeBg: 'from-teal-600 to-emerald-600' },
         ],
       },
     ],
