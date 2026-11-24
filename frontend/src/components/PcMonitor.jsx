@@ -364,6 +364,19 @@ function AssignChannelDialog({ pc, channels, stations, lines, onClose, onDone })
   const [restart, setRestart] = useState(!!pc.isOnline);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
+  // Results written on the auto-created channel that can follow the PC (server preview).
+  const [preview, setPreview] = useState(null);
+  const [moveData, setMoveData] = useState(true);
+  useEffect(() => {
+    setPreview(null);
+    if (!channelId) return undefined;
+    let cancelled = false;
+    MachinesApi.assignPreview(pc.macKey, Number(channelId))
+      .then(p => { if (!cancelled) { setPreview(p); setMoveData(!!p.canMove); } })
+      .catch(() => { if (!cancelled) setPreview({ canMove: false, reason: 'Không đọc được dữ liệu của channel hiện tại.' }); });
+    return () => { cancelled = true; };
+  }, [channelId, pc.macKey]);
+  const day = (v) => (v ? new Date(v).toLocaleDateString('vi-VN') : '?');
 
   const lineStations = stations.filter(s => String(s.lineId) === lineId).sort(sortByName);
   const stationChannels = channels.filter(c => String(c.stationId) === stationId && c.id !== pc.channelId).sort(sortByName);
@@ -376,13 +389,15 @@ function AssignChannelDialog({ pc, channels, stations, lines, onClose, onDone })
   const submit = async () => {
     setBusy(true); setError(null);
     try {
-      const result = await MachinesApi.assignChannel(pc.macKey, target.id);
+      const result = await MachinesApi.assignChannel(pc.macKey, target.id, !!(preview?.canMove && moveData));
       let restartNote = '';
       if (restart) {
         try { await CommandApi.restartApp({ macAddress: pc.macAddress, delayMs: 1500 }); restartNote = ' Đã gửi lệnh khởi động lại Backup_Log2.'; }
         catch { restartNote = ' Không gửi được lệnh khởi động lại: hãy khởi động lại Backup_Log2 trên PC.'; }
       }
-      onDone(`Đã gắn PC vào ${result.channelName}.${restartNote}`);
+      const movedNote = result.movedResults > 0
+        ? ` Đã chuyển ${Number(result.movedResults).toLocaleString()} bản ghi từ ${result.movedFrom} (NTF/RTY đang được tính lại).` : '';
+      onDone(`Đã gắn PC vào ${result.channelName}.${movedNote}${restartNote}`);
     } catch (err) {
       setError(err?.response?.data?.message || 'Không gắn được PC vào channel.');
     } finally { setBusy(false); }
@@ -425,8 +440,24 @@ function AssignChannelDialog({ pc, channels, stations, lines, onClose, onDone })
               {currentChannel && <li>Gỡ MAC của PC khỏi <b>{currentChannel.name}</b>{isAutoChannel(pc) ? ' (channel tự tạo, dữ liệu cũ vẫn giữ)' : ''}.</li>}
               <li>Gắn MAC {pc.connectedIp ? 'và IP ' : ''}của PC vào <b>{targetStation?.lineName || ''} / {targetStation?.name || ''} / {target.name}</b>.</li>
               {targetHasOtherPc && <li className="text-amber-800">PC đang ở channel này (MAC <span className="font-mono">{target.macAddress}</span>) sẽ bị tách ra; khi cắm sang chỗ khác cần gắn lại.</li>}
+              {preview?.canMove && moveData && (
+                <li>Chuyển <b>{Number(preview.movableResults).toLocaleString()}</b> bản ghi đã ghi ở <b>{preview.sourceChannelName}</b> sang channel này (Line / Trạm mới), tính lại NTF / RTY.</li>
+              )}
               <li>{restart ? 'Khởi động lại Backup_Log2 trên PC để nhận channel mới.' : 'PC nhận channel mới ở lần khởi động Backup_Log2 tiếp theo.'}</li>
             </ol>
+            {preview?.canMove && (
+              <label className="flex items-start gap-2 rounded-xl border border-blue-200 bg-blue-50 p-2 text-blue-900">
+                <input type="checkbox" className="mt-0.5" checked={moveData} onChange={e => setMoveData(e.target.checked)} />
+                <span>
+                  Chuyển cả dữ liệu cũ: <b>{Number(preview.movableResults).toLocaleString()}</b> bản ghi
+                  ({day(preview.firstTest)} → {day(preview.lastTest)}) đang nằm ở {preview.sourceChannelName}.
+                  Bỏ chọn để giữ nguyên dữ liệu cũ ở channel đó.
+                </span>
+              </label>
+            )}
+            {preview && !preview.canMove && preview.reason && (
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-2 text-slate-600">Dữ liệu cũ không chuyển: {preview.reason}</div>
+            )}
             {stationTypeChanges && (
               <div className="rounded-xl border border-amber-300 bg-amber-50 p-2 text-amber-800">
                 Trạm khác loại ({currentStation?.stationTypeName || currentStation?.name} → {targetStation?.stationTypeName || targetStation?.name}):
@@ -444,7 +475,7 @@ function AssignChannelDialog({ pc, channels, stations, lines, onClose, onDone })
 
         <div className="flex justify-end gap-2 pt-2 border-t border-slate-200">
           <button onClick={onClose} className="px-3 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 border border-slate-200 text-xs font-semibold">Hủy</button>
-          <button onClick={submit} disabled={!target || busy} className="px-3 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold flex items-center gap-1.5 disabled:opacity-50">
+          <button onClick={submit} disabled={!target || busy || (channelId && !preview)} className="px-3 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold flex items-center gap-1.5 disabled:opacity-50">
             <Link2 className="w-4 h-4" /> {busy ? 'Đang gắn…' : 'Gắn PC vào channel'}
           </button>
         </div>

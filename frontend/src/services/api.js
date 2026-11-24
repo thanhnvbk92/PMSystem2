@@ -193,5 +193,6 @@ export const ReportsApi = {
 export const MachinesApi = {
   getAll: () => api.get('/machines').then(res => res.data),
   remove: (mac) => api.delete(`/machines/${encodeURIComponent(mac)}`).then(res => res.data),
-  assignChannel: (mac, channelId) => api.post(`/machines/${encodeURIComponent(mac)}/assign`, { channelId }).then(res => res.data),
+  assignChannel: (mac, channelId, moveData = false) => api.post(`/machines/${encodeURIComponent(mac)}/assign`, { channelId, moveData }, { timeout: 600000 }).then(res => res.data),
+  assignPreview: (mac, channelId) => api.get(`/machines/${encodeURIComponent(mac)}/assign-preview`, { params: { channelId } }).then(res => res.data),
 };
