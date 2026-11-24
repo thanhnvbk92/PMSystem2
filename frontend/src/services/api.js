@@ -193,4 +193,5 @@ export const ReportsApi = {
 export const MachinesApi = {
   getAll: () => api.get('/machines').then(res => res.data),
   remove: (mac) => api.delete(`/machines/${encodeURIComponent(mac)}`).then(res => res.data),
+  assignChannel: (mac, channelId) => api.post(`/machines/${encodeURIComponent(mac)}/assign`, { channelId }).then(res => res.data),
 };

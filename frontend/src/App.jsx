@@ -495,7 +495,7 @@ export default function App() {
           {activeTab === 'invalid-results' && <InvalidPcbResults />}
 
           {(activeTab === 'pc-overview' || activeTab === 'pc-list') && (
-            <PcMonitor view={activeTab === 'pc-list' ? 'list' : 'overview'} channels={channels} stations={stations} lines={lines} />
+            <PcMonitor view={activeTab === 'pc-list' ? 'list' : 'overview'} channels={channels} stations={stations} lines={lines} onMasterDataChanged={loadMasterData} />
           )}
 
           {activeTab === 'command' && (
