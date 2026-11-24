@@ -171,7 +171,7 @@ export default function DiskCleanup({ channels = [] }) {
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          <NumberField label="Bắt đầu xóa khi ổ dùng trên" suffix="%" value={draft.triggerUsedPercent} onChange={v => update({ triggerUsedPercent: v })} />
+          <NumberField label="Bắt đầu xóa khi ổ dùng từ" suffix="%" value={draft.triggerUsedPercent} onChange={v => update({ triggerUsedPercent: v })} />
           <NumberField label="Dừng khi ổ dùng còn (ngưỡng OK)" suffix="%" value={draft.okUsedPercent} onChange={v => update({ okUsedPercent: v })} />
           <NumberField label="Chu kỳ kiểm tra" suffix="phút" value={draft.checkIntervalMinutes} onChange={v => update({ checkIntervalMinutes: v })} />
         </div>
@@ -179,7 +179,7 @@ export default function DiskCleanup({ channels = [] }) {
         <div className="text-[11px] text-slate-600 bg-slate-50 border border-slate-200 rounded-xl p-3 flex gap-2">
           <Info className="w-4 h-4 text-blue-600 shrink-0" />
           <div className="space-y-0.5">
-            <div>Khi một ổ dùng trên <b>{draft.triggerUsedPercent}%</b>: chạy hết các quy tắc <b>Xóa toàn bộ</b> và <b>Giữ file mới nhất</b> (xóa hết, chỉ chừa lại file mới nhất trong thư mục) trước; nếu ổ vẫn trên <b>{draft.okUsedPercent}%</b> thì xóa file của các quy tắc <b>Từ cũ đến mới</b> (file cũ nhất trên ổ trước) đến khi về {draft.okUsedPercent}%.</div>
+            <div>Khi một ổ dùng từ <b>{draft.triggerUsedPercent}%</b> trở lên: chạy hết các quy tắc <b>Xóa toàn bộ</b> và <b>Giữ file mới nhất</b> (xóa hết, chỉ chừa lại file mới nhất trong thư mục) trước; nếu ổ vẫn trên <b>{draft.okUsedPercent}%</b> thì xóa file của các quy tắc <b>Từ cũ đến mới</b> (file cũ nhất trên ổ trước) đến khi về {draft.okUsedPercent}%.</div>
             <div>PC không có thư mục của quy tắc sẽ bỏ qua quy tắc đó (N/A). Thư mục hỗ trợ <code>{'{LogFolder}'}</code> (thư mục log của từng PC), <code>%TEMP%</code> và <code>*</code> (ví dụ <code>D:\LGE\*\RESULT</code>). Gốc ổ, Windows, Program Files và thư mục Backup_Log2 luôn bị chặn. File ghi trong 10 phút gần nhất không bao giờ bị xóa.</div>
           </div>
         </div>
@@ -294,7 +294,7 @@ function DriveUsage({ pc, trigger, ok }) {
   return (
     <div className="space-y-0.5">
       {drives.map(d => (
-        <div key={d.drive} className={`font-mono whitespace-nowrap ${d.used > trigger ? 'text-rose-700 font-bold' : d.used > ok ? 'text-amber-700' : ''}`}>
+        <div key={d.drive} className={`font-mono whitespace-nowrap ${d.used >= trigger ? 'text-rose-700 font-bold' : d.used > ok ? 'text-amber-700' : ''}`}>
           {d.drive} {d.used != null ? `${d.used}%` : '?'}
         </div>
       ))}

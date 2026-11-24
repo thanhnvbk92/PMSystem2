@@ -30,10 +30,9 @@ export const versionState = (version, standard) => {
   return c === 0 ? 'standard' : c < 0 ? 'old' : 'newer';
 };
 
-const LOW_DISK_GB = 5;
-// A drive is shown red when used above 80 % (free below 20 %) or free below 5 GB.
-const LOW_DISK_RATIO = 0.2;
-const isLowDrive = (free, total) => free != null && (free < LOW_DISK_GB || (total && free / total < LOW_DISK_RATIO));
+// A drive is full (shown red, counted in "Ổ đĩa sắp đầy") when it is used at 90 % or more.
+const FULL_USED_PERCENT = 90;
+const isLowDrive = (free, total) => free != null && total > 0 && (1 - free / total) * 100 >= FULL_USED_PERCENT;
 /** Drives of a PC: every fixed drive (new builds) or the log drive only (older builds). */
 const drivesOf = (m) => (m.disks && m.disks.length)
   ? m.disks.map(d => ({ drive: d.drive, total: d.total_gb, free: d.free_gb }))
@@ -581,7 +580,7 @@ function Overview({ rows, standardVersion, offlineAfterSeconds, loading, now, on
         <Kpi icon={AlertTriangle} label="Version cũ" value={standardVersion ? oldCount : '-'} total={connected} tone="bg-amber-100 text-amber-700" hint="Cũ hơn version chuẩn (% trên số PC đã kết nối)" />
         <Kpi icon={HelpCircle} label="Chưa rõ version" value={unknownCount} total={connected} tone="bg-slate-100 text-slate-600" hint="Backup_Log2 bản cũ, chưa gửi version thật (% trên số PC đã kết nối)" />
         <Kpi icon={Clock} label="Lệch giờ" value={clockOff.length} total={connected} tone="bg-blue-100 text-blue-700" hint={`Giờ PC lệch giờ server quá ${CLOCK_DRIFT_LIMIT_SECONDS} giây (% trên số PC đã kết nối)`} />
-        <Kpi icon={HardDrive} label="Ổ đĩa sắp đầy" value={lowDisk.length} total={connected} tone="bg-rose-100 text-rose-700" hint={`Số PC có ổ đã dùng trên ${100 - LOW_DISK_RATIO * 100}% hoặc còn dưới ${LOW_DISK_GB} GB (% trên số PC đã kết nối)`} />
+        <Kpi icon={HardDrive} label="Ổ đĩa sắp đầy" value={lowDisk.length} total={connected} tone="bg-rose-100 text-rose-700" hint={`Số PC có ổ đã dùng từ ${FULL_USED_PERCENT}% trở lên (% trên số PC đã kết nối)`} />
       </div>
 
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
@@ -636,7 +635,7 @@ function Overview({ rows, standardVersion, offlineAfterSeconds, loading, now, on
           <h3 className="text-sm font-bold text-slate-900 font-display flex items-center gap-2">
             <HardDrive className="w-4 h-4 text-rose-700" /> Ổ đĩa sắp đầy ({lowDriveRows.length} ổ / {lowDisk.length} PC)
           </h3>
-          <span className="text-[11px] text-slate-500">Ổ đã dùng trên {100 - LOW_DISK_RATIO * 100}% hoặc còn dưới {LOW_DISK_GB} GB · bấm một dòng để xem chi tiết PC</span>
+          <span className="text-[11px] text-slate-500">Ổ đã dùng từ {FULL_USED_PERCENT}% trở lên · bấm một dòng để xem chi tiết PC</span>
         </div>
         <div className="max-h-56 overflow-y-auto border border-slate-200 rounded-xl">
           <table className="w-full text-xs">
