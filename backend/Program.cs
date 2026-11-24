@@ -674,6 +674,21 @@ using (var scope = app.Services.CreateScope())
                     value TEXT,
                     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
                 );
+                -- Disk clean-up: latest report of each PC (settings are in app_settings 'diskcleanup.config').
+                CREATE TABLE IF NOT EXISTS disk_cleanup_reports (
+                    mac_key VARCHAR(32) PRIMARY KEY,
+                    mac_address VARCHAR(50),
+                    hostname VARCHAR(100),
+                    kind VARCHAR(20),
+                    ran_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    received_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    -- No braces in this SQL: ExecuteSqlRaw runs it through string.Format.
+                    report_json TEXT NOT NULL,
+                    warning TEXT,
+                    last_cleanup_at TIMESTAMPTZ,
+                    last_cleanup_files INT,
+                    last_cleanup_bytes BIGINT
+                );
                 -- Connections do not survive a server restart; PCs reconnect and mark themselves again.
                 UPDATE machine_status SET is_connected = FALSE, disconnected_at = NOW() WHERE is_connected;
             ");

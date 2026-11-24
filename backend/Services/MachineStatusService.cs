@@ -185,6 +185,21 @@ public sealed class MachineStatusService
         return rows.Select(r => ToDto(r, now)).OrderBy(r => r.ChannelId ?? int.MaxValue).ThenBy(r => r.MacKey).ToList();
     }
 
+    /// <summary>
+    /// After a PC was put on a channel: its row points to that channel, and the PC that was on the
+    /// channel before (detachedKey) no longer points to any channel until it connects again.
+    /// </summary>
+    public async Task ReassignChannelAsync(string key, int channelId, string? detachedKey)
+    {
+        using var scope = _scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        await db.MachineStatus.Where(m => m.MacKey == key)
+            .ExecuteUpdateAsync(s => s.SetProperty(m => m.ChannelId, channelId));
+        if (detachedKey != null)
+            await db.MachineStatus.Where(m => m.MacKey == detachedKey && m.ChannelId == channelId)
+                .ExecuteUpdateAsync(s => s.SetProperty(m => m.ChannelId, (int?)null));
+    }
+
     public async Task<int> DeleteAsync(string mac)
     {
         var key = MacKey(mac);

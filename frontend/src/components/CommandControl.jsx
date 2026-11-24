@@ -37,6 +37,12 @@ import {
 import { CommandApi } from '../services/api';
 import { onCommandStatus, onMachineStatusChanged, onMachineAlert } from '../services/signalr';
 
+// The console keeps the latest entries only (the page stays open for days).
+const MAX_HISTORY = 200;
+// Master data is reloaded at most this often when PCs go online / offline.
+const MASTER_REFRESH_MS = 30000;
+const macKeyOf = (mac) => (mac || '').replace(/[^0-9a-z]/gi, '').toUpperCase();
+
 export default function CommandControl({ lines = [], stations = [], channels = [], onRefreshMasterData }) {
   // Targeting Scope State: 'all' | 'line' | 'station' | 'channel'
   const [targetMode, setTargetMode] = useState('all');
@@ -354,9 +360,37 @@ export default function CommandControl({ lines = [], stations = [], channels = [
     setTimeout(() => setNotification(null), 4000);
   };
 
+  // Latest props for the SignalR handlers, which are subscribed once.
+  const channelsRef = useRef(channels);
+  channelsRef.current = channels;
+  const refreshMasterDataRef = useRef(onRefreshMasterData);
+  refreshMasterDataRef.current = onRefreshMasterData;
+
   // Real-time SignalR Event Listeners for Command Reports & Telemetry
   useEffect(() => {
+    // Every PC sends telemetry each minute (hundreds of events per minute). Reloading the whole
+    // master data on each of them made this page grow until the browser ran out of memory: reload
+    // only when a PC goes online / offline, at most every MASTER_REFRESH_MS, and not while hidden.
+    const onlineByMac = new Map();
+    let refreshTimer = null;
+    let lastRefresh = 0;
+    let pending = false;
+    const runRefresh = () => {
+      refreshTimer = null;
+      if (document.hidden) { pending = true; return; }
+      pending = false;
+      lastRefresh = Date.now();
+      refreshMasterDataRef.current?.();
+    };
+    const scheduleRefresh = () => {
+      if (refreshTimer) return;
+      refreshTimer = window.setTimeout(runRefresh, Math.max(0, MASTER_REFRESH_MS - (Date.now() - lastRefresh)));
+    };
+    const onVisible = () => { if (!document.hidden && pending) scheduleRefresh(); };
+    document.addEventListener('visibilitychange', onVisible);
+
     const unsubCommandStatus = onCommandStatus((report) => {
+      const channels = channelsRef.current;
       console.log('Realtime CommandStatus report received:', report);
       if (!report) return;
 
@@ -432,7 +466,7 @@ export default function CommandControl({ lines = [], stations = [], channels = [
             response: displayMsg,
           },
           ...prev,
-        ];
+        ].slice(0, MAX_HISTORY);
       });
     });
 
@@ -441,16 +475,25 @@ export default function CommandControl({ lines = [], stations = [], channels = [
       showToast('error', `⚠️ Cảnh báo thiết bị [${alert.mac_address || alert.channel_id}]: ${alert.alert_type || ''} - ${alert.message || ''}`);
     });
 
-    const unsubStatusChanged = onMachineStatusChanged(() => {
-      if (onRefreshMasterData) onRefreshMasterData();
+    const unsubStatusChanged = onMachineStatusChanged((payload) => {
+      const machine = payload?.machine;
+      const key = machine?.macKey || macKeyOf(payload?.legacy?.mac_address || payload?.mac_address);
+      if (!key) return;
+      const online = machine ? !!machine.isOnline : String(payload?.status || payload?.legacy?.status || '');
+      if (onlineByMac.get(key) === online) return; // telemetry of a PC that stays online
+      const known = onlineByMac.has(key);
+      onlineByMac.set(key, online);
+      if (known || online === false) scheduleRefresh();
     });
 
     return () => {
       unsubCommandStatus();
       unsubAlert();
       unsubStatusChanged();
+      document.removeEventListener('visibilitychange', onVisible);
+      if (refreshTimer) window.clearTimeout(refreshTimer);
     };
-  }, [channels, onRefreshMasterData]);
+  }, []);
 
   // Handle Command Execution
   const handleExecuteCommand = async () => {
@@ -611,7 +654,7 @@ export default function CommandControl({ lines = [], stations = [], channels = [
             response: res?.message || 'Lệnh đã phát thành công. Đang chờ phản hồi tiến độ từ máy...',
           },
           ...prev,
-        ];
+        ].slice(0, MAX_HISTORY);
       });
 
       // A successful HTTP response only confirms dispatch. Mark it failed only
@@ -665,7 +708,7 @@ export default function CommandControl({ lines = [], stations = [], channels = [
           response: `Thất bại: ${errMessage}`,
         },
         ...prev,
-      ]);
+      ].slice(0, MAX_HISTORY));
     } finally {
       setIsSending(false);
     }

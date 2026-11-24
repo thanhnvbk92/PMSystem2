@@ -11,6 +11,7 @@ import Improvements from './components/Improvements';
 import InvalidPcbResults from './components/InvalidPcbResults';
 import Home from './components/Home';
 import PcMonitor from './components/PcMonitor';
+import DiskCleanup from './components/DiskCleanup';
 import { HOME_TAB, moduleOfTab, itemOfTab, normalizeTab } from './modules';
 import { MasterDataApi, ProductionApi } from './services/api';
 import { initSignalR } from './services/signalr';
@@ -495,8 +496,10 @@ export default function App() {
           {activeTab === 'invalid-results' && <InvalidPcbResults />}
 
           {(activeTab === 'pc-overview' || activeTab === 'pc-list') && (
-            <PcMonitor view={activeTab === 'pc-list' ? 'list' : 'overview'} channels={channels} stations={stations} lines={lines} />
+            <PcMonitor view={activeTab === 'pc-list' ? 'list' : 'overview'} channels={channels} stations={stations} lines={lines} onMasterDataChanged={loadMasterData} />
           )}
+
+          {activeTab === 'pc-disk-cleanup' && <DiskCleanup channels={channels} />}
 
           {activeTab === 'command' && (
             <CommandControl

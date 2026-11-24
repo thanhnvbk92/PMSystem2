@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Monitor, Wifi, WifiOff, AlertTriangle, HardDrive, Cpu, Search, RefreshCw, X, Trash2, CheckCircle2, HelpCircle, ArrowUpCircle, Clock
+  Monitor, Wifi, WifiOff, AlertTriangle, HardDrive, Cpu, Search, RefreshCw, X, Trash2, CheckCircle2, HelpCircle, ArrowUpCircle, Clock, Link2
 } from 'lucide-react';
 import { MachinesApi, CommandApi } from '../services/api';
 import { onMachineStatusChanged } from '../services/signalr';
@@ -30,10 +30,9 @@ export const versionState = (version, standard) => {
   return c === 0 ? 'standard' : c < 0 ? 'old' : 'newer';
 };
 
-const LOW_DISK_GB = 5;
-// A drive is shown red when used above 80 % (free below 20 %) or free below 5 GB.
-const LOW_DISK_RATIO = 0.2;
-const isLowDrive = (free, total) => free != null && (free < LOW_DISK_GB || (total && free / total < LOW_DISK_RATIO));
+// A drive is full (shown red, counted in "Ổ đĩa sắp đầy") when it is used at 90 % or more.
+const FULL_USED_PERCENT = 90;
+const isLowDrive = (free, total) => free != null && total > 0 && (1 - free / total) * 100 >= FULL_USED_PERCENT;
 /** Drives of a PC: every fixed drive (new builds) or the log drive only (older builds). */
 const drivesOf = (m) => (m.disks && m.disks.length)
   ? m.disks.map(d => ({ drive: d.drive, total: d.total_gb, free: d.free_gb }))
@@ -280,7 +279,7 @@ function usePcData(channels, stations, lines) {
 
 // ---------------------------------------------------------------- detail
 
-function PcDetail({ pc, standardVersion, now, serverSkewMs, onClose, onDelete }) {
+function PcDetail({ pc, standardVersion, now, serverSkewMs, onClose, onDelete, onAssign }) {
   const items = [
     ['Trạng thái', <StatusBadge key="s" online={pc.isOnline} neverConnected={pc.neverConnected} />],
     ['Dây chuyền / Trạm / Channel', `${pc.lineName || '-'} / ${pc.stationName || '-'} / ${pc.channelName || '-'} (#${pc.channelId ?? '-'})`],
@@ -326,11 +325,17 @@ function PcDetail({ pc, standardVersion, now, serverSkewMs, onClose, onDelete })
             </React.Fragment>
           ))}
         </dl>
-        {!pc.neverConnected && !pc.isOnline && (
-          <div className="flex justify-end pt-2 border-t border-slate-200">
-            <button onClick={() => onDelete(pc)} className="px-3 py-2 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-300 text-xs font-semibold flex items-center gap-1.5">
-              <Trash2 className="w-4 h-4" /> Xóa PC khỏi danh sách (PC không dùng nữa)
+        {!pc.neverConnected && (
+          <div className="flex flex-wrap justify-end gap-2 pt-2 border-t border-slate-200">
+            <button onClick={() => onAssign(pc)} className="px-3 py-2 rounded-xl bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-300 text-xs font-semibold flex items-center gap-1.5"
+              title="Gắn PC này vào channel (thay PC, chuyển PC sang line khác)">
+              <Link2 className="w-4 h-4" /> Gắn vào channel…
             </button>
+            {!pc.isOnline && (
+              <button onClick={() => onDelete(pc)} className="px-3 py-2 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-300 text-xs font-semibold flex items-center gap-1.5">
+                <Trash2 className="w-4 h-4" /> Xóa PC khỏi danh sách (PC không dùng nữa)
+              </button>
+            )}
           </div>
         )}
       </div>
@@ -338,11 +343,158 @@ function PcDetail({ pc, standardVersion, now, serverSkewMs, onClose, onDelete })
   );
 }
 
+// ---------------------------------------------------------------- assign a PC to a channel
+
+/** PC still on the channel Backup_Log2 created by itself (no channel of its own yet). */
+const isAutoChannel = (pc) => !pc.neverConnected && (!pc.channelId || /^New Chanel/i.test(pc.channelName || '')
+  || /^Unassigned/i.test(pc.stationName || '') || /^Unassigned/i.test(pc.lineName || ''));
+
+/**
+ * Line -> station -> channel, then a preview of what changes; the server does every step in the
+ * safe order (MAC removed from its other channels first), then Backup_Log2 is restarted to take it.
+ */
+function AssignChannelDialog({ pc, channels, stations, lines, onClose, onDone }) {
+  const sortByName = (a, b) => (a.name || '').localeCompare(b.name || '', undefined, { numeric: true });
+  const currentChannel = channels.find(c => c.id === pc.channelId) || null;
+  const currentStation = currentChannel ? stations.find(s => s.id === currentChannel.stationId) : null;
+  const [lineId, setLineId] = useState(currentStation && !isAutoChannel(pc) ? String(currentStation.lineId) : '');
+  const [stationId, setStationId] = useState('');
+  const [channelId, setChannelId] = useState('');
+  const [restart, setRestart] = useState(!!pc.isOnline);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+  // Results written on the auto-created channel that can follow the PC (server preview).
+  const [preview, setPreview] = useState(null);
+  const [moveData, setMoveData] = useState(true);
+  useEffect(() => {
+    setPreview(null);
+    if (!channelId) return undefined;
+    let cancelled = false;
+    MachinesApi.assignPreview(pc.macKey, Number(channelId))
+      .then(p => { if (!cancelled) { setPreview(p); setMoveData(!!p.canMove); } })
+      .catch(() => { if (!cancelled) setPreview({ canMove: false, reason: 'Không đọc được dữ liệu của channel hiện tại.' }); });
+    return () => { cancelled = true; };
+  }, [channelId, pc.macKey]);
+  const day = (v) => (v ? new Date(v).toLocaleDateString('vi-VN') : '?');
+
+  const lineStations = stations.filter(s => String(s.lineId) === lineId).sort(sortByName);
+  const stationChannels = channels.filter(c => String(c.stationId) === stationId && c.id !== pc.channelId).sort(sortByName);
+  const target = channels.find(c => String(c.id) === channelId) || null;
+  const targetStation = target ? stations.find(s => s.id === target.stationId) : null;
+  const targetHasOtherPc = target?.macAddress && macKey(target.macAddress) !== pc.macKey;
+  const stationTypeChanges = targetStation && currentStation && !isAutoChannel(pc)
+    && (targetStation.stationTypeId ?? targetStation.name) !== (currentStation.stationTypeId ?? currentStation.name);
+
+  const submit = async () => {
+    setBusy(true); setError(null);
+    try {
+      const result = await MachinesApi.assignChannel(pc.macKey, target.id, !!(preview?.canMove && moveData));
+      let restartNote = '';
+      if (restart) {
+        try { await CommandApi.restartApp({ macAddress: pc.macAddress, delayMs: 1500 }); restartNote = ' Đã gửi lệnh khởi động lại Backup_Log2.'; }
+        catch { restartNote = ' Không gửi được lệnh khởi động lại: hãy khởi động lại Backup_Log2 trên PC.'; }
+      }
+      const movedNote = result.movedResults > 0
+        ? ` Đã chuyển ${Number(result.movedResults).toLocaleString()} bản ghi từ ${result.movedFrom} (NTF/RTY đang được tính lại).` : '';
+      onDone(`Đã gắn PC vào ${result.channelName}.${movedNote}${restartNote}`);
+    } catch (err) {
+      setError(err?.response?.data?.message || 'Không gắn được PC vào channel.');
+    } finally { setBusy(false); }
+  };
+
+  const select = 'w-full bg-slate-50/80 border border-slate-300 rounded-xl px-3 py-2 text-xs focus:outline-none focus:border-blue-500';
+  return (
+    <div className="fixed inset-0 z-[60] bg-slate-900/40 backdrop-blur-md flex items-center justify-center p-4" onClick={onClose}>
+      <div className="glass-panel max-w-lg w-full p-6 space-y-4 border border-slate-200 shadow-2xl" onClick={e => e.stopPropagation()}>
+        <div className="flex justify-between items-start border-b border-slate-200 pb-3">
+          <h3 className="text-base font-bold text-slate-900 font-display flex items-center gap-2"><Link2 className="w-5 h-5 text-blue-700" /> Gắn PC vào channel</h3>
+          <button onClick={onClose} className="p-1 rounded-lg text-slate-600 hover:bg-slate-200"><X className="w-5 h-5" /></button>
+        </div>
+
+        <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-3 text-xs space-y-1">
+          <div><span className="text-slate-500">PC:</span> <b className="font-mono">{pc.hostname || '-'}</b> · MAC <span className="font-mono">{pc.macAddress}</span> · IP <span className="font-mono">{pc.connectedIp || '-'}</span></div>
+          <div><span className="text-slate-500">Đang gắn:</span> {currentChannel ? `${pc.lineName || '-'} / ${pc.stationName || '-'} / ${currentChannel.name}` : 'chưa có channel'}
+            {isAutoChannel(pc) && <span className="ml-1 rounded bg-amber-100 px-1 text-[10px] font-semibold text-amber-800">channel tự tạo</span>}</div>
+        </div>
+
+        <div className="grid grid-cols-3 gap-2">
+          <select value={lineId} onChange={e => { setLineId(e.target.value); setStationId(''); setChannelId(''); }} className={select}>
+            <option value="">Chọn line</option>
+            {[...lines].sort(sortByName).map(l => <option key={l.id} value={String(l.id)}>{l.name}</option>)}
+          </select>
+          <select value={stationId} onChange={e => { setStationId(e.target.value); setChannelId(''); }} className={select} disabled={!lineId}>
+            <option value="">Chọn trạm</option>
+            {lineStations.map(s => <option key={s.id} value={String(s.id)}>{s.name}</option>)}
+          </select>
+          <select value={channelId} onChange={e => setChannelId(e.target.value)} className={select} disabled={!stationId}>
+            <option value="">Chọn channel</option>
+            {stationChannels.map(c => <option key={c.id} value={String(c.id)}>{c.name}{c.macAddress && macKey(c.macAddress) !== pc.macKey ? ' (đang có PC)' : ''}</option>)}
+          </select>
+        </div>
+
+        {target && (
+          <div className="space-y-2 text-xs">
+            <div className="font-semibold text-slate-700">Hệ thống sẽ:</div>
+            <ol className="list-decimal pl-5 space-y-1 text-slate-700">
+              {currentChannel && <li>Gỡ MAC của PC khỏi <b>{currentChannel.name}</b>{isAutoChannel(pc) ? ' (channel tự tạo, dữ liệu cũ vẫn giữ)' : ''}.</li>}
+              <li>Gắn MAC {pc.connectedIp ? 'và IP ' : ''}của PC vào <b>{targetStation?.lineName || ''} / {targetStation?.name || ''} / {target.name}</b>.</li>
+              {targetHasOtherPc && <li className="text-amber-800">PC đang ở channel này (MAC <span className="font-mono">{target.macAddress}</span>) sẽ bị tách ra; khi cắm sang chỗ khác cần gắn lại.</li>}
+              {preview?.canMove && moveData && (
+                <li>Chuyển <b>{Number(preview.movableResults).toLocaleString()}</b> bản ghi đã ghi ở <b>{preview.sourceChannelName}</b> sang channel này (Line / Trạm mới), tính lại NTF / RTY.</li>
+              )}
+              <li>{restart ? 'Khởi động lại Backup_Log2 trên PC để nhận channel mới.' : 'PC nhận channel mới ở lần khởi động Backup_Log2 tiếp theo.'}</li>
+            </ol>
+            {preview?.canMove && (
+              <label className="flex items-start gap-2 rounded-xl border border-blue-200 bg-blue-50 p-2 text-blue-900">
+                <input type="checkbox" className="mt-0.5" checked={moveData} onChange={e => setMoveData(e.target.checked)} />
+                <span>
+                  Chuyển cả dữ liệu cũ: <b>{Number(preview.movableResults).toLocaleString()}</b> bản ghi
+                  ({day(preview.firstTest)} → {day(preview.lastTest)}) đang nằm ở {preview.sourceChannelName}.
+                  Bỏ chọn để giữ nguyên dữ liệu cũ ở channel đó.
+                </span>
+              </label>
+            )}
+            {preview && !preview.canMove && preview.reason && (
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-2 text-slate-600">Dữ liệu cũ không chuyển: {preview.reason}</div>
+            )}
+            {stationTypeChanges && (
+              <div className="rounded-xl border border-amber-300 bg-amber-50 p-2 text-amber-800">
+                Trạm khác loại ({currentStation?.stationTypeName || currentStation?.name} → {targetStation?.stationTypeName || targetStation?.name}):
+                nhớ đổi <b>Log type và thư mục log</b> trong cài đặt Backup_Log2 trên PC.
+              </div>
+            )}
+          </div>
+        )}
+
+        <label className="flex items-center gap-2 text-xs text-slate-700">
+          <input type="checkbox" checked={restart} onChange={e => setRestart(e.target.checked)} disabled={!pc.isOnline} />
+          Khởi động lại Backup_Log2 trên PC ngay sau khi gắn {!pc.isOnline && <span className="text-slate-400">(PC đang offline)</span>}
+        </label>
+        {error && <div className="rounded-xl border border-rose-300 bg-rose-50 p-2 text-xs text-rose-700">{error}</div>}
+
+        <div className="flex justify-end gap-2 pt-2 border-t border-slate-200">
+          <button onClick={onClose} className="px-3 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 border border-slate-200 text-xs font-semibold">Hủy</button>
+          <button onClick={submit} disabled={!target || busy || (channelId && !preview)} className="px-3 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold flex items-center gap-1.5 disabled:opacity-50">
+            <Link2 className="w-4 h-4" /> {busy ? 'Đang gắn…' : 'Gắn PC vào channel'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ---------------------------------------------------------------- pages
 
-export default function PcMonitor({ view = 'overview', channels = [], stations = [], lines = [] }) {
+export default function PcMonitor({ view = 'overview', channels = [], stations = [], lines = [], onMasterDataChanged }) {
   const { rows, standardVersion, offlineAfterSeconds, serverSkewMs, loading, error, now, reload } = usePcData(channels, stations, lines);
   const [selected, setSelected] = useState(null);
+  const [assigning, setAssigning] = useState(null);
+  const [notice, setNotice] = useState(null);
+  const assignDone = (text) => {
+    setAssigning(null); setSelected(null); setNotice(text);
+    onMasterDataChanged?.();
+    reload();
+  };
 
   const handleDelete = async (pc) => {
     if (!window.confirm(`Xóa PC ${pc.hostname || pc.macAddress} khỏi danh sách giám sát? Nếu PC kết nối lại nó sẽ tự xuất hiện.`)) return;
@@ -357,10 +509,17 @@ export default function PcMonitor({ view = 'overview', channels = [], stations =
           <button onClick={reload} className="px-3 py-1.5 rounded-lg bg-rose-600 text-white text-xs font-semibold">Thử lại</button>
         </div>
       )}
+      {notice && (
+        <div className="p-3 rounded-2xl bg-emerald-50 border border-emerald-300 text-emerald-800 text-xs flex items-center justify-between">
+          <span>{notice}</span>
+          <button onClick={() => setNotice(null)} className="p-1 rounded-lg hover:bg-emerald-100"><X className="w-4 h-4" /></button>
+        </div>
+      )}
       {view === 'overview'
         ? <Overview rows={rows} standardVersion={standardVersion} offlineAfterSeconds={offlineAfterSeconds} loading={loading} now={now} onSelect={setSelected} />
-        : <PcList rows={rows} standardVersion={standardVersion} loading={loading} now={now} serverSkewMs={serverSkewMs} onSelect={setSelected} onReload={reload} />}
-      {selected && <PcDetail pc={selected} standardVersion={standardVersion} now={now} serverSkewMs={serverSkewMs} onClose={() => setSelected(null)} onDelete={handleDelete} />}
+        : <PcList rows={rows} standardVersion={standardVersion} loading={loading} now={now} serverSkewMs={serverSkewMs} onSelect={setSelected} onReload={reload} onAssign={setAssigning} />}
+      {selected && <PcDetail pc={selected} standardVersion={standardVersion} now={now} serverSkewMs={serverSkewMs} onClose={() => setSelected(null)} onDelete={handleDelete} onAssign={setAssigning} />}
+      {assigning && <AssignChannelDialog pc={assigning} channels={channels} stations={stations} lines={lines} onClose={() => setAssigning(null)} onDone={assignDone} />}
     </div>
   );
 }
@@ -385,8 +544,13 @@ function Kpi({ icon: Icon, label, value, total, tone, hint }) {
 
 function Overview({ rows, standardVersion, offlineAfterSeconds, loading, now, onSelect }) {
 
+  // Channels with a MAC whose PC never connected have no state: counted apart ("Chưa kết nối"),
+  // so Online + Offline + Chưa kết nối = Tổng PC and Offline matches the list filter. Version,
+  // clock and disk shares are taken over the PCs that connected (the only ones with that data).
+  const connected = rows.filter(r => !r.neverConnected).length;
+  const neverConnected = rows.length - connected;
   const online = rows.filter(r => r.isOnline).length;
-  const offline = rows.length - online;
+  const offline = connected - online;
   const versions = useMemo(() => {
     const map = new Map();
     rows.filter(r => !r.neverConnected).forEach(r => {
@@ -408,14 +572,15 @@ function Overview({ rows, standardVersion, offlineAfterSeconds, loading, now, on
 
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-7 gap-3">
-        <Kpi icon={Monitor} label="Tổng PC" value={loading ? '…' : rows.length} tone="bg-slate-100 text-slate-700" />
+      <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-8 gap-3">
+        <Kpi icon={Monitor} label="Tổng PC" value={loading ? '…' : rows.length} tone="bg-slate-100 text-slate-700" hint="Online + Offline + Chưa kết nối" />
         <Kpi icon={Wifi} label="Online" value={online} total={rows.length} tone="bg-emerald-100 text-emerald-700" />
-        <Kpi icon={WifiOff} label="Offline" value={offline} total={rows.length} tone="bg-rose-100 text-rose-700" hint={`Mất kết nối, hoặc không gửi tín hiệu quá ${Math.round(offlineAfterSeconds / 60)} phút`} />
-        <Kpi icon={AlertTriangle} label="Version cũ" value={standardVersion ? oldCount : '-'} total={rows.length} tone="bg-amber-100 text-amber-700" hint="Cũ hơn version chuẩn" />
-        <Kpi icon={HelpCircle} label="Chưa rõ version" value={unknownCount} total={rows.length} tone="bg-slate-100 text-slate-600" hint="Backup_Log2 bản cũ, chưa gửi version thật" />
-        <Kpi icon={Clock} label="Lệch giờ" value={clockOff.length} total={rows.length} tone="bg-blue-100 text-blue-700" hint={`Giờ PC lệch giờ server quá ${CLOCK_DRIFT_LIMIT_SECONDS} giây`} />
-        <Kpi icon={HardDrive} label="Ổ đĩa sắp đầy" value={lowDisk.length} total={rows.length} tone="bg-rose-100 text-rose-700" hint={`Số PC có ổ đã dùng trên ${100 - LOW_DISK_RATIO * 100}% hoặc còn dưới ${LOW_DISK_GB} GB`} />
+        <Kpi icon={WifiOff} label="Offline" value={offline} total={rows.length} tone="bg-rose-100 text-rose-700" hint={`PC đã từng kết nối: mất kết nối, hoặc không gửi tín hiệu quá ${Math.round(offlineAfterSeconds / 60)} phút`} />
+        <Kpi icon={WifiOff} label="Chưa kết nối" value={neverConnected} total={rows.length} tone="bg-slate-100 text-slate-500" hint="Channel có MAC trong Master Data nhưng PC chưa từng kết nối (kiểm tra MAC hoặc xóa channel không dùng)" />
+        <Kpi icon={AlertTriangle} label="Version cũ" value={standardVersion ? oldCount : '-'} total={connected} tone="bg-amber-100 text-amber-700" hint="Cũ hơn version chuẩn (% trên số PC đã kết nối)" />
+        <Kpi icon={HelpCircle} label="Chưa rõ version" value={unknownCount} total={connected} tone="bg-slate-100 text-slate-600" hint="Backup_Log2 bản cũ, chưa gửi version thật (% trên số PC đã kết nối)" />
+        <Kpi icon={Clock} label="Lệch giờ" value={clockOff.length} total={connected} tone="bg-blue-100 text-blue-700" hint={`Giờ PC lệch giờ server quá ${CLOCK_DRIFT_LIMIT_SECONDS} giây (% trên số PC đã kết nối)`} />
+        <Kpi icon={HardDrive} label="Ổ đĩa sắp đầy" value={lowDisk.length} total={connected} tone="bg-rose-100 text-rose-700" hint={`Số PC có ổ đã dùng từ ${FULL_USED_PERCENT}% trở lên (% trên số PC đã kết nối)`} />
       </div>
 
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
@@ -428,10 +593,10 @@ function Overview({ rows, standardVersion, offlineAfterSeconds, loading, now, on
               <div key={version || 'unknown'} className="flex items-center justify-between gap-2">
                 <VersionBadge version={version || null} standard={standardVersion} />
                 <div className="flex-1 h-1.5 bg-slate-200 rounded-full overflow-hidden">
-                  <div className="h-full bg-teal-500" style={{ width: `${(count / Math.max(1, rows.length)) * 100}%` }} />
+                  <div className="h-full bg-teal-500" style={{ width: `${(count / Math.max(1, connected)) * 100}%` }} />
                 </div>
                 <span className="text-xs font-mono font-bold text-slate-700 w-10 text-right">{count}</span>
-                <span className="text-[11px] font-mono text-slate-500 w-10 text-right">{sharePct(count, rows.length)}</span>
+                <span className="text-[11px] font-mono text-slate-500 w-10 text-right">{sharePct(count, connected)}</span>
               </div>
             ))}
           </div>
@@ -470,7 +635,7 @@ function Overview({ rows, standardVersion, offlineAfterSeconds, loading, now, on
           <h3 className="text-sm font-bold text-slate-900 font-display flex items-center gap-2">
             <HardDrive className="w-4 h-4 text-rose-700" /> Ổ đĩa sắp đầy ({lowDriveRows.length} ổ / {lowDisk.length} PC)
           </h3>
-          <span className="text-[11px] text-slate-500">Ổ đã dùng trên {100 - LOW_DISK_RATIO * 100}% hoặc còn dưới {LOW_DISK_GB} GB · bấm một dòng để xem chi tiết PC</span>
+          <span className="text-[11px] text-slate-500">Ổ đã dùng từ {FULL_USED_PERCENT}% trở lên · bấm một dòng để xem chi tiết PC</span>
         </div>
         <div className="max-h-56 overflow-y-auto border border-slate-200 rounded-xl">
           <table className="w-full text-xs">
@@ -540,14 +705,23 @@ const ageMatch = (value, now, option) => {
  *  choice - fixed options [value, label] tested with match(row, value)
  *  min    - number >= the value typed (get)
  */
-function pcColumns({ standardVersion, now, serverSkewMs, commands }) {
+function pcColumns({ standardVersion, now, serverSkewMs, commands, onAssign }) {
   return [
     { key: 'line', label: 'Line', sort: r => r.lineName, filter: { type: 'pick', get: r => r.lineName },
       cell: r => <td className="whitespace-nowrap">{r.lineName || '-'}</td> },
     { key: 'station', label: 'Trạm', sort: r => r.stationName, filter: { type: 'pick', get: r => r.stationName },
       cell: r => <td className="whitespace-nowrap">{r.stationName || '-'}</td> },
     { key: 'channel', label: 'Channel', sort: r => r.channelName, filter: { type: 'text', get: r => r.channelName },
-      cell: r => <td className="max-w-[80px] truncate font-semibold" title={r.channelName || ''}>{r.channelName || '-'}</td> },
+      cell: r => (isAutoChannel(r)
+        ? (
+          <td className="whitespace-nowrap">
+            <button type="button" onClick={(e) => { e.stopPropagation(); onAssign(r); }}
+              title={`${r.channelName || 'Chưa có channel'}: channel do Backup_Log2 tự tạo. Bấm để gắn PC vào channel đúng`}
+              className="inline-flex items-center gap-1 rounded-md border border-amber-300 bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800 hover:bg-amber-100">
+              <Link2 className="h-3 w-3" /> Gắn channel
+            </button>
+          </td>)
+        : <td className="max-w-[80px] truncate font-semibold" title={r.channelName || ''}>{r.channelName || '-'}</td>) },
     { key: 'hostname', label: 'Hostname', sort: r => r.hostname, filter: { type: 'text', get: r => r.hostname },
       cell: r => <td className="font-mono max-w-[100px] truncate" title={r.hostname || ''}>{r.hostname || '-'}</td> },
     { key: 'ip', label: 'IP', title: 'IP của Channel trong Master Data (cam = khác IP PC đang kết nối)', sort: r => r.channelIp, filter: { type: 'text', get: r => r.channelIp },
@@ -561,7 +735,8 @@ function pcColumns({ standardVersion, now, serverSkewMs, commands }) {
       } },
     { key: 'version', label: 'Version', sort: r => versionKey(r.appVersion),
       filter: { type: 'choice', options: [['standard', 'Mới nhất'], ['old', 'Cũ hơn'], ['unknown', 'Chưa rõ']],
-        match: (r, v) => (v === 'unknown' ? !r.appVersion : versionState(r.appVersion, standardVersion) === v) },
+        // "Chưa rõ" = connected PC on an old build (channels that never connected are under Trạng thái).
+        match: (r, v) => (v === 'unknown' ? !r.neverConnected && !r.appVersion : versionState(r.appVersion, standardVersion) === v) },
       cell: r => (
         <td className="whitespace-nowrap">
           <VersionBadge version={r.appVersion} standard={standardVersion} />
@@ -606,12 +781,12 @@ function pcColumns({ standardVersion, now, serverSkewMs, commands }) {
   ];
 }
 
-function PcList({ rows, standardVersion, loading, now, serverSkewMs, onSelect, onReload }) {
+function PcList({ rows, standardVersion, loading, now, serverSkewMs, onSelect, onReload, onAssign }) {
   const commands = useMachineCommands();
   const [search, setSearch] = useState('');
   const [filters, setFilters] = useState({});
   const [sort, setSort] = useState({ key: 'line', dir: 'asc' });
-  const columns = pcColumns({ standardVersion, now, serverSkewMs, commands });
+  const columns = pcColumns({ standardVersion, now, serverSkewMs, commands, onAssign });
 
   // Distinct values for the "pick" filters.
   const picks = useMemo(() => Object.fromEntries(columns.filter(c => c.filter.type === 'pick').map(c => [c.key,
