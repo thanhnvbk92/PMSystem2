@@ -152,50 +152,78 @@ for k, (line, model) in enumerate(GROUPS):
             act = f"{STN[stn]}: analyse NG logs, check limits and fixture"; cyc = "weekly"
         acts.append((short(model), line, act, f"Open ({cyc})"))
 assert len(items) == len(acts)
-# ---- overview below the cards: left = what the numbers above are made of, right = how to improve and sustain ----
+# ---- below the cards: left = key points behind the numbers, right = actions (gap to the best line, toward zero, sustain, team, investment) ----
 TY2 = yy + 1.32
-y2 = f.section("Overview by model and line", y=TY2, w=6.0, unit="(Unit: % of units)")
-f.section("Actions to improve and sustain", x=6.73, y=TY2, w=6.04, unit="(PIC = role, names in the meeting)")
+y2 = f.section("Key points", y=TY2, w=5.6)
+f.section("Actions to improve and sustain", x=6.33, y=TY2, w=6.44, unit="(PIC = role, names in the meeting)")
 HH, BODY = 0.3, 6.78 - y2 - 0.3 - 0.22
-orows = [["Model", "Line", "Actions", "Biggest improvement", "Top NG step now"]]
+def st_after(k):
+    """station name -> (NTF after %, units after, NG units after, top NG steps)"""
+    out = {}
+    for sid in [s_ for s_ in SIDS if ST_LINE[s_] == LINE_ID[GROUPS[k][0]]]:
+        a_ = stats(k, *AFT[k], sid)
+        if a_["pairs"]: out[STN[sid]] = (a_["ntf"], a_["pairs"], a_["ng"], [c for c, _ in sorted(a_["items"].items(), key=lambda kv: -kv[1])[:2]])
+    return out
+# best line per model = benchmark; for the other lines: stations with the largest gap and the NTF if they matched the benchmark
+GAPS = {}
+for m in dict.fromkeys(mm for _, mm in GROUPS):
+    ks = [k for k, (_, mm) in enumerate(GROUPS) if mm == m]
+    if len(ks) < 2: continue
+    kb = min(ks, key=lambda k: SA[k]["ntf"] or 99); sb = st_after(kb)
+    for k in ks:
+        if k == kb: continue
+        sa = st_after(k); tot = SA[k]["pairs"]
+        gaps = sorted(((r_ - sb[n_][0]) * u_ / tot, n_, r_, sb[n_][0], top) for n_, (r_, u_, g_, top) in sa.items() if n_ in sb and r_ > sb[n_][0])[::-1]
+        big = [g for g in gaps if g[0] >= 0.3][:2]
+        GAPS[k] = (kb, big, (SA[k]["ntf"] or 0) - sum(g[0] for g in big))
+pts = []
 for k, (line, model) in enumerate(GROUPS):
     g_imp = [x for x in IMP_ALL if x["line"] == line and x["model"] == model]
     n_eff = sum(1 for x in g_imp if x["verdict"].startswith("Effective"))
     imp_rows = [it for it in items if it[0] == k and it[5].startswith("Improved")]
     best = max(imp_rows, key=lambda it: it[3] - it[4], default=None)
+    lines_ = [[(f"{short(model)} · {line}  ", {"bold": True, "size": 10.5}),
+               (f"{SB[k]['ntf']:.2f}% → {SA[k]['ntf']:.2f}%", {"bold": True, "size": 10.5, "color": GREEN if SA[k]['ntf'] < SB[k]['ntf'] else RED})],
+              [("• ", {}), (f"{n_eff} of {len(g_imp)} actions effective", {})]
+              + ([("; biggest: ", {}), (f"{best[2]} {best[3]:.2f} → {best[4]:.2f}%", {"color": GREEN})] if best else [])]
+    if k in GAPS:
+        kb, big, proj = GAPS[k]
+        lines_.append([("• ", {}), (f"Still {SA[k]['ntf'] / SA[kb]['ntf']:.1f}× {GROUPS[kb][0]} ({SA[k]['ntf']:.2f}% vs {SA[kb]['ntf']:.2f}%), mainly ", {"color": RED}),
+                       (", ".join(f"{n_} {r_:.1f}% vs {rb_:.1f}%" for _, n_, r_, rb_, _ in big), {"bold": True, "color": RED})])
+        lines_.append([("• ", {}), (f"If {' and '.join(n_ for _, n_, _, _, _ in big)} match {GROUPS[kb][0]}: NTF ≈ ", {}), (f"{proj:.1f}%", {"bold": True})])
     top = max(SA[k]["items"].items(), key=lambda kv: kv[1], default=None)
     if top:
         c, n = top; stn = max(SA[k]["item_st"][c].items(), key=lambda kv: kv[1])[0]
         jj = sorted(SA[k]["item_jig"][c].items(), key=lambda kv: -kv[1])
-        jig_ = f", {jname(*jj[0][0]).split(' (')[0]} {round(jj[0][1] * 100 / n)}% of it" if jj and jj[0][1] * 100 >= 40 * n else ", several jigs"
-        now = f"{c} ({STN[stn]}) {n * 100.0 / SA[k]['pairs']:.2f}%{jig_}"
-    else:
-        now = "–"
-    orows.append([short(model), line, f"{len(g_imp)} done · {n_eff} effective",
-                  f"{best[2]} ({best[1]}) {best[3]:.2f} → {best[4]:.2f}%" if best else "–", now])
-def ofmt(i, j, v):
-    if j in (3, 4): return {"align": PP_ALIGN.LEFT, "color": (GREEN if j == 3 else RED) if i else WHITE}
-    if j in (0, 1): return {"bold": True}
-table(f.s, 0.53, y2, 6.0, orows, [0.72, 0.55, 0.85, 1.94, 1.94], row_h=BODY / (len(orows) - 1), header_h=HH, size=7.5,
-      cell_fmt=ofmt, name="NTF overview")
-PLAN2 = [
-    ("Improve", "Fix the top NG step of each model and line: NG logs, jig, program / limits (with LGE)", "Weekly", "Test engineering"),
-    ("Improve", "Apply the Effective fixes (pin / pad) to the same stations of other NAD lines and models", "Monthly", "Maintenance"),
-    ("Sustain", "Clean pins / pads of every FID and RF jig; replace pogo pins by test count", "Weekly", "Maintenance"),
-    ("Sustain", "Golden sample (1 OK + 1 NG) on every FCT jig at shift start and after a pin change", "Every shift", "Production (shift leader)"),
-    ("Sustain", "Jig alarm in PMSystem2: NG > 1.5× station average → stop and check the jig", "Daily", "QA"),
-    ("Sustain", "New job file / program: compare NTF by jig on the first 2 days before full release", "Each release", "Test engineering"),
-    ("Sustain", "Review NTF by model, line and jig; verify actions after 1 and 4 weeks (ImprovementList)", "Weekly", "QA (team leader)"),
+        jig_ = f", {round(jj[0][1] * 100 / n)}% on {jname(*jj[0][0]).split(' (')[0]}" if jj and jj[0][1] * 100 >= 40 * n else ", several jigs"
+        lines_.append([("• Top NG step now: ", {}), (f"{c} ({STN[stn]}) {n * 100.0 / SA[k]['pairs']:.2f}%{jig_}", {"color": DARK})])
+    pts += lines_ + [[(" ", {"size": 4})]]
+textbox(f.s, 0.53, y2 + 0.02, 5.6, HH + BODY, pts[:-1], size=9, space_after=2, name="Key points")
+PLAN2 = []
+for k, (kb, big, proj) in GAPS.items():
+    goal = f"{GROUPS[k][0].replace('Line ', 'L')} → {SA[kb]['ntf']:.1f}%"
+    for _, n_, r_, rb_, top in big:
+        PLAN2.append((goal, f"{n_} {GROUPS[k][0]} {r_:.1f}% vs {rb_:.1f}% on {GROUPS[kb][0]}: copy its {n_} setup (jig, pins, power, program); fix {top[0]}",
+                      "Once, 2 weeks", "Test eng. + Maintenance"))
+PLAN2 += [
+    ("Toward 0", "Top 3 NG steps of every station: root cause and fix one by one (8D), until each station is below 0.5%", "Weekly", "Test engineering"),
+    ("Toward 0", "Pin-life counter per jig (test count in PMSystem2); replace pogo pins before end of life", "Daily (auto)", "Maintenance + IT"),
+    ("Toward 0", "NG steps that are not measurements (communication / program load): review timeout and retry with LGE", "Once", "Test eng. + LGE"),
+    ("Sustain", "Clean pins / pads weekly; golden sample (1 OK + 1 NG) on every jig each shift", "Weekly / shift", "Maintenance, Production"),
+    ("Sustain", "Jig alarm: NG > 1.5× station average → stop and check; review NTF and actions weekly", "Daily / weekly", "QA"),
+    ("Team", "Set up an FCT improvement team: QA (leader), Test eng., Maintenance, Production, LGE; weekly meeting, monthly report", "Weekly", "QA manager"),
+    ("Investment (proposal)", "Spare jig set per FID / RF station (swap during maintenance); pogo pin stock; contact-resistance tester; cleaning kit", "Once (budget)", "Maintenance + QA manager"),
 ]
-arows = [["#", "Type", "Action", "Cycle", "PIC"]] + [[str(i), t_, a_, c_, p_] for i, (t_, a_, c_, p_) in enumerate(PLAN2, 1)]
+arows = [["#", "Goal", "Action", "Cycle", "PIC"]] + [[str(i), g_, a_, c_, p_] for i, (g_, a_, c_, p_) in enumerate(PLAN2, 1)]
+GCOL = {"Toward 0": DARK, "Sustain": GREEN, "Team": DARK, "Investment (proposal)": DARK}
 def afmt(i, j, v):
     if j == 2: return {"align": PP_ALIGN.LEFT}
-    if i and j == 1: return {"bold": True, "color": DARK if v == "Improve" else GREEN}
-table(f.s, 6.73, y2, 6.04, arows, [0.25, 0.6, 3.29, 0.75, 1.15], row_h=BODY / len(PLAN2), header_h=HH, size=7.5,
+    if i and j == 1: return {"bold": True, "color": GCOL.get(v, RED)}
+table(f.s, 6.33, y2, 6.44, arows, [0.25, 0.95, 3.4, 0.8, 1.04], row_h=BODY / len(PLAN2), header_h=HH, size=7,
       cell_fmt=afmt, name="NTF actions")
 textbox(f.s, 0.53, y2 + HH + BODY + 0.04, 12.24, 0.25,
-        ["* Actions = items of this model and line in ImprovementList (verdicts on the 'Improvement Verification' page). Biggest improvement / top NG step = NTF of that NG step "
-         "at that station (% of all units of the model and line). Details: NTF Detail pages and 'Future FCT Improvement Plan'."], size=7, color=G3)
+        ["* NTF by station after the action start; '≈' = NTF of the line if those stations had the NTF of the best line of the same model. "
+         "Actions per item: 'Improvement Verification' and 'Future FCT Improvement Plan' pages. Investment items are proposals."], size=7, color=G3)
 
 # ---- 3.. detail per model and line ----
 DETAIL = [S[3], S[4], S[6], S[7], S[8], S[9]]
