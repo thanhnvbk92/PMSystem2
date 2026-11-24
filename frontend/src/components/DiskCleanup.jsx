@@ -32,7 +32,7 @@ const formatTime = (value) => {
   return `${pad(d.getDate())}/${pad(d.getMonth() + 1)} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 };
 
-const MODE_LABELS = { OldestFirst: 'Từ cũ đến mới', DeleteAll: 'Xóa toàn bộ' };
+const MODE_LABELS = { OldestFirst: 'Từ cũ đến mới', DeleteAll: 'Xóa toàn bộ', KeepNewest: 'Giữ file mới nhất' };
 
 const STATUS = {
   Cleaned: { label: 'Đã dọn', group: 'applied', cls: 'text-emerald-700' },
@@ -179,7 +179,7 @@ export default function DiskCleanup({ channels = [] }) {
         <div className="text-[11px] text-slate-600 bg-slate-50 border border-slate-200 rounded-xl p-3 flex gap-2">
           <Info className="w-4 h-4 text-blue-600 shrink-0" />
           <div className="space-y-0.5">
-            <div>Khi một ổ dùng trên <b>{draft.triggerUsedPercent}%</b>: chạy hết các quy tắc <b>Xóa toàn bộ</b> trước; nếu ổ vẫn trên <b>{draft.okUsedPercent}%</b> thì xóa file của các quy tắc <b>Từ cũ đến mới</b> (file cũ nhất trên ổ trước) đến khi về {draft.okUsedPercent}%.</div>
+            <div>Khi một ổ dùng trên <b>{draft.triggerUsedPercent}%</b>: chạy hết các quy tắc <b>Xóa toàn bộ</b> và <b>Giữ file mới nhất</b> (xóa hết, chỉ chừa lại file mới nhất trong thư mục) trước; nếu ổ vẫn trên <b>{draft.okUsedPercent}%</b> thì xóa file của các quy tắc <b>Từ cũ đến mới</b> (file cũ nhất trên ổ trước) đến khi về {draft.okUsedPercent}%.</div>
             <div>PC không có thư mục của quy tắc sẽ bỏ qua quy tắc đó (N/A). Thư mục hỗ trợ <code>{'{LogFolder}'}</code> (thư mục log của từng PC), <code>%TEMP%</code> và <code>*</code> (ví dụ <code>D:\LGE\*\RESULT</code>). Gốc ổ, Windows, Program Files và thư mục Backup_Log2 luôn bị chặn. File ghi trong 10 phút gần nhất không bao giờ bị xóa.</div>
           </div>
         </div>
@@ -217,9 +217,11 @@ export default function DiskCleanup({ channels = [] }) {
                     <td className="text-center"><input type="checkbox" checked={rule.includeSubfolders} onChange={e => updateRule(rule.id, { includeSubfolders: e.target.checked })} className="w-4 h-4 accent-teal-600" /></td>
                     <td>
                       <select value={rule.mode} onChange={e => updateRule(rule.id, { mode: e.target.value })}
-                        className={`${inputCls} ${rule.mode === 'DeleteAll' ? 'text-rose-700 font-semibold' : ''}`}>
+                        title={rule.mode === 'KeepNewest' ? 'Xóa mọi file khớp dạng file, chỉ chừa lại 1 file mới nhất trong thư mục (chạy cùng nhóm Xóa toàn bộ)' : undefined}
+                        className={`${inputCls} ${rule.mode === 'DeleteAll' ? 'text-rose-700 font-semibold' : rule.mode === 'KeepNewest' ? 'text-amber-700 font-semibold' : ''}`}>
                         <option value="OldestFirst">{MODE_LABELS.OldestFirst}</option>
                         <option value="DeleteAll">{MODE_LABELS.DeleteAll}</option>
+                        <option value="KeepNewest">{MODE_LABELS.KeepNewest}</option>
                       </select>
                     </td>
                     <td><input type="number" min={0} value={rule.keepDays} onChange={e => updateRule(rule.id, { keepDays: e.target.value })} className={inputCls + ' w-16 text-right'} /></td>
@@ -416,7 +418,7 @@ function CommandModal({ pc, kind, rules, onClose }) {
     <Modal title={`${isRun ? 'Dọn ngay' : 'Xem trước'} · ${pc.hostname || pc.macAddress}`} onClose={onClose} wide>
       {state === 'confirm' && (
         <div className="space-y-3">
-          <p>PC sẽ chạy ngay các quy tắc đã lưu trên <b>mọi ổ</b> (không chờ vượt ngưỡng): xóa hết file của các quy tắc <b>Xóa toàn bộ</b>, rồi xóa file cũ nhất của các quy tắc <b>Từ cũ đến mới</b> đến khi ổ về ngưỡng OK. Quy tắc đang bật Chạy thử chỉ được liệt kê.</p>
+          <p>PC sẽ chạy ngay các quy tắc đã lưu trên <b>mọi ổ</b> (không chờ vượt ngưỡng): xóa hết file của các quy tắc <b>Xóa toàn bộ</b> (quy tắc <b>Giữ file mới nhất</b> chừa lại file mới nhất), rồi xóa file cũ nhất của các quy tắc <b>Từ cũ đến mới</b> đến khi ổ về ngưỡng OK. Quy tắc đang bật Chạy thử chỉ được liệt kê.</p>
           <button onClick={start} className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-semibold">Xác nhận dọn</button>
         </div>
       )}

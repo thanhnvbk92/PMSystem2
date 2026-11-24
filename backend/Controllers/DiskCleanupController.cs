@@ -89,8 +89,9 @@ public sealed class DiskCleanupController : ControllerBase
             if (rule.Folder.StartsWith(@"\\")) return $"{label}: không hỗ trợ thư mục mạng.";
 
             rule.Pattern = string.IsNullOrWhiteSpace(rule.Pattern) ? "*" : rule.Pattern.Trim();
-            rule.Mode = string.Equals(rule.Mode, DiskCleanupModes.DeleteAll, StringComparison.OrdinalIgnoreCase)
-                ? DiskCleanupModes.DeleteAll : DiskCleanupModes.OldestFirst;
+            rule.Mode = string.Equals(rule.Mode, DiskCleanupModes.DeleteAll, StringComparison.OrdinalIgnoreCase) ? DiskCleanupModes.DeleteAll
+                : string.Equals(rule.Mode, DiskCleanupModes.KeepNewest, StringComparison.OrdinalIgnoreCase) ? DiskCleanupModes.KeepNewest
+                : DiskCleanupModes.OldestFirst;
             if (rule.KeepDays is < 0 or > 3650) return $"{label}: số ngày giữ lại phải từ 0 đến 3650.";
             rule.Name = string.IsNullOrWhiteSpace(rule.Name) ? rule.Folder : rule.Name.Trim();
             if (string.IsNullOrWhiteSpace(rule.Id) || !ids.Add(rule.Id)) rule.Id = Guid.NewGuid().ToString("N");

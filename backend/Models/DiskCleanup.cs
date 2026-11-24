@@ -27,7 +27,7 @@ namespace PMSystem2.Api.Models
         /// <summary>"*.bmp;*.tmp" (empty = every file).</summary>
         public string Pattern { get; set; } = "*";
         public bool IncludeSubfolders { get; set; } = true;
-        /// <summary>OldestFirst (default) or DeleteAll.</summary>
+        /// <summary>OldestFirst (default), DeleteAll or KeepNewest.</summary>
         public string Mode { get; set; } = DiskCleanupModes.OldestFirst;
         public int KeepDays { get; set; }
         public bool DryRun { get; set; } = true;
@@ -38,6 +38,8 @@ namespace PMSystem2.Api.Models
     {
         public const string OldestFirst = "OldestFirst";
         public const string DeleteAll = "DeleteAll";
+        /// <summary>Delete every matching file except the newest one (runs with DeleteAll, before OldestFirst).</summary>
+        public const string KeepNewest = "KeepNewest";
     }
 
     /// <summary>Latest clean-up report of each PC (one row per MAC), plus the latest run that deleted files.</summary>
