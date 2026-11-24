@@ -113,15 +113,13 @@ yy = f.section("NTF rate – before vs after", y=1.2, unit="(Unit: %)")
 cw = 3.92
 for k in range(len(GROUPS)):
     x = 0.53 + k * (cw + 0.24); b, a = SB[k], SA[k]
-    rect(f.s, x, yy, cw, 1.48, G2, name=f"NTF card {k}")
+    rect(f.s, x, yy, cw, 1.12, G2, name=f"NTF card {k}")
     textbox(f.s, x + 0.25, yy + 0.08, cw - 0.5, 0.28, [[(short(GROUPS[k][1]), {"size": 14, "bold": True}), (f"  {GROUPS[k][0]}", {"size": 11, "color": G3})]])
     v = (a["ntf"] or 0) - (b["ntf"] or 0); col = GREEN if v < 0 else RED
     textbox(f.s, x + 0.25, yy + 0.32, cw - 0.5, 0.5, [[(pc_(b["ntf"]), {"color": G3, "size": 16}), (" → ", {"color": G3, "size": 16}),
                                                     (pc_(a["ntf"]), {"color": col, "size": 26, "bold": True})]])
     textbox(f.s, x + 0.25, yy + 0.8, cw - 0.5, 0.22, [[(f"{'▼' if v < 0 else '▲'} {abs(v):.2f}%", {"color": col, "bold": True}),
                                                      ("  after vs before", {"color": G3})]], size=10.5)
-    textbox(f.s, x + 0.25, yy + 1.03, cw - 0.5, 0.2, [f"before {PB(k)} · after {PA(k)} ({wk(ACTS[k])})"], size=8, color=DARK)
-    textbox(f.s, x + 0.25, yy + 1.23, cw - 0.5, 0.2, [f"NG units: {num(b['ng'])} / {num(b['pairs'])} → {num(a['ng'])} / {num(a['pairs'])}"], size=8, color=G3)
 from improvements import _in_family
 from pca import codes_short
 def rate(S_, k, fam, sid=None):
@@ -154,31 +152,50 @@ for k, (line, model) in enumerate(GROUPS):
             act = f"{STN[stn]}: analyse NG logs, check limits and fixture"; cyc = "weekly"
         acts.append((short(model), line, act, f"Open ({cyc})"))
 assert len(items) == len(acts)
-# the two tables side by side: same top, same header height, same total height
-TY2 = yy + 1.66
-y2 = f.section("NTF NG items – improved (ImprovementList) and increased", y=TY2, w=6.0, unit="(Unit: % of units)")
-f.section("Actions – done and to do", x=6.73, y=TY2, w=6.04, unit="(PIC to be assigned)")
-HH, BODY = 0.3, 6.78 - y2 - 0.3 - 0.22                          # header height, body height (footnote below)
-nrows = [["#", "Model", "Line", "Station", "NG step", "Before", "After", "Type"]]
-for i, (k, stn, code, rb_, ra_, typ) in enumerate(items, 1):
-    nrows.append([str(i), short(GROUPS[k][1]), GROUPS[k][0], stn, code, f"{rb_:.2f}", f"{ra_:.2f}", typ])
-def nfmt(i, j, v):
-    o = {"align": PP_ALIGN.LEFT, "bold": True} if j == 4 else ({"bold": True} if j in (1, 2) else {})
-    if i and j == 6: o["color"] = RED if float(v) > float(nrows[i][5]) else GREEN
-    if i and j == 7: o.update({"color": RED if v == "Increased" else GREEN, "bold": True})
-    return o
-table(f.s, 0.53, y2, 6.0, nrows, [0.25, 0.68, 0.55, 0.6, 1.95, 0.5, 0.5, 0.97], row_h=BODY / len(items), header_h=HH, size=6.5,
-      cell_fmt=nfmt, name="NTF NG items")
-arows = [["#", "Model", "Line", "Action item", "PIC", "Status"]] + [[str(i), m_, l_, a_, "", st_] for i, (m_, l_, a_, st_) in enumerate(acts, 1)]
+# ---- overview below the cards: left = what the numbers above are made of, right = how to improve and sustain ----
+TY2 = yy + 1.32
+y2 = f.section("Overview by model and line", y=TY2, w=6.0, unit="(Unit: % of units)")
+f.section("Actions to improve and sustain", x=6.73, y=TY2, w=6.04, unit="(PIC = role, names in the meeting)")
+HH, BODY = 0.3, 6.78 - y2 - 0.3 - 0.22
+orows = [["Model", "Line", "Actions", "Biggest improvement", "Top NG step now"]]
+for k, (line, model) in enumerate(GROUPS):
+    g_imp = [x for x in IMP_ALL if x["line"] == line and x["model"] == model]
+    n_eff = sum(1 for x in g_imp if x["verdict"].startswith("Effective"))
+    imp_rows = [it for it in items if it[0] == k and it[5].startswith("Improved")]
+    best = max(imp_rows, key=lambda it: it[3] - it[4], default=None)
+    top = max(SA[k]["items"].items(), key=lambda kv: kv[1], default=None)
+    if top:
+        c, n = top; stn = max(SA[k]["item_st"][c].items(), key=lambda kv: kv[1])[0]
+        jj = sorted(SA[k]["item_jig"][c].items(), key=lambda kv: -kv[1])
+        jig_ = f", {jname(*jj[0][0]).split(' (')[0]} {round(jj[0][1] * 100 / n)}% of it" if jj and jj[0][1] * 100 >= 40 * n else ", several jigs"
+        now = f"{c} ({STN[stn]}) {n * 100.0 / SA[k]['pairs']:.2f}%{jig_}"
+    else:
+        now = "–"
+    orows.append([short(model), line, f"{len(g_imp)} done · {n_eff} effective",
+                  f"{best[2]} ({best[1]}) {best[3]:.2f} → {best[4]:.2f}%" if best else "–", now])
+def ofmt(i, j, v):
+    if j in (3, 4): return {"align": PP_ALIGN.LEFT, "color": (GREEN if j == 3 else RED) if i else WHITE}
+    if j in (0, 1): return {"bold": True}
+table(f.s, 0.53, y2, 6.0, orows, [0.72, 0.55, 0.85, 1.94, 1.94], row_h=BODY / (len(orows) - 1), header_h=HH, size=7.5,
+      cell_fmt=ofmt, name="NTF overview")
+PLAN2 = [
+    ("Improve", "Fix the top NG step of each model and line: NG logs, jig, program / limits (with LGE)", "Weekly", "Test engineering"),
+    ("Improve", "Apply the Effective fixes (pin / pad) to the same stations of other NAD lines and models", "Monthly", "Maintenance"),
+    ("Sustain", "Clean pins / pads of every FID and RF jig; replace pogo pins by test count", "Weekly", "Maintenance"),
+    ("Sustain", "Golden sample (1 OK + 1 NG) on every FCT jig at shift start and after a pin change", "Every shift", "Production (shift leader)"),
+    ("Sustain", "Jig alarm in PMSystem2: NG > 1.5× station average → stop and check the jig", "Daily", "QA"),
+    ("Sustain", "New job file / program: compare NTF by jig on the first 2 days before full release", "Each release", "Test engineering"),
+    ("Sustain", "Review NTF by model, line and jig; verify actions after 1 and 4 weeks (ImprovementList)", "Weekly", "QA (team leader)"),
+]
+arows = [["#", "Type", "Action", "Cycle", "PIC"]] + [[str(i), t_, a_, c_, p_] for i, (t_, a_, c_, p_) in enumerate(PLAN2, 1)]
 def afmt(i, j, v):
-    if j == 3: return {"align": PP_ALIGN.LEFT}
-    if j in (1, 2): return {"bold": True}
-    if i and j == 5: return {"bold": True, "color": GREEN if v.startswith("Done") else RED}
-table(f.s, 6.73, y2, 6.04, arows, [0.25, 0.65, 0.48, 3.56, 0.3, 0.8], row_h=BODY / len(acts), header_h=HH, size=6.5,
+    if j == 2: return {"align": PP_ALIGN.LEFT}
+    if i and j == 1: return {"bold": True, "color": DARK if v == "Improve" else GREEN}
+table(f.s, 6.73, y2, 6.04, arows, [0.25, 0.6, 3.29, 0.75, 1.15], row_h=BODY / len(PLAN2), header_h=HH, size=7.5,
       cell_fmt=afmt, name="NTF actions")
 textbox(f.s, 0.53, y2 + HH + BODY + 0.04, 12.24, 0.25,
-        ["* Before / After = units whose first NG was this NG step at this station / all units of the model and line. Improved = NG step with an action in "
-         "ImprovementList; Increased = NG step that increased most without an action. Unit = one PCB at one station; job changes are not tests."], size=7, color=G3)
+        ["* Actions = items of this model and line in ImprovementList (verdicts on the 'Improvement Verification' page). Biggest improvement / top NG step = NTF of that NG step "
+         "at that station (% of all units of the model and line). Details: NTF Detail pages and 'Future FCT Improvement Plan'."], size=7, color=G3)
 
 # ---- 3.. detail per model and line ----
 DETAIL = [S[3], S[4], S[6], S[7], S[8], S[9]]
