@@ -1,5 +1,11 @@
 # Tự động dọn ổ cứng theo quy tắc — Thiết kế (v2)
 
+> **Trạng thái triển khai (2026-11-24)** — đã code:
+> - Backend: `DiskCleanupController` (`GET/PUT /api/v1/disk-cleanup/config`, `GET/POST /api/v1/disk-cleanup/reports`), cấu hình lưu JSON trong `app_settings` key `diskcleanup.config`, bảng `disk_cleanup_reports` (báo cáo mới nhất mỗi PC + lần dọn gần nhất), SignalR `NotifyDiskCleanupUpdated`, cảnh báo `DiskFull` lên dashboard khi dọn xong vẫn trên ngưỡng OK.
+> - Frontend: trang **Giám Sát PC → Dọn Ổ Cứng** (`#pc-disk-cleanup`).
+> - Backup_Log2 (branch `disk-cleanup`): `DiskCleanupService`, lệnh `disk.cleanup.preview` / `disk.cleanup.run` / `disk.cleanup.reload`.
+> - Khác thiết kế: chưa làm `RequireFtpBackup` (dùng `KeepDays` + `DryRun` thay thế); lịch sử chỉ giữ báo cáo mới nhất mỗi PC.
+
 ## 1. Tổng quan
 - **Frontend (PMSystem2)**: trang "Dọn ổ cứng" để cài ngưỡng + danh sách quy tắc (thư mục, dạng file, kiểu xóa).
 - **Backend**: lưu cấu hình, đẩy xuống máy test qua SignalR (`CommandHub`, nhóm theo MAC/line/station đã có), nhận lịch sử dọn.

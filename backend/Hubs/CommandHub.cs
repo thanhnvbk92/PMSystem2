@@ -119,6 +119,8 @@ namespace PMSystem2.Api.Hubs
         Task RestartApp(int delayMs);
         Task ExecuteCommandAction(string action, object? data);
         Task NotifyMasterDataUpdated(string entityType);
+        /// <summary>Disk clean-up settings changed: Backup_Log2 reads them again.</summary>
+        Task NotifyDiskCleanupUpdated();
     }
 
     public class CommandHub : Hub<ICommandClient>
