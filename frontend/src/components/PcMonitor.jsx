@@ -545,8 +545,13 @@ function Kpi({ icon: Icon, label, value, total, tone, hint }) {
 
 function Overview({ rows, standardVersion, offlineAfterSeconds, loading, now, onSelect }) {
 
+  // Channels with a MAC whose PC never connected have no state: counted apart ("Chưa kết nối"),
+  // so Online + Offline + Chưa kết nối = Tổng PC and Offline matches the list filter. Version,
+  // clock and disk shares are taken over the PCs that connected (the only ones with that data).
+  const connected = rows.filter(r => !r.neverConnected).length;
+  const neverConnected = rows.length - connected;
   const online = rows.filter(r => r.isOnline).length;
-  const offline = rows.length - online;
+  const offline = connected - online;
   const versions = useMemo(() => {
     const map = new Map();
     rows.filter(r => !r.neverConnected).forEach(r => {
@@ -568,14 +573,15 @@ function Overview({ rows, standardVersion, offlineAfterSeconds, loading, now, on
 
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-7 gap-3">
-        <Kpi icon={Monitor} label="Tổng PC" value={loading ? '…' : rows.length} tone="bg-slate-100 text-slate-700" />
+      <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-8 gap-3">
+        <Kpi icon={Monitor} label="Tổng PC" value={loading ? '…' : rows.length} tone="bg-slate-100 text-slate-700" hint="Online + Offline + Chưa kết nối" />
         <Kpi icon={Wifi} label="Online" value={online} total={rows.length} tone="bg-emerald-100 text-emerald-700" />
-        <Kpi icon={WifiOff} label="Offline" value={offline} total={rows.length} tone="bg-rose-100 text-rose-700" hint={`Mất kết nối, hoặc không gửi tín hiệu quá ${Math.round(offlineAfterSeconds / 60)} phút`} />
-        <Kpi icon={AlertTriangle} label="Version cũ" value={standardVersion ? oldCount : '-'} total={rows.length} tone="bg-amber-100 text-amber-700" hint="Cũ hơn version chuẩn" />
-        <Kpi icon={HelpCircle} label="Chưa rõ version" value={unknownCount} total={rows.length} tone="bg-slate-100 text-slate-600" hint="Backup_Log2 bản cũ, chưa gửi version thật" />
-        <Kpi icon={Clock} label="Lệch giờ" value={clockOff.length} total={rows.length} tone="bg-blue-100 text-blue-700" hint={`Giờ PC lệch giờ server quá ${CLOCK_DRIFT_LIMIT_SECONDS} giây`} />
-        <Kpi icon={HardDrive} label="Ổ đĩa sắp đầy" value={lowDisk.length} total={rows.length} tone="bg-rose-100 text-rose-700" hint={`Số PC có ổ đã dùng trên ${100 - LOW_DISK_RATIO * 100}% hoặc còn dưới ${LOW_DISK_GB} GB`} />
+        <Kpi icon={WifiOff} label="Offline" value={offline} total={rows.length} tone="bg-rose-100 text-rose-700" hint={`PC đã từng kết nối: mất kết nối, hoặc không gửi tín hiệu quá ${Math.round(offlineAfterSeconds / 60)} phút`} />
+        <Kpi icon={WifiOff} label="Chưa kết nối" value={neverConnected} total={rows.length} tone="bg-slate-100 text-slate-500" hint="Channel có MAC trong Master Data nhưng PC chưa từng kết nối (kiểm tra MAC hoặc xóa channel không dùng)" />
+        <Kpi icon={AlertTriangle} label="Version cũ" value={standardVersion ? oldCount : '-'} total={connected} tone="bg-amber-100 text-amber-700" hint="Cũ hơn version chuẩn (% trên số PC đã kết nối)" />
+        <Kpi icon={HelpCircle} label="Chưa rõ version" value={unknownCount} total={connected} tone="bg-slate-100 text-slate-600" hint="Backup_Log2 bản cũ, chưa gửi version thật (% trên số PC đã kết nối)" />
+        <Kpi icon={Clock} label="Lệch giờ" value={clockOff.length} total={connected} tone="bg-blue-100 text-blue-700" hint={`Giờ PC lệch giờ server quá ${CLOCK_DRIFT_LIMIT_SECONDS} giây (% trên số PC đã kết nối)`} />
+        <Kpi icon={HardDrive} label="Ổ đĩa sắp đầy" value={lowDisk.length} total={connected} tone="bg-rose-100 text-rose-700" hint={`Số PC có ổ đã dùng trên ${100 - LOW_DISK_RATIO * 100}% hoặc còn dưới ${LOW_DISK_GB} GB (% trên số PC đã kết nối)`} />
       </div>
 
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
@@ -588,10 +594,10 @@ function Overview({ rows, standardVersion, offlineAfterSeconds, loading, now, on
               <div key={version || 'unknown'} className="flex items-center justify-between gap-2">
                 <VersionBadge version={version || null} standard={standardVersion} />
                 <div className="flex-1 h-1.5 bg-slate-200 rounded-full overflow-hidden">
-                  <div className="h-full bg-teal-500" style={{ width: `${(count / Math.max(1, rows.length)) * 100}%` }} />
+                  <div className="h-full bg-teal-500" style={{ width: `${(count / Math.max(1, connected)) * 100}%` }} />
                 </div>
                 <span className="text-xs font-mono font-bold text-slate-700 w-10 text-right">{count}</span>
-                <span className="text-[11px] font-mono text-slate-500 w-10 text-right">{sharePct(count, rows.length)}</span>
+                <span className="text-[11px] font-mono text-slate-500 w-10 text-right">{sharePct(count, connected)}</span>
               </div>
             ))}
           </div>
@@ -730,7 +736,8 @@ function pcColumns({ standardVersion, now, serverSkewMs, commands, onAssign }) {
       } },
     { key: 'version', label: 'Version', sort: r => versionKey(r.appVersion),
       filter: { type: 'choice', options: [['standard', 'Mới nhất'], ['old', 'Cũ hơn'], ['unknown', 'Chưa rõ']],
-        match: (r, v) => (v === 'unknown' ? !r.appVersion : versionState(r.appVersion, standardVersion) === v) },
+        // "Chưa rõ" = connected PC on an old build (channels that never connected are under Trạng thái).
+        match: (r, v) => (v === 'unknown' ? !r.neverConnected && !r.appVersion : versionState(r.appVersion, standardVersion) === v) },
       cell: r => (
         <td className="whitespace-nowrap">
           <VersionBadge version={r.appVersion} standard={standardVersion} />
