@@ -27,7 +27,13 @@ Ngưỡng tính **theo ổ chứa thư mục của quy tắc** (rule ở D:\ th�
 | `DryRun` | ✔ (rule mới) | Chỉ liệt kê, không xóa |
 | `Enabled` | ✔ | |
 
-**Phạm vi áp dụng**: mặc định toàn hệ thống → ghi đè theo Line → theo Station → theo từng máy (MAC). Máy nhận tập quy tắc của phạm vi cụ thể nhất.
+**Phạm vi áp dụng**: một bộ quy tắc chung cho **toàn bộ máy** (không phân cấp line/station/máy).
+
+**Máy không có thư mục / không có ổ**:
+- Rule đó được coi là **N/A** trên máy đó → bỏ qua, không phải lỗi; các rule khác chạy bình thường.
+- Mỗi máy báo trạng thái từng rule về server: `Cleaned` / `FolderNotFound` / `Blocked` (nằm trong danh sách cấm) / `DryRun`.
+- Trang cài đặt hiển thị mỗi rule: "Áp dụng: X máy · N/A: Y máy" (bấm xem danh sách) → phát hiện rule gõ sai đường dẫn (N/A toàn bộ).
+- Đường dẫn linh hoạt: biến `{LogFolder}` (thay bằng LogFolder của từng máy), ký tự đại diện `D:\LGE\*\RESULT` (khớp mọi thư mục con tồn tại).
 
 ## 4. Thuật toán (mỗi ổ)
 ```
@@ -60,12 +66,11 @@ Pha 2 gộp chung toàn bộ rule để file cũ nhất trên ổ luôn bị xó
 
 ## 6. Các phần cần làm
 ### Backend (`backend/`)
-- Model + bảng: `disk_cleanup_settings` (scope, scope_id, trigger, ok, interval), `disk_cleanup_rules` (settings_id, folder, pattern, include_sub, mode, keep_days, require_ftp, dry_run, enabled), `disk_cleanup_history` (mac, drive, time, used_before, used_after, files_phase1, files_phase2, bytes_freed, warning).
-- `DiskCleanupController`: GET/PUT settings theo scope; GET rules hiệu lực cho 1 máy (`/api/disk-cleanup/effective?mac=`); POST/GET history.
+- Model + bảng: `disk_cleanup_settings` (1 dòng: trigger, ok, interval), `disk_cleanup_rules` (folder, pattern, include_sub, mode, keep_days, require_ftp, dry_run, enabled), `disk_cleanup_history` (mac, drive, time, used_before, used_after, files_phase1, files_phase2, bytes_freed, warning), `disk_cleanup_rule_status` (mac, rule_id, status, last_time, bytes_freed).
+- `DiskCleanupController`: GET/PUT settings theo scope; GET rules (`/api/disk-cleanup/rules`); POST/GET history.
 - `CommandHub`: sau khi lưu → gửi `NotifyDiskCleanupUpdated` tới nhóm liên quan (giống `NotifyMasterDataUpdated`).
 
 ### Frontend (`frontend/src/components/DiskCleanup.jsx` + Sidebar)
-- Chọn phạm vi (Toàn hệ thống / Line / Station / Máy).
 - 2 ô ngưỡng (Trigger %, OK %) + chu kỳ.
 - Bảng rule: thêm/sửa/xóa/bật-tắt, chọn Mode (mặc định "Từ cũ đến mới"), nút Xem trước.
 - Tab lịch sử: lần dọn gần nhất mỗi máy, GB giải phóng, cảnh báo.
