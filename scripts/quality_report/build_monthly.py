@@ -300,17 +300,18 @@ if CM:
     font10(ch)
     textbox(f.s, 0.53, yy + 2.75, 5.9, 0.3, ["IP: " + ", ".join(f"{j[1]} {j[2]}" for j in wj[:3])], size=10, color=G3)
     f.section(f"Worst NG steps – {FN} vs {CN_}", x=6.73, w=6.04, unit="(Unit: % of tests)")
-    cand = []
+    # one bar per NG step + station, all models together (% of the station's tests on each line)
+    ng_ = defaultdict(int); tst = defaultdict(int)
     for r in st:
-        if r[0] != FOCUS: continue
-        c_ = by.get((CM["control"], r[1], r[2]))
-        for k, n_ in r[5].items():
-            cand.append((n_, k, r[1], r[2], n_ * 100 / r[3], (c_[5].get(k, 0) * 100 / c_[3]) if c_ and c_[3] else 0.0, bool(c_ and c_[3])))
-    cand.sort(reverse=True); wn = cand[:5]
-    ch = column_chart(f.s, 6.73, yy, 6.04, 2.7, [f"{k[:22]} ({s_})" for _, k, s_, *_ in wn], [(FN, [round(x[4], 1) for x in wn]), (CN_, [round(x[5], 1) for x in wn])],
+        tst[(r[0], r[1])] += r[3]
+        for k, n_ in r[5].items(): ng_[(r[0], r[1], k)] += n_
+    cand = sorted(((n_, k, s_, n_ * 100 / tst[(l, s_)], ng_.get((CM["control"], s_, k), 0) * 100 / tst[(CM["control"], s_)] if tst.get((CM["control"], s_)) else 0.0)
+                   for (l, s_, k), n_ in ng_.items() if l == FOCUS), reverse=True)
+    wn = cand[:5]
+    ch = column_chart(f.s, 6.73, yy, 6.04, 2.7, [f"{k if len(k) <= 28 else k[:27] + '…'} ({s_})" for _, k, s_, _, _ in wn], [(FN, [round(x[3], 1) for x in wn]), (CN_, [round(x[4], 1) for x in wn])],
                       [RED, GREEN], fmt='0.0', bar=True, gap=50, overlap=-10, lo=0, name="Worst NG steps")
     font10(ch)
-    textbox(f.s, 6.73, yy + 2.75, 6.04, 0.3, [f"{CN_} = 0 when the model does not run there: " + ", ".join(dict.fromkeys(ms(x[3]) for x in wn if not x[6]))], size=10, color=G3)
+    textbox(f.s, 6.73, yy + 2.75, 6.04, 0.3, ["% of all tests of that station on each line (all models)"], size=10, color=G3)
     y3 = f.section("Worst stations", y=yy + 3.15, unit="(Unit: tests, %)")
     ws = sorted((r for r in st if r[0] == FOCUS), key=lambda r: -r[4])[:4]
     wrows = [["Station", "Model", "Tests", "Re-test", f"Re-test {CN_}", f"% of {FN} NG"]]
