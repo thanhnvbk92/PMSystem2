@@ -123,6 +123,29 @@ table(f.s, 0.53, y2, 12.24, trows, [1.6] + [1] * len(cats), row_h=0.27,
       cell_fmt=lambda i, j, v: ({"bold": True} if j == 0 else {}) | ({"fill": LVIOLET, "bold": True} if j == len(cats) else {}), name="Monthly figures")
 textbox(f.s, 0.53, y2 + 0.27 * len(trows) + 0.06, 12.24, 0.2, [f"* {mname(0)} = month-to-date until {dm(LAST)}." if MTD else "* Full calendar months."], size=8, color=G3)
 
+def min10(sl, size=10):
+    """raise every text run of a slide (shapes and tables) below 10 pt to 10 pt"""
+    for sh in sl.shapes:
+        tfs = [sh.text_frame] if sh.has_text_frame else []
+        if getattr(sh, "has_table", False) and sh.has_table: tfs = [c.text_frame for r in sh.table.rows for c in r.cells]
+        for tf in tfs:
+            for pp in tf.paragraphs:
+                for r in pp.runs:
+                    if r.font.size is not None and r.font.size.pt < size: r.font.size = Pt(size)
+
+def font10(ch, size=10):
+    """every text of a chart (axes, labels, legend, title) at least 10 pt"""
+    chart_text(ch, size)
+    for pl in ch.plots:
+        for s_ in pl.series:
+            try: s_.data_labels.font.size = Pt(size)
+            except Exception: pass
+    if ch.has_legend: ch.legend.font.size = Pt(size)
+    for ax in (ch.category_axis, ch.value_axis):
+        try: ax.tick_labels.font.size = Pt(size)
+        except Exception: pass
+    return ch
+
 # ---------- 5. KPI by line ----------
 f = Frame(S[4], "KPI by Line", f"{MONTH_TITLE} · vs {mname(1, False)}")
 lines = [(l["name"], q(f"m0_line{l['id']}"), q(f"m1_line{l['id']}")) for l in D["lines"] if q(f"m0_line{l['id']}")]
@@ -135,29 +158,26 @@ def top_rise(lid, m, pm):
     best = max(((ra_.get(c, 0) - rb_.get(c, 0), c) for c in set(rb_) | set(ra_)), default=None)
     return f"{best[1]} +{best[0]:.2f}%" if best and best[0] > 0 else "–"
 yy = f.section(f"Re-test by line – {mname(1)} vs {mname(0)}", w=4.3, unit="(Unit: %)")
-column_chart(f.s, 0.53, yy, 4.3, 4.6, [n for n, *_ in lines], [(mname(1), [rt(pm) if pm else 0 for _, _, pm in lines]), (mname(0), [rt(m) for _, m, _ in lines])],
-             ["BFBFBF", VIOLET], bar=True, gap=60, overlap=-10, lo=0, name="Re-test by line")
+font10(column_chart(f.s, 0.53, yy, 4.3, 4.6, [n for n, *_ in lines], [(mname(1), [rt(pm) if pm else 0 for _, _, pm in lines]), (mname(0), [rt(m) for _, m, _ in lines])],
+             ["BFBFBF", VIOLET], fmt='0.0', bar=True, gap=60, overlap=-10, lo=0, name="Re-test by line"))
 f.section("KPI table by line (sorted by Re-test)", x=5.13, w=7.64, unit="(Unit: %)")
-lrows = [["Line", "Tests", "Re-test", f"Δ {mname(1)}", "NTF", "RTY", "Δ RTY", f"Main cause of the Re-test increase vs {mname(1)}"]]
+lrows = [["Line", "Tests", "Re-test", f"Δ {mname(1)}", f"Main cause of the increase vs {mname(1)}"]]
 for n, m, pm in lines:
     rose = pm and rt(m) > rt(pm)
     lrows.append([n, num(m["retestAttempts"]), f"{rt(m):.2f}", delta(rt(m), rt(pm), False)[0] if pm else "–",
-                  f"{ntf(m):.2f}", f"{rty(m):.2f}", delta(rty(m), rty(pm), True)[0] if pm else "–",
                   top_rise(line_id[n], m, pm) if rose else "–"])
 def lfmt(i, j, v):
     o = {"bold": True} if j == 0 else {}
     if j == 3 and v != "–": o["color"] = RED if v.startswith("▲") else (GREEN if v.startswith("▼") else G3)
-    if j == 6 and v != "–": o["color"] = GREEN if v.startswith("▲") else (RED if v.startswith("▼") else G3)
-    if j == 7 and v != "–": o.update({"color": RED, "align": PP_ALIGN.LEFT})
+    if j == 4 and v != "–": o.update({"color": RED, "align": PP_ALIGN.LEFT})
     if lrows[i][0] == FN: o["fill"] = LGREEN
     return o
-rh = min(0.3, 4.6 / len(lrows))
-table(f.s, 5.13, yy, 7.64, lrows, [1.0, 0.85, 0.7, 0.9, 0.6, 0.65, 0.9, 2.6], row_h=rh, size=8, cell_fmt=lfmt, name="KPI by line")
+rh = min(0.32, 4.6 / len(lrows))
+table(f.s, 5.13, yy, 7.64, lrows, [0.95, 1.0, 0.85, 1.0, 3.84], row_h=rh, size=10, cell_fmt=lfmt, name="KPI by line")
 improved = sum(1 for _, m, pm in lines if pm and rt(m) < rt(pm))
-textbox(f.s, 5.13, yy + rh * len(lrows) + 0.06, 7.64, 0.4,
-        [f"* {improved} of {len(lines)} lines reduced Re-test vs {mname(1)}. Main cause = NG step with the largest increase in % of tests on that line "
-         f"(UNKNOWN = NG without an NG step in the log, not used as a cause). "
-         f"Line RTY = PCBs that passed every station of the line first time. Green row = {FN}."], size=8, color=G3)
+textbox(f.s, 5.13, yy + rh * len(lrows) + 0.06, 7.64, 0.5,
+        [f"* {improved} of {len(lines)} lines reduced Re-test vs {mname(1)}. Main cause = NG step that increased most (% of tests). Green row = {FN}."],
+        size=10, color=G3)
 
 # ---------- 5b. Why plant Re-test fell: production volume by line ----------
 MIX = S[35]
@@ -234,119 +254,102 @@ if CM:
 
     # --- page 1: same models, different result ---
     sl = S[32]; CMP_SLIDES.append(sl)
-    f = Frame(sl, f"{FN} vs {CN_} – Same Models", f"{MONTH_TITLE} · Re-test by model and station · both lines run the BMW NAD models")
+    f = Frame(sl, f"{FN} vs {CN_} – Same Models", f"{MONTH_TITLE} · Re-test by model and station")
     yy = f.section("Re-test by model", w=5.9, unit="(Unit: tests, %)")
-    mrows = [["Model", f"Tests {FN}", f"Re-test {FN}", f"Tests {CN_}", f"Re-test {CN_}"]]
+    mrows = [["Model", f"Tests {FN[-3:]}", f"Re-test {FN[-3:]}", f"Tests {CN_[-3:]}", f"Re-test {CN_[-3:]}"]]
     for m in models:
         t1 = sum(r[3] for r in st if r[2] == m and r[0] == FOCUS); n1 = sum(r[4] for r in st if r[2] == m and r[0] == FOCUS)
         t2 = sum(r[3] for r in st if r[2] == m and r[0] == CM["control"]); n2 = sum(r[4] for r in st if r[2] == m and r[0] == CM["control"])
         mrows.append([ms(m), num(t1), pct(n1 * 100 / t1) if t1 else "–", num(t2), pct(n2 * 100 / t2) if t2 else "–"])
     mrows.append(["All models", num(T1), pct(R1), num(T2), pct(R2)])
-    table(f.s, 0.53, yy, 5.9, mrows, [1.7, 1.0, 1.1, 1.0, 1.1], row_h=0.3, size=8.5,
+    table(f.s, 0.53, yy, 5.9, mrows, [1.7, 1.0, 1.1, 1.0, 1.1], row_h=0.3, size=10,
           cell_fmt=lambda i, j, v: ({"bold": True} if j == 0 or i == len(mrows) - 1 else {}) | ({"fill": LVIOLET} if i == len(mrows) - 1 else {})
           | ({"color": RED, "bold": True} if j == 2 and i and v != "–" and i < len(mrows) - 1 else {}), name="Model compare")
-    yk = f.section("Key points", y=yy + 0.3 * len(mrows) + 0.25, w=5.9)
+    yk = f.section("Key points", y=yy + 0.3 * len(mrows) + 0.2, w=5.9)
     same = [m for m in models if m not in only1]
-    kp = [[("• ", {}), (f"{FN} Re-test {R1:.2f}% vs {CN_} {R2:.2f}% ({R1 / max(R2, 0.01):.1f}×).", {"bold": True})]]
-    for m in same[:2]:
+    kp = [[("• ", {}), (f"{FN} {R1:.1f}% vs {CN_} {R2:.1f}% ({R1 / max(R2, 0.01):.1f}×)", {"bold": True})]]
+    for m in same[:1]:
         t1 = sum(r[3] for r in st if r[2] == m and r[0] == FOCUS); n1 = sum(r[4] for r in st if r[2] == m and r[0] == FOCUS)
         t2 = sum(r[3] for r in st if r[2] == m and r[0] == CM["control"]); n2 = sum(r[4] for r in st if r[2] == m and r[0] == CM["control"])
-        if t1 and t2: kp.append([("• ", {}), (f"Same model {ms(m)}: {n1 * 100 / t1:.2f}% on {FN} vs {n2 * 100 / t2:.2f}% on {CN_}", {"color": RED}),
-                                 (" → the gap comes from the line (jigs, setup), not only from the model.", {})])
+        if t1 and t2: kp.append([("• ", {}), (f"Same model {ms(m)}: {n1 * 100 / t1:.1f}% vs {n2 * 100 / t2:.1f}%", {"color": RED, "bold": True}),
+                                 (" → gap from the line (jigs, setup)", {})])
     if only1:
         t_ = sum(r[3] for r in st if r[2] in only1 and r[0] == FOCUS); n_ = sum(r[4] for r in st if r[2] in only1 and r[0] == FOCUS)
-        kp.append([("• ", {}), (f"{', '.join(ms(m) for m in only1)} {'run' if len(only1) > 1 else 'runs'} only on {FN}: {t_ * 100 / T1:.0f}% of its tests, "
-                                 f"Re-test {n_ * 100 / max(t_, 1):.2f}% – no {CN_} result to compare.", {})])
-    kp.append([("• ", {}), (f"If every station of {FN} had the {CN_} Re-test of the same model: {FN} ≈ ", {}), (f"{R_proj:.2f}%", {"bold": True, "color": GREEN}),
-               (f" (biggest gaps: {', '.join(f'{g[1]} {ms(g[2])}' for g in pos[:3])}).", {})])
-    textbox(f.s, 0.53, yk, 5.9, 2.2, kp, size=9, space_after=4, name="Compare key points")
-    f.section(f"Re-test by station and model – gap to {CN_}", x=6.73, w=6.04, unit="(Unit: %, points)")
-    grows = [["Station", "Model", FN, CN_, "Gap", f"Points of {FN}"]]
-    for g in gaps[:12]:
-        grows.append([g[1], ms(g[2]), f"{g[4]:.2f}", f"{g[6]:.2f}", f"{g[4] - g[6]:+.2f}", f"{g[0]:+.2f}"])
-    table(f.s, 6.73, yy, 6.04, grows, [0.95, 1.55, 0.85, 0.85, 0.85, 0.99], row_h=min(0.3, 4.6 / len(grows)), size=8,
-          cell_fmt=lambda i, j, v: ({"bold": True} if j == 0 else {}) | ({"color": RED if v.startswith("+") else GREEN} if i and j in (4, 5) else {}),
-          name="Station gaps")
-    textbox(f.s, 6.73, yy + min(0.3, 4.6 / len(grows)) * len(grows) + 0.05, 6.04, 0.4,
-            [f"* Points of {FN} = (Re-test {FN} − Re-test {CN_}) × share of {FN} tests: how much {FN} Re-test would go down if that station had the {CN_} result."],
-            size=7.5, color=G3)
+        kp.append([("• ", {}), (f"{t_ * 100 / T1:.0f}% of {FN} tests are models only on {FN} ({n_ * 100 / max(t_, 1):.1f}%)", {})])
+    kp.append([("• ", {}), (f"Same-model stations at {CN_} level → {FN} ≈ ", {}), (f"{R_proj:.1f}%", {"bold": True, "color": GREEN})])
+    textbox(f.s, 0.53, yk, 5.9, 1.9, kp, size=10, space_after=4, name="Compare key points")
+    f.section(f"Same model by station – {FN} vs {CN_}", x=6.73, w=6.04, unit="(Unit: %)")
+    gg = gaps[:5]
+    ch = column_chart(f.s, 6.73, yy, 6.04, 3.0, [f"{g[1]}" for g in gg], [(FN, [round(g[4], 1) for g in gg]), (CN_, [round(g[6], 1) for g in gg])],
+                      [RED, GREEN], fmt='0.0', gap=60, overlap=-10, lo=0, name="Station gaps")
+    font10(ch)
+    textbox(f.s, 6.73, yy + 3.05, 6.04, 0.3, [f"Model: {', '.join(dict.fromkeys(ms(g[2]) for g in gg))}"], size=10, color=G3)
+    gy = yy + 3.45
+    grows = [["Station", f"Gap", f"{FN} – points"]] + [[g[1], f"{g[4] - g[6]:+.1f}%", f"{g[0]:+.2f}"] for g in gg]
+    table(f.s, 6.73, gy, 6.04, grows, [2.0, 2.0, 2.04], row_h=min(0.3, (6.85 - gy) / len(grows)), size=10,
+          cell_fmt=lambda i, j, v: ({"bold": True} if j == 0 else {}) | ({"color": RED} if i and j else {}), name="Station gap points")
 
-    # --- page 2: worst of the focus line ---
+    # --- page 2: worst of the focus line (charts) ---
     sl = S[33]; CMP_SLIDES.append(sl)
-    f = Frame(sl, f"{FN} Worst", f"{MONTH_TITLE} · stations, jigs and NG steps with most NG · compared with {CN_}")
-    yy = f.section("Worst stations (by NG attempts)", w=5.9, unit="(Unit: tests, %)")
-    ws = sorted((r for r in st if r[0] == FOCUS), key=lambda r: -r[4])[:6]
-    wrows = [["Station", "Model", "Tests", "Re-test", f"Re-test {CN_}", f"% of {FN} NG"]]
-    for r in ws:
-        c_ = by.get((CM["control"], r[1], r[2]))
-        wrows.append([r[1], ms(r[2]), num(r[3]), f"{r[4] * 100 / r[3]:.2f}", f"{c_[4] * 100 / c_[3]:.2f}" if c_ and c_[3] else "–", f"{r[4] * 100 / max(N1, 1):.1f}"])
-    table(f.s, 0.53, yy, 5.9, wrows, [0.85, 1.5, 0.9, 0.8, 0.95, 0.9], row_h=0.3, size=8,
-          cell_fmt=lambda i, j, v: ({"bold": True} if j == 0 else {}) | ({"color": RED, "bold": True} if i and j == 3 else {}), name="Worst stations")
-    f.section("Worst jigs (min. 200 tests)", x=6.73, w=6.04, unit="(Unit: tests, %)")
+    f = Frame(sl, f"{FN} Worst", f"{MONTH_TITLE} · jigs and NG steps with most NG · compared with {CN_}")
+    yy = f.section("Worst jigs – Re-test vs station average", w=5.9, unit="(Unit: %)")
     st_rt = {s_: sum(r[4] for r in st if r[0] == FOCUS and r[1] == s_) * 100 / max(sum(r[3] for r in st if r[0] == FOCUS and r[1] == s_), 1) for s_ in {r[1] for r in st}}
     wj = sorted((j for j in CM["jig"] if j[3] >= 200), key=lambda j: -(j[4] / j[3]))[:6]
-    jrows = [["Jig", "IP", "Tests", "Re-test", "Station", "Top NG step"]]
-    for s_, ch, ip, t_, n_, cs, mm in wj:
-        jrows.append([f"{s_} {ch}", ip or "–", num(t_), f"{n_ * 100 / t_:.2f}", f"{st_rt.get(s_, 0):.2f}", next(iter(cs), "–")])
-    table(f.s, 6.73, yy, 6.04, jrows, [1.05, 1.05, 0.7, 0.65, 0.65, 1.94], row_h=0.3, size=8,
-          cell_fmt=lambda i, j, v: ({"bold": True} if j == 0 else {}) | ({"color": RED, "bold": True} if i and j == 3 else {}) | ({"align": PP_ALIGN.LEFT} if j == 5 else {}),
-          name="Worst jigs")
-    y3 = f.section(f"Worst NG steps – {FN} vs {CN_} (same station and model)", y=yy + 0.3 * 7 + 0.3, unit="(Unit: % of tests)")
+    ch = column_chart(f.s, 0.53, yy, 5.9, 2.7, [f"{j[0]} {j[1]}" for j in wj], [("Jig", [round(j[4] * 100 / j[3], 1) for j in wj]),
+                      ("Station avg", [round(st_rt.get(j[0], 0), 1) for j in wj])], [RED, "BFBFBF"], fmt='0.0', bar=True, gap=50, overlap=-10, lo=0, name="Worst jigs")
+    font10(ch)
+    textbox(f.s, 0.53, yy + 2.75, 5.9, 0.3, ["IP: " + ", ".join(f"{j[1]} {j[2]}" for j in wj[:3])], size=10, color=G3)
+    f.section(f"Worst NG steps – {FN} vs {CN_}", x=6.73, w=6.04, unit="(Unit: % of tests)")
     cand = []
     for r in st:
         if r[0] != FOCUS: continue
         c_ = by.get((CM["control"], r[1], r[2]))
         for k, n_ in r[5].items():
-            a1 = n_ * 100 / r[3]; a2 = (c_[5].get(k, 0) * 100 / c_[3]) if c_ and c_[3] else None
-            cand.append((n_, k, r[1], r[2], a1, a2))
-    cand.sort(reverse=True)
-    nrows = [["#", "NG step", "Station", "Model", "NG attempts", f"{FN}", f"{CN_}", "Gap"]]
-    for i, (n_, k, s_, m, a1, a2) in enumerate(cand[:7], 1):
-        nrows.append([str(i), k, s_, ms(m), num(n_), f"{a1:.2f}", "–" if a2 is None else f"{a2:.2f}", "–" if a2 is None else f"{a1 - a2:+.2f}"])
-    table(f.s, 0.53, y3, 12.24, nrows, [0.3, 3.9, 1.0, 1.9, 1.1, 1.1, 1.1, 1.0], row_h=0.27, size=8,
-          cell_fmt=lambda i, j, v: ({"align": PP_ALIGN.LEFT, "bold": True} if j == 1 else {}) | ({"color": RED} if i and j == 7 and v.startswith("+") else {}),
-          name="Worst NG steps")
+            cand.append((n_, k, r[1], r[2], n_ * 100 / r[3], (c_[5].get(k, 0) * 100 / c_[3]) if c_ and c_[3] else 0.0, bool(c_ and c_[3])))
+    cand.sort(reverse=True); wn = cand[:5]
+    ch = column_chart(f.s, 6.73, yy, 6.04, 2.7, [f"{k[:22]} ({s_})" for _, k, s_, *_ in wn], [(FN, [round(x[4], 1) for x in wn]), (CN_, [round(x[5], 1) for x in wn])],
+                      [RED, GREEN], fmt='0.0', bar=True, gap=50, overlap=-10, lo=0, name="Worst NG steps")
+    font10(ch)
+    textbox(f.s, 6.73, yy + 2.75, 6.04, 0.3, [f"{CN_} = 0 when the model does not run there: " + ", ".join(dict.fromkeys(ms(x[3]) for x in wn if not x[6]))], size=10, color=G3)
+    y3 = f.section("Worst stations", y=yy + 3.15, unit="(Unit: tests, %)")
+    ws = sorted((r for r in st if r[0] == FOCUS), key=lambda r: -r[4])[:4]
+    wrows = [["Station", "Model", "Tests", "Re-test", f"Re-test {CN_}", f"% of {FN} NG"]]
+    for r in ws:
+        c_ = by.get((CM["control"], r[1], r[2]))
+        wrows.append([r[1], ms(r[2]), num(r[3]), f"{r[4] * 100 / r[3]:.1f}%", f"{c_[4] * 100 / c_[3]:.1f}%" if c_ and c_[3] else "–", f"{r[4] * 100 / max(N1, 1):.0f}%"])
+    table(f.s, 0.53, y3, 12.24, wrows, [1.6, 2.6, 1.8, 1.8, 2.2, 2.24], row_h=min(0.3, (6.85 - y3) / len(wrows)), size=10,
+          cell_fmt=lambda i, j, v: ({"bold": True} if j == 0 else {}) | ({"color": RED, "bold": True} if i and j == 3 else {}), name="Worst stations")
 
-    # --- page 3: how to bring the focus line to the control line level ---
+    # --- page 3: improvement direction (short) ---
     sl = S[34]; CMP_SLIDES.append(sl)
-    f = Frame(sl, f"{FN} → {CN_} Level: Improvement Direction", f"Target: {FN} Re-test ≤ {R2:.1f}% ({CN_} level) · now {R1:.2f}% · PIC = role, names in the meeting")
-    yy = f.section("Actions by gap", unit="(Due dates over the next month)")
+    f = Frame(sl, f"{FN} → {CN_} Level", f"Target: {FN} Re-test ≤ {R2:.1f}% ({CN_} level) · now {R1:.1f}%")
+    yy = f.section("Improvement direction", unit="(PIC = role)")
     plan = []
     if only1:
-        t_ = sum(r[3] for r in st if r[2] in only1 and r[0] == FOCUS); n_ = sum(r[4] for r in st if r[2] in only1 and r[0] == FOCUS)
         cc = defaultdict(int)
         for r in st:
             if r[2] in only1 and r[0] == FOCUS:
                 for k, v in r[5].items(): cc[(k, r[1])] += v
-        topc = sorted(cc.items(), key=lambda kv: -kv[1])[:3]
-        plan.append((f"{', '.join(ms(m) for m in only1[:2])}{' …' if len(only1) > 2 else ''}", f"Only on {FN}: {t_ * 100 / T1:.0f}% of its tests, Re-test {n_ * 100 / max(t_, 1):.1f}%",
-                     "Continue the actions of ImprovementList and fix the top NG steps: " + ", ".join(f"{k} ({s_})" for (k, s_), _ in topc),
-                     "Weekly", "Test eng. + Maintenance", f"≤ {R2:.1f}%"))
-    for g in pos[:4]:
-        plan.append((f"{g[1]} · {ms(g[2])}", f"{g[4]:.1f}% vs {g[6]:.1f}% on {CN_} (−{g[0]:.1f} points)",
-                     f"Copy the {CN_} {g[1]} setup for {ms(g[2])} (jig type, pins, power, cables, program version); fix {', '.join(g[7]) or 'top NG steps'}",
-                     "Once, then weekly check", "Test eng. + Maintenance", f"≤ {g[6]:.1f}%"))
-    bad = [j for j in wj if j[4] / j[3] * 100 >= 1.5 * st_rt.get(j[0], 0)][:2]
-    for s_, ch, ip, t_, n_, cs, mm in bad:
-        plan.append((f"{s_} {ch}", f"Re-test {n_ * 100 / t_:.1f}% vs station {st_rt.get(s_, 0):.1f}%", f"Check / repair the jig ({ip}): pins, pads, cables; swap with a spare jig if not OK",
-                     "Daily until OK", "Maintenance", f"≤ station avg"))
+        topc = sorted(cc.items(), key=lambda kv: -kv[1])[:2]
+        t_ = sum(r[3] for r in st if r[2] in only1 and r[0] == FOCUS); n_ = sum(r[4] for r in st if r[2] in only1 and r[0] == FOCUS)
+        plan.append((f"Models only on {FN} ({n_ * 100 / max(t_, 1):.1f}%)", "Fix " + ", ".join(f"{k} ({s_})" for (k, s_), _ in topc), "Weekly", "Test eng.", f"≤ {R2:.1f}%"))
+    for g in pos[:3]:
+        plan.append((f"{g[1]} {ms(g[2])} ({g[4]:.1f}% vs {g[6]:.1f}%)", f"Copy the {CN_} {g[1]} setup; fix {g[7][0] if g[7] else 'top NG step'}",
+                     "Once", "Test eng. + Maint.", f"≤ {g[6]:.1f}%"))
+    bad = [j for j in wj if j[4] / j[3] * 100 >= 1.5 * st_rt.get(j[0], 0)][:1]
+    for s_, ch_, ip, t_, n_, cs, mm in bad:
+        plan.append((f"{s_} {ch_} ({n_ * 100 / t_:.1f}%)", "Repair or swap the jig", "Now", "Maintenance", "≤ station avg"))
     plan += [
-        ("Same models", f"{FN} and {CN_} run the same models", f"Benchmark {CN_} weekly: compare Re-test by station and jig, copy what works", "Weekly", "QA", f"gap ≤ 0.5 points"),
-        ("Sustain", "Contact problems come back", "Clean pins / pads weekly; replace pogo pins by test count; golden sample each shift", "Weekly / shift", "Maintenance, Production", "no jig > 1.5× avg"),
-        ("Team", "Actions across departments", "FCT improvement team (QA leader, Test eng., Maintenance, Production, LGE): weekly meeting, monthly report", "Weekly", "QA manager", "–"),
-        ("Investment (proposal)", "Worn jigs cannot be repaired during production", "Spare jig set per worst station; pogo pin stock; contact-resistance tester", "Once (budget)", "Maintenance + QA manager", "–"),
+        ("Sustain", "Clean pins weekly; golden sample each shift", "Weekly / shift", "Maint., Production", "no bad jig"),
+        ("Team", "FCT team: QA, Test eng., Maintenance, Production, LGE", "Weekly", "QA manager", "–"),
+        ("Investment", "Spare jigs, pogo pins, contact tester (proposal)", "Once", "QA manager", "–"),
     ]
-    nxt_ = LAST + dt.timedelta(days=7 - LAST.weekday() + 4)
-    prows = [["#", "Gap", "Why", "Action", "Cycle", "PIC", "Target", "Due"]]
-    for i, (gp, why, act, cyc, pic, tgt) in enumerate(plan, 1):
-        d_ = nxt_ + dt.timedelta(days=7 * min(3, (i - 1) * 4 // len(plan)))
-        prows.append([str(i), gp, why, act, cyc, pic, tgt, f"{dm(d_)} (W{d_.isocalendar()[1]})"])
-    rh = min(0.46, 4.6 / len(plan))
-    table(f.s, 0.53, yy, 12.24, prows, [0.3, 1.5, 2.2, 4.0, 1.0, 1.24, 0.95, 1.05], row_h=rh, header_h=0.3, size=7.5,
-          cell_fmt=lambda i, j, v: {"align": PP_ALIGN.LEFT} if j in (2, 3) else ({"bold": True} if j == 1 else None), name="Line plan")
-    textbox(f.s, 0.53, yy + 0.3 + rh * len(plan) + 0.05, 12.24, 0.2,
-            [f"* Closing only the station gaps of the shared models brings {FN} to about {R_proj:.2f}%; the models that run only on {FN} must also go down to reach the {CN_} level. "
-             "Investment items are proposals."], size=8, color=G3)
+    prows = [["#", "Gap", "Action", "Cycle", "PIC", "Target"]] + [[str(i), *row] for i, row in enumerate(plan, 1)]
+    rh = min(0.55, 4.7 / len(plan))
+    table(f.s, 0.53, yy, 12.24, prows, [0.4, 3.6, 4.3, 1.3, 1.5, 1.14], row_h=rh, header_h=0.36, size=10,
+          cell_fmt=lambda i, j, v: {"align": PP_ALIGN.LEFT} if j in (1, 2) else None, name="Line plan")
+    textbox(f.s, 0.53, yy + 0.36 + rh * len(plan) + 0.05, 12.24, 0.3,
+            [f"* Same-model stations at {CN_} level → {FN} ≈ {R_proj:.1f}%; the models only on {FN} must also go down."], size=10, color=G3)
 
 # ---------- 6. Section divider ----------
 def section_slide(sl, lines_):
@@ -574,6 +577,7 @@ def move_after(slide, after):
 move_after(MIX, S[4])
 prev_ = MIX
 for sl in CMP_SLIDES: move_after(sl, prev_); prev_ = sl
+for sl in [S[4]] + CMP_SLIDES: min10(sl)              # readable on screen: nothing below 10 pt
 N_TREND = len(pages)
 
 # ---------- 12. Key positive changes ----------
