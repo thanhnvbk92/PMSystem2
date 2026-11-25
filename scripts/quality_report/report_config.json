@@ -21,5 +21,8 @@
     "UNKNOWN",
     "UNKNOWN_DEFECT"
   ],
-  "not_a_test_regex": "CHANGE[_.]JOB"
+  "not_a_test_regex": "CHANGE[_.]JOB",
+  "data_end": {
+    "2026-11": "2026-11-20"
+  }
 }

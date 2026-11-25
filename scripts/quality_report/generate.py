@@ -14,6 +14,7 @@ import datetime as dt  # noqa: E402
 ap = argparse.ArgumentParser()
 ap.add_argument("--month", required=True)
 ap.add_argument("--out-dir", required=True)
+ap.add_argument("--end", default=None, help="last day of data (YYYY-MM-DD); default: data_end in report_config.json, else yesterday")
 args = ap.parse_args()
 if not re.fullmatch(r"\d{4}-\d{2}", args.month):
     raise SystemExit("--month must be YYYY-MM")
@@ -22,7 +23,9 @@ t0 = time.time()
 
 print("STEP 1/3 Reading statistics tables", flush=True)
 cfg = json.load(open(os.path.join(HERE, "report_config.json"), encoding="utf-8"))
-data = qfast.collect(args.month, cfg)
+end = args.end or (cfg.get("data_end") or {}).get(args.month)
+if end: print(f"STEP 1/3 Data until {end}", flush=True)
+data = qfast.collect(args.month, cfg, dt.date.fromisoformat(end) if end else None)
 lst = os.path.join(args.out_dir, cfg.get("improvement_list", "ImprovementList.xlsx"))
 print(f"STEP 1/3 Verifying improvements ({os.path.basename(lst)})", flush=True)
 conn = qfast.connect()

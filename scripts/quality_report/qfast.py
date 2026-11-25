@@ -34,10 +34,11 @@ def month_start(d, back=0):
     while m <= 0: m += 12; y -= 1
     return dt.date(y, m, 1)
 
-def collect(month: str, cfg: dict):
+def collect(month: str, cfg: dict, last_day: dt.date = None):
+    """last_day = last day of data to use (inclusive); default: until yesterday."""
     RM = dt.date.fromisoformat(month + "-01")
     nxt = month_start(RM, -1)
-    today = dt.date.today()
+    today = last_day + dt.timedelta(days=1) if last_day else dt.date.today()
     RE = min(nxt, today)                                   # exclusive; today is still running
     if RE <= RM: raise SystemExit(f"No complete day in {month} yet.")
     FOCUS, CONTROL = cfg["focus_line_id"], cfg["control_line_id"]
@@ -93,6 +94,30 @@ def collect(month: str, cfg: dict):
             else:
                 excl_st[(day, sid)] += n
     log(f"rollup rows aggregated ({len(att)} day-station-model keys)")
+
+    # ---- C. focus vs control line in the report month: by exact model, station and jig ----
+    cur.execute("SELECT id, name FROM models"); model_name = dict(cur.fetchall())
+    cmp_st = defaultdict(lambda: [0, 0, defaultdict(int)]); cmp_jig = defaultdict(lambda: [0, 0, defaultdict(int), defaultdict(int)])
+    cur.execute("""SELECT d.station_id, c.name, c.ip_address, d.job_file, d.model_id, d.result, d.error_code, sum(d.total_count)::bigint
+                   FROM pcb_analytics_daily d JOIN stations s ON s.id = d.station_id LEFT JOIN channels c ON c.id = d.channel_id
+                   WHERE d.bucket_date >= %s AND d.bucket_date < %s AND s.line_id = ANY(%s)
+                     AND d.error_code <> 'DEFECT_UNSPECIFIED' AND d.error_code !~* %s
+                   GROUP BY 1, 2, 3, 4, 5, 6, 7""", (RM, RE, [FOCUS, CONTROL], cfg.get("not_a_test_regex") or "^$NONE"))
+    st_name = {s["id"]: s["name"] for s in stations}
+    for sid, ch, ip, job, mid, res, code, n in cur.fetchall():
+        em = eff_model(job, mid)
+        if em == 0: continue
+        m = model_name.get(em, str(em)); key = (st_line[sid], st_name[sid], m)
+        r = cmp_st[key]; r[0] += n
+        j = cmp_jig[(st_line[sid], st_name[sid], ch or "?", ip or "")] if st_line[sid] == FOCUS else None
+        if j is not None: j[0] += n
+        if res in ("NG", "FAIL"):
+            r[1] += n
+            if j is not None: j[1] += n; j[3][m] += n
+            if code and code not in EXCL:
+                r[2][code] += n
+                if j is not None: j[2][code] += n
+    log("line comparison aggregated")
 
     # ---- B. NTF pairs per first-test day / station / model group ----
     pairs = defaultdict(lambda: [0, 0])
@@ -217,6 +242,10 @@ def collect(month: str, cfg: dict):
         if a <= day < b: ng_by_station[sid] += k
     for sid, _ in sorted(ng_by_station.items(), key=lambda kv: -kv[1])[:12]:
         out[f"m0_st{sid}"] = qm(a, b, station=sid)
+    top_ = lambda d, k=8: dict(sorted(d.items(), key=lambda kv: -kv[1])[:k])
+    out["cmp"] = {"focus": FOCUS, "control": CONTROL,
+                  "st": [[l, s, m, t, n, top_(c, 12)] for (l, s, m), (t, n, c) in cmp_st.items()],
+                  "jig": [[s, ch, ip, t, n, top_(c, 3), top_(mm, 1)] for (l, s, ch, ip), (t, n, c, mm) in cmp_jig.items()]}
     log("report data assembled")
     return out
 

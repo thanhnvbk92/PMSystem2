@@ -1,5 +1,6 @@
 """Monthly Quality Report (English): NTF / Re-test / RTY + Line 6-1 improvement review by model."""
 import json, os, re, sys, datetime as dt
+from collections import defaultdict
 from pptlib import *
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -56,9 +57,10 @@ for r in range(len(gt.rows)):
 
 # ---------- 2. Contents ----------
 _imp = D.get("improvements") or []
-_ntp = min(23, sum(1 for x in _imp if x["verdict"] != "Insufficient data"))
-TOC = [("Monthly KPI Summary", "3"), (f"{FN} Improvement Review", "7"), ("Improvement Verification", "12"),
-       ("Key Positive Changes", str(14 + _ntp)), ("Remaining Issues", str(15 + _ntp)), ("Action Plan", str(16 + _ntp))]
+_ntp = min(20, sum(1 for x in _imp if x["verdict"] != "Insufficient data"))
+N_CMP = 3 if D.get("cmp") else 0                                # Line 6-1 vs Line 6-2 pages after 'Production Volume'
+TOC = [("Monthly KPI Summary", "3"), (f"{FN} Improvement Review", str(7 + N_CMP)), ("Improvement Verification", str(12 + N_CMP)),
+       ("Key Positive Changes", str(14 + N_CMP + _ntp)), ("Remaining Issues", str(15 + N_CMP + _ntp)), ("Action Plan", str(16 + N_CMP + _ntp))]
 t = S[1]; strip_annotations(t); rows = {}
 for sh in list(t.shapes):
     if sh.has_text_frame and sh.name == "Content Placeholder 2": rows.setdefault(round(sh.top / 914400 / 0.555), []).append(sh)
@@ -201,6 +203,150 @@ def vfmt(i, j, v):
     if vrows[i][0] == FN: o["fill"] = LGREEN
     return o
 table(f.s, 6.73, yt, 6.04, vrows, [1.24, 1.2, 1.2, 1.2, 1.2], row_h=min(0.235, (7.0 - yt) / len(vrows)), size=8, cell_fmt=vfmt, name="Volume by line")
+
+# ---------- 5c. Line 6-1 vs Line 6-2 (same models), Line 6-1 worst, improvement direction ----------
+CMP_SLIDES = []
+CM = D.get("cmp")
+if CM:
+    CN_ = LN[CM["control"]]
+    st = [r for r in CM["st"] if r[3]]
+    T1 = sum(r[3] for r in st if r[0] == FOCUS); T2 = sum(r[3] for r in st if r[0] == CM["control"])
+    N1 = sum(r[4] for r in st if r[0] == FOCUS); N2 = sum(r[4] for r in st if r[0] == CM["control"])
+    R1, R2 = N1 * 100 / max(T1, 1), N2 * 100 / max(T2, 1)
+    by = {(r[0], r[1], r[2]): r for r in st}
+    def ms(m): return m.replace("BMW ", "")
+    models = sorted({r[2] for r in st}, key=lambda m: -sum(r[3] for r in st if r[2] == m))
+    models = [m for m in models if sum(r[3] for r in st if r[2] == m) >= 0.01 * (T1 + T2)]
+    # station x model gaps: contribution to the focus line Re-test (points) if it had the control line Re-test
+    gaps = []
+    for (l, s_, m), r in by.items():
+        if l != FOCUS: continue
+        c_ = by.get((CM["control"], s_, m))
+        r1 = r[4] * 100 / r[3]
+        if c_ and c_[3] >= 300:
+            r2 = c_[4] * 100 / c_[3]
+            codes_ = sorted(((r[5].get(k, 0) * 100 / r[3] - c_[5].get(k, 0) * 100 / c_[3], k) for k in set(r[5]) | set(c_[5])), reverse=True)
+            gaps.append(((r1 - r2) * r[3] / T1, s_, m, r[3], r1, c_[3], r2, [k for d_, k in codes_[:2] if d_ > 0]))
+    gaps.sort(reverse=True)
+    pos = [g for g in gaps if g[0] > 0]
+    R_proj = R1 - sum(g[0] for g in pos)
+    only1 = [m for m in models if sum(r[3] for r in st if r[2] == m and r[0] == CM["control"]) == 0 and sum(r[3] for r in st if r[2] == m and r[0] == FOCUS)]
+
+    # --- page 1: same models, different result ---
+    sl = S[32]; CMP_SLIDES.append(sl)
+    f = Frame(sl, f"{FN} vs {CN_} – Same Models", f"{MONTH_TITLE} · Re-test by model and station · both lines run the BMW NAD models")
+    yy = f.section("Re-test by model", w=5.9, unit="(Unit: tests, %)")
+    mrows = [["Model", f"Tests {FN}", f"Re-test {FN}", f"Tests {CN_}", f"Re-test {CN_}"]]
+    for m in models:
+        t1 = sum(r[3] for r in st if r[2] == m and r[0] == FOCUS); n1 = sum(r[4] for r in st if r[2] == m and r[0] == FOCUS)
+        t2 = sum(r[3] for r in st if r[2] == m and r[0] == CM["control"]); n2 = sum(r[4] for r in st if r[2] == m and r[0] == CM["control"])
+        mrows.append([ms(m), num(t1), pct(n1 * 100 / t1) if t1 else "–", num(t2), pct(n2 * 100 / t2) if t2 else "–"])
+    mrows.append(["All models", num(T1), pct(R1), num(T2), pct(R2)])
+    table(f.s, 0.53, yy, 5.9, mrows, [1.7, 1.0, 1.1, 1.0, 1.1], row_h=0.3, size=8.5,
+          cell_fmt=lambda i, j, v: ({"bold": True} if j == 0 or i == len(mrows) - 1 else {}) | ({"fill": LVIOLET} if i == len(mrows) - 1 else {})
+          | ({"color": RED, "bold": True} if j == 2 and i and v != "–" and i < len(mrows) - 1 else {}), name="Model compare")
+    yk = f.section("Key points", y=yy + 0.3 * len(mrows) + 0.25, w=5.9)
+    same = [m for m in models if m not in only1]
+    kp = [[("• ", {}), (f"{FN} Re-test {R1:.2f}% vs {CN_} {R2:.2f}% ({R1 / max(R2, 0.01):.1f}×).", {"bold": True})]]
+    for m in same[:2]:
+        t1 = sum(r[3] for r in st if r[2] == m and r[0] == FOCUS); n1 = sum(r[4] for r in st if r[2] == m and r[0] == FOCUS)
+        t2 = sum(r[3] for r in st if r[2] == m and r[0] == CM["control"]); n2 = sum(r[4] for r in st if r[2] == m and r[0] == CM["control"])
+        if t1 and t2: kp.append([("• ", {}), (f"Same model {ms(m)}: {n1 * 100 / t1:.2f}% on {FN} vs {n2 * 100 / t2:.2f}% on {CN_}", {"color": RED}),
+                                 (" → the gap comes from the line (jigs, setup), not only from the model.", {})])
+    if only1:
+        t_ = sum(r[3] for r in st if r[2] in only1 and r[0] == FOCUS); n_ = sum(r[4] for r in st if r[2] in only1 and r[0] == FOCUS)
+        kp.append([("• ", {}), (f"{', '.join(ms(m) for m in only1)} {'run' if len(only1) > 1 else 'runs'} only on {FN}: {t_ * 100 / T1:.0f}% of its tests, "
+                                 f"Re-test {n_ * 100 / max(t_, 1):.2f}% – no {CN_} result to compare.", {})])
+    kp.append([("• ", {}), (f"If every station of {FN} had the {CN_} Re-test of the same model: {FN} ≈ ", {}), (f"{R_proj:.2f}%", {"bold": True, "color": GREEN}),
+               (f" (biggest gaps: {', '.join(f'{g[1]} {ms(g[2])}' for g in pos[:3])}).", {})])
+    textbox(f.s, 0.53, yk, 5.9, 2.2, kp, size=9, space_after=4, name="Compare key points")
+    f.section(f"Re-test by station and model – gap to {CN_}", x=6.73, w=6.04, unit="(Unit: %, points)")
+    grows = [["Station", "Model", FN, CN_, "Gap", f"Points of {FN}"]]
+    for g in gaps[:12]:
+        grows.append([g[1], ms(g[2]), f"{g[4]:.2f}", f"{g[6]:.2f}", f"{g[4] - g[6]:+.2f}", f"{g[0]:+.2f}"])
+    table(f.s, 6.73, yy, 6.04, grows, [0.95, 1.55, 0.85, 0.85, 0.85, 0.99], row_h=min(0.3, 4.6 / len(grows)), size=8,
+          cell_fmt=lambda i, j, v: ({"bold": True} if j == 0 else {}) | ({"color": RED if v.startswith("+") else GREEN} if i and j in (4, 5) else {}),
+          name="Station gaps")
+    textbox(f.s, 6.73, yy + min(0.3, 4.6 / len(grows)) * len(grows) + 0.05, 6.04, 0.4,
+            [f"* Points of {FN} = (Re-test {FN} − Re-test {CN_}) × share of {FN} tests: how much {FN} Re-test would go down if that station had the {CN_} result."],
+            size=7.5, color=G3)
+
+    # --- page 2: worst of the focus line ---
+    sl = S[33]; CMP_SLIDES.append(sl)
+    f = Frame(sl, f"{FN} Worst", f"{MONTH_TITLE} · stations, jigs and NG steps with most NG · compared with {CN_}")
+    yy = f.section("Worst stations (by NG attempts)", w=5.9, unit="(Unit: tests, %)")
+    ws = sorted((r for r in st if r[0] == FOCUS), key=lambda r: -r[4])[:6]
+    wrows = [["Station", "Model", "Tests", "Re-test", f"Re-test {CN_}", f"% of {FN} NG"]]
+    for r in ws:
+        c_ = by.get((CM["control"], r[1], r[2]))
+        wrows.append([r[1], ms(r[2]), num(r[3]), f"{r[4] * 100 / r[3]:.2f}", f"{c_[4] * 100 / c_[3]:.2f}" if c_ and c_[3] else "–", f"{r[4] * 100 / max(N1, 1):.1f}"])
+    table(f.s, 0.53, yy, 5.9, wrows, [0.85, 1.5, 0.9, 0.8, 0.95, 0.9], row_h=0.3, size=8,
+          cell_fmt=lambda i, j, v: ({"bold": True} if j == 0 else {}) | ({"color": RED, "bold": True} if i and j == 3 else {}), name="Worst stations")
+    f.section("Worst jigs (min. 200 tests)", x=6.73, w=6.04, unit="(Unit: tests, %)")
+    st_rt = {s_: sum(r[4] for r in st if r[0] == FOCUS and r[1] == s_) * 100 / max(sum(r[3] for r in st if r[0] == FOCUS and r[1] == s_), 1) for s_ in {r[1] for r in st}}
+    wj = sorted((j for j in CM["jig"] if j[3] >= 200), key=lambda j: -(j[4] / j[3]))[:6]
+    jrows = [["Jig", "IP", "Tests", "Re-test", "Station", "Top NG step"]]
+    for s_, ch, ip, t_, n_, cs, mm in wj:
+        jrows.append([f"{s_} {ch}", ip or "–", num(t_), f"{n_ * 100 / t_:.2f}", f"{st_rt.get(s_, 0):.2f}", next(iter(cs), "–")])
+    table(f.s, 6.73, yy, 6.04, jrows, [1.05, 1.05, 0.7, 0.65, 0.65, 1.94], row_h=0.3, size=8,
+          cell_fmt=lambda i, j, v: ({"bold": True} if j == 0 else {}) | ({"color": RED, "bold": True} if i and j == 3 else {}) | ({"align": PP_ALIGN.LEFT} if j == 5 else {}),
+          name="Worst jigs")
+    y3 = f.section(f"Worst NG steps – {FN} vs {CN_} (same station and model)", y=yy + 0.3 * 7 + 0.3, unit="(Unit: % of tests)")
+    cand = []
+    for r in st:
+        if r[0] != FOCUS: continue
+        c_ = by.get((CM["control"], r[1], r[2]))
+        for k, n_ in r[5].items():
+            a1 = n_ * 100 / r[3]; a2 = (c_[5].get(k, 0) * 100 / c_[3]) if c_ and c_[3] else None
+            cand.append((n_, k, r[1], r[2], a1, a2))
+    cand.sort(reverse=True)
+    nrows = [["#", "NG step", "Station", "Model", "NG attempts", f"{FN}", f"{CN_}", "Gap"]]
+    for i, (n_, k, s_, m, a1, a2) in enumerate(cand[:7], 1):
+        nrows.append([str(i), k, s_, ms(m), num(n_), f"{a1:.2f}", "–" if a2 is None else f"{a2:.2f}", "–" if a2 is None else f"{a1 - a2:+.2f}"])
+    table(f.s, 0.53, y3, 12.24, nrows, [0.3, 3.9, 1.0, 1.9, 1.1, 1.1, 1.1, 1.0], row_h=0.27, size=8,
+          cell_fmt=lambda i, j, v: ({"align": PP_ALIGN.LEFT, "bold": True} if j == 1 else {}) | ({"color": RED} if i and j == 7 and v.startswith("+") else {}),
+          name="Worst NG steps")
+
+    # --- page 3: how to bring the focus line to the control line level ---
+    sl = S[34]; CMP_SLIDES.append(sl)
+    f = Frame(sl, f"{FN} → {CN_} Level: Improvement Direction", f"Target: {FN} Re-test ≤ {R2:.1f}% ({CN_} level) · now {R1:.2f}% · PIC = role, names in the meeting")
+    yy = f.section("Actions by gap", unit="(Due dates over the next month)")
+    plan = []
+    if only1:
+        t_ = sum(r[3] for r in st if r[2] in only1 and r[0] == FOCUS); n_ = sum(r[4] for r in st if r[2] in only1 and r[0] == FOCUS)
+        cc = defaultdict(int)
+        for r in st:
+            if r[2] in only1 and r[0] == FOCUS:
+                for k, v in r[5].items(): cc[(k, r[1])] += v
+        topc = sorted(cc.items(), key=lambda kv: -kv[1])[:3]
+        plan.append((f"{', '.join(ms(m) for m in only1[:2])}{' …' if len(only1) > 2 else ''}", f"Only on {FN}: {t_ * 100 / T1:.0f}% of its tests, Re-test {n_ * 100 / max(t_, 1):.1f}%",
+                     "Continue the actions of ImprovementList and fix the top NG steps: " + ", ".join(f"{k} ({s_})" for (k, s_), _ in topc),
+                     "Weekly", "Test eng. + Maintenance", f"≤ {R2:.1f}%"))
+    for g in pos[:4]:
+        plan.append((f"{g[1]} · {ms(g[2])}", f"{g[4]:.1f}% vs {g[6]:.1f}% on {CN_} (−{g[0]:.1f} points)",
+                     f"Copy the {CN_} {g[1]} setup for {ms(g[2])} (jig type, pins, power, cables, program version); fix {', '.join(g[7]) or 'top NG steps'}",
+                     "Once, then weekly check", "Test eng. + Maintenance", f"≤ {g[6]:.1f}%"))
+    bad = [j for j in wj if j[4] / j[3] * 100 >= 1.5 * st_rt.get(j[0], 0)][:2]
+    for s_, ch, ip, t_, n_, cs, mm in bad:
+        plan.append((f"{s_} {ch}", f"Re-test {n_ * 100 / t_:.1f}% vs station {st_rt.get(s_, 0):.1f}%", f"Check / repair the jig ({ip}): pins, pads, cables; swap with a spare jig if not OK",
+                     "Daily until OK", "Maintenance", f"≤ station avg"))
+    plan += [
+        ("Same models", f"{FN} and {CN_} run the same models", f"Benchmark {CN_} weekly: compare Re-test by station and jig, copy what works", "Weekly", "QA", f"gap ≤ 0.5 points"),
+        ("Sustain", "Contact problems come back", "Clean pins / pads weekly; replace pogo pins by test count; golden sample each shift", "Weekly / shift", "Maintenance, Production", "no jig > 1.5× avg"),
+        ("Team", "Actions across departments", "FCT improvement team (QA leader, Test eng., Maintenance, Production, LGE): weekly meeting, monthly report", "Weekly", "QA manager", "–"),
+        ("Investment (proposal)", "Worn jigs cannot be repaired during production", "Spare jig set per worst station; pogo pin stock; contact-resistance tester", "Once (budget)", "Maintenance + QA manager", "–"),
+    ]
+    nxt_ = LAST + dt.timedelta(days=7 - LAST.weekday() + 4)
+    prows = [["#", "Gap", "Why", "Action", "Cycle", "PIC", "Target", "Due"]]
+    for i, (gp, why, act, cyc, pic, tgt) in enumerate(plan, 1):
+        d_ = nxt_ + dt.timedelta(days=7 * min(3, (i - 1) * 4 // len(plan)))
+        prows.append([str(i), gp, why, act, cyc, pic, tgt, f"{dm(d_)} (W{d_.isocalendar()[1]})"])
+    rh = min(0.46, 4.6 / len(plan))
+    table(f.s, 0.53, yy, 12.24, prows, [0.3, 1.5, 2.2, 4.0, 1.0, 1.24, 0.95, 1.05], row_h=rh, header_h=0.3, size=7.5,
+          cell_fmt=lambda i, j, v: {"align": PP_ALIGN.LEFT} if j in (2, 3) else ({"bold": True} if j == 1 else None), name="Line plan")
+    textbox(f.s, 0.53, yy + 0.3 + rh * len(plan) + 0.05, 12.24, 0.2,
+            [f"* Closing only the station gaps of the shared models brings {FN} to about {R_proj:.2f}%; the models that run only on {FN} must also go down to reach the {CN_} level. "
+             "Investment items are proposals."], size=8, color=G3)
 
 # ---------- 6. Section divider ----------
 def section_slide(sl, lines_):
@@ -395,7 +541,7 @@ else:
     textbox(f.s, 0.53, yy + 0.2, 12.24, 0.4, ["Reports/ImprovementList.xlsx not found or empty."], size=12, color=G3)
 
 TRENDED = [(i, x) for i, x in enumerate(IMP, 1) if x["verdict"] != "Insufficient data"]   # numbers as in the summary table
-TREND_SLIDES = S[12:35]                # S[35] is used for the line-mix page
+TREND_SLIDES = S[12:32]                # S[32:35] = Line 6-1 vs 6-2 pages, S[35] = production volume page
 pages = TRENDED[:len(TREND_SLIDES)]
 BORDER = "ADADAD"
 STATUS = {"Effective": ("OK", GREEN, BLACK), "Small improvement": ("Monitor", "FFEB9C", BLACK),
@@ -426,6 +572,8 @@ def move_after(slide, after):
     a_, r_ = sec_.get(str(el.id)), sec_.get(str(ref.id))
     if a_ is not None and r_ is not None: a_.getparent().remove(a_); r_.addnext(a_)
 move_after(MIX, S[4])
+prev_ = MIX
+for sl in CMP_SLIDES: move_after(sl, prev_); prev_ = sl
 N_TREND = len(pages)
 
 # ---------- 12. Key positive changes ----------
